@@ -11,6 +11,7 @@ typedef enum {
     SweepModeRF,    // Flipper-native sub-GHz RSSI sweep (analog bugs/cams)
     SweepModeWifi,  // Marauder WiFi AP scan over UART (BFFB ESP32)
     SweepModeBle,   // Marauder BLE sniff over UART (BFFB ESP32)
+    SweepModeGps,   // Passive GPS NMEA listener on UART (BFFB GPS)
     SweepModeInfo,  // Capabilities / limits reference
     SweepModeCount
 } SweepMode;
@@ -47,6 +48,10 @@ static const char* rf_labels[RF_NUM_CHANNELS] = {
 #define MARAUDER_RX_BUF_SIZE 1024          // ring buffer for ISR-fed bytes
 #define MARAUDER_LINE_MAX    128           // max chars per captured line
 #define MARAUDER_MAX_LINES   8            // rolling lines kept for display
+
+// GPS: alternate baud to try if no NMEA at Marauder baud. Common GPS = 9600.
+#define GPS_BAUD_ALT         9600UL
+#define GPS_SENTENCE_MAX     96            // display cap for one NMEA sentence
 
 // ---------------------------------------------------------------------------
 // Marauder scan state
