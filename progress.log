@@ -1,0 +1,15 @@
+# PROGRESS LOG — append-only. Read at start of each iteration.
+
+## Iteration 0 (init) — 2026-08-01
+- Project state: working v1.0 app deployed & crash-free on Flipper (`/dev/cu.usbmodemflip_XXXX01`).
+- Toolchain: ufbt at /private/tmp/flipper-dev/bin/ufbt ; SDK at ~/.ufbt (Momentum, API 87.1).
+- No git repo existed. Created .gitignore, MISSION.md, fix_plan.md.
+- DIAGNOSIS (user-reported bottom distortion): 3 bugs in draw_rf_tab:
+  1. Sub-threshold bars drawn as hollow frames -> 1px-tall frames = stray baseline lines.
+  2. Labels at base_y+1 = y64 = OFF-SCREEN (display is 0..63). Labels clipped.
+  3. Threshold line drawn AFTER/over bars, cutting across the chart.
+- API inventory confirmed available: canvas draw_box/frame/rbox/rframe/disc/dot, invert_color,
+  set_font(FontPrimary/Secondary/Keyboard/BigNumbers); notification solid red/green/blue/yellow,
+  blink_*_10/_100 (7 colors), vibro on/off, single/double_vibro, musical notes, sequence_success,
+  sequence_audiovisual_alert.
+- NEXT: git init + baseline commit, then live-probe BFFB (P3 probe) before building on GPS.
