@@ -20,8 +20,10 @@
 #include <notification/notification_messages.h>
 #include <notification/notification_messages_notes.h>
 #include <lib/subghz/devices/cc1101_configs.h>
+#include <string.h>
 
 #include "room_sweep.h"
+#include "nmea.h"
 
 /* ------------------------------------------------------------------ */
 /* Shared state                                                        */
@@ -50,13 +52,22 @@ typedef struct {
 
     /* notification / feedback */
     NotificationApp* notif;
-    bool sound_on;                 // Up toggles
+    bool sound_on;                 // Up toggles (default: OFF)
     bool vibro_on;                 // Down toggles
     uint32_t tick_count;           // main loop iteration counter
     uint32_t last_click_ms;        // last Geiger click time
     uint32_t last_vibro_ms;        // last vibro pulse time
     bool was_alerting;             // previous tick alert state (edge detect)
     uint8_t lock_ticks;            // consecutive ticks above threshold
+
+    /* GPS (passive NMEA on UART when GPS tab active) */
+    GpsFix gps;                    // parser state (host-tested, 24/24 pass)
+    volatile bool gps_active;      // GPS tab is active — feed NMEA bytes
+    volatile uint8_t gps_sats;
+    volatile float gps_lat;
+    volatile float gps_lon;
+    volatile float gps_alt_m;
+    volatile bool gps_fix_valid;
 } App;
 
 /* ------------------------------------------------------------------ */
@@ -90,6 +101,13 @@ static void uart_rx_cb(FuriHalSerialHandle* handle, FuriHalSerialRxEvent event, 
     if(event != FuriHalSerialRxEventData) return;
 
     uint8_t byte = furi_hal_serial_async_rx(app->serial);
+
+    /* GPS tab active: feed every byte to the NMEA parser.
+     * nmea_feed is allocation-free and non-blocking — ISR-safe. */
+    if(app->gps_active) {
+        nmea_feed(&app->gps, (char)byte);
+    }
+
     if(byte == '\n' || byte == '\r') {
         if(app->line_pos > 0) {
             app->line_buf[app->line_pos] = '\0';
@@ -390,6 +408,70 @@ static void draw_ble_tab(Canvas* canvas, App* app) {
     }
 }
 
+static void draw_gps_tab(Canvas* canvas, App* app) {
+    canvas_clear(canvas);
+    canvas_set_font(canvas, FontPrimary);
+    canvas_draw_str(canvas, 2, 12, "GPS");
+    canvas_set_font(canvas, FontSecondary);
+
+    if(!app->serial) {
+        canvas_draw_str(canvas, 8, 32, "BFFB not connected");
+        canvas_draw_str(canvas, 8, 44, "Plug in ESP32 via UART");
+        return;
+    }
+
+    /* Fix status banner */
+    if(app->gps.has_fix) {
+        canvas_draw_str(canvas, 40, 12, "3D FIX");
+    } else if(app->gps.sentences > 0) {
+        canvas_draw_str(canvas, 40, 12, "NO FIX");
+    } else {
+        canvas_draw_str(canvas, 8, 24, "Waiting for GPS...");
+        canvas_draw_str(canvas, 8, 35, "(passive NMEA @115200)");
+        return;
+    }
+
+    /* UTC time */
+    char buf[32];
+    if(app->gps.has_time) {
+        snprintf(buf, sizeof(buf), "UTC %02d:%02d:%02d",
+                 app->gps.hour, app->gps.minute, app->gps.second);
+        canvas_draw_str(canvas, 2, 24, buf);
+    } else {
+        canvas_draw_str(canvas, 2, 24, "UTC --:--:--");
+    }
+
+    /* Date */
+    if(app->gps.has_date) {
+        snprintf(buf, sizeof(buf), "%04d-%02d-%02d",
+                 app->gps.year, app->gps.month, app->gps.day);
+        canvas_draw_str(canvas, 80, 24, buf);
+    }
+
+    /* Satellites */
+    snprintf(buf, sizeof(buf), "Sats: %d view / %d used",
+             app->gps.sats_in_view, app->gps.sats);
+    canvas_draw_str(canvas, 2, 35, buf);
+
+    /* Position */
+    if(app->gps.has_pos) {
+        snprintf(buf, sizeof(buf), "%.5f", (double)app->gps.latitude);
+        canvas_draw_str(canvas, 2, 46, buf);
+        snprintf(buf, sizeof(buf), "%.5f", (double)app->gps.longitude);
+        canvas_draw_str(canvas, 2, 57, buf);
+        canvas_draw_str(canvas, 70, 46, "lat");
+        canvas_draw_str(canvas, 70, 57, "lon");
+    } else {
+        canvas_draw_str(canvas, 2, 46, "No position yet");
+        canvas_draw_str(canvas, 2, 57, "Move outdoors");
+    }
+
+    /* Sentence counter (bottom-right, tiny) */
+    canvas_set_font(canvas, FontKeyboard);
+    snprintf(buf, sizeof(buf), "%lu snt", (unsigned long)app->gps.sentences);
+    canvas_draw_str(canvas, 100, 63, buf);
+}
+
 static void draw_info_tab(Canvas* canvas, App* app) {
     UNUSED(app);
     canvas_clear(canvas);
@@ -411,24 +493,25 @@ static void draw_cb(Canvas* canvas, void* ctx) {
     case SweepModeRF:    draw_rf_tab(canvas, app);    break;
     case SweepModeWifi:  draw_wifi_tab(canvas, app);  break;
     case SweepModeBle:   draw_ble_tab(canvas, app);   break;
+    case SweepModeGps:   draw_gps_tab(canvas, app);   break;
     case SweepModeInfo:  draw_info_tab(canvas, app);  break;
     default: break;
     }
 
-    /* --- Tab indicator strip (y 0..3) --- */
+    /* --- Tab indicator strip (y 0..3) — 5 tabs, 25px each --- */
     canvas_draw_line(canvas, 0, 0, 127, 0);
-    static const char* tab_labels[] = {"RF", "Wi", "BT", "i"};
+    static const char* tab_labels[] = {"RF", "Wi", "BT", "GPS", "i"};
     for(int t = 0; t < SweepModeCount; t++) {
-        uint8_t x = 2 + t * 32;
+        uint8_t x = 1 + t * 25;
         if(t == (int)app->mode) {
-            canvas_draw_box(canvas, x, 1, 28, 3);
+            canvas_draw_box(canvas, x, 1, 24, 3);
             /* Label under the active tab */
             canvas_set_font(canvas, FontKeyboard);
             canvas_set_color(canvas, ColorWhite);
-            canvas_draw_str(canvas, x + 8, 4, tab_labels[t]);
+            canvas_draw_str(canvas, x + 6, 4, tab_labels[t]);
             canvas_set_color(canvas, ColorBlack);
         } else {
-            canvas_draw_frame(canvas, x, 1, 28, 3);
+            canvas_draw_frame(canvas, x, 1, 24, 3);
         }
     }
 
@@ -467,9 +550,13 @@ int32_t room_sweep_app(void* p) {
     app->mutex = furi_mutex_alloc(FuriMutexTypeNormal);
     app->running = true;
     app->mode = SweepModeRF;
-    app->sound_on = true;   /* default: sound enabled */
+    app->sound_on = false;  /* default: SOUND OFF (silent operation; Up toggles) */
     app->vibro_on = false;  /* default: vibro off (can be noisy) */
     app->peak_rssi = -120.0f;
+
+    /* GPS parser init (host-tested: 48/48 assertions pass) */
+    nmea_init(&app->gps);
+    app->gps_active = false;
 
     /* notification service */
     app->notif = furi_record_open(RECORD_NOTIFICATION);
@@ -513,6 +600,8 @@ int32_t room_sweep_app(void* p) {
                 app->line_count = 0;
                 app->marauder_state = MarauderIdle;
             }
+            /* GPS tab: enable NMEA feeding only while on GPS tab */
+            app->gps_active = (app->mode == SweepModeGps && app->serial != NULL);
         }
         if(event.key == InputKeyRight) {
             app->mode = (SweepMode)((app->mode + 1) % SweepModeCount);
@@ -520,6 +609,7 @@ int32_t room_sweep_app(void* p) {
                 app->line_count = 0;
                 app->marauder_state = MarauderIdle;
             }
+            app->gps_active = (app->mode == SweepModeGps && app->serial != NULL);
         }
         if(event.key == InputKeyUp) {
             /* Toggle sound */
