@@ -1,0 +1,821 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Source-backed QA audit and architecture map for the Room Sweep Flipper application.">
+<meta name="theme-color" content="#091215">
+<title>Room Sweep | QA audit</title>
+<style>
+  :root {
+    --bg: #091215;
+    --surface: #101d22;
+    --surface-raised: #16262c;
+    --surface-soft: #0d191d;
+    --text: #e7f0ed;
+    --muted: #9ab0ab;
+    --dim: #7c9a94;
+    --line: #22383f;
+    --line-strong: #34535c;
+    --rf: #62d392;
+    --wifi: #4fd5ce;
+    --ble: #91baff;
+    --gps: #ffcf87;
+    --warn: #ffb45b;
+    --alert: #ff7166;
+    --verified: #8de3b0;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    --space-1: 4px;
+    --space-2: 8px;
+    --space-3: 12px;
+    --space-4: 16px;
+    --space-6: 24px;
+    --space-8: 32px;
+    --space-12: 48px;
+    --space-16: 64px;
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 16px/1.6 var(--sans);
+    overflow-x: hidden;
+  }
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: -1;
+    background:
+      radial-gradient(700px 420px at 86% -12%, rgba(79, 213, 206, .10), transparent 65%),
+      radial-gradient(680px 520px at -12% 24%, rgba(98, 211, 146, .08), transparent 65%),
+      linear-gradient(rgba(98, 211, 146, .028) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(98, 211, 146, .028) 1px, transparent 1px);
+    background-size: auto, auto, 44px 44px, 44px 44px;
+    mask-image: linear-gradient(to bottom, #000 0%, rgba(0, 0, 0, .55) 58%, transparent 100%);
+  }
+  ::selection { background: var(--rf); color: var(--bg); }
+  a { color: var(--wifi); }
+  a:hover { color: var(--text); }
+  button { font: inherit; }
+  code, kbd, .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  code { color: var(--wifi); }
+  :focus-visible { outline: 2px solid var(--gps); outline-offset: 3px; }
+
+  .container { width: min(1240px, calc(100% - 48px)); margin: 0 auto; }
+  .topbar {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    border-bottom: 1px solid var(--line);
+    background: rgba(9, 18, 21, .94);
+    backdrop-filter: blur(10px);
+  }
+  .topbar-inner { display: flex; align-items: center; gap: var(--space-6); min-height: 56px; }
+  .brand { color: var(--text); text-decoration: none; font: 700 14px/1 var(--mono); letter-spacing: .08em; white-space: nowrap; }
+  .brand span { color: var(--rf); }
+  .nav-links { display: flex; gap: var(--space-1); margin-left: auto; overflow-x: auto; }
+  .nav-links a { color: var(--muted); padding: 8px 10px; font: 600 12px/1 var(--mono); text-decoration: none; white-space: nowrap; border-radius: 6px; }
+  .nav-links a:hover { color: var(--text); background: var(--surface); }
+
+  .hero { padding: var(--space-16) 0 var(--space-12); border-bottom: 1px solid var(--line); }
+  .hero-grid { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(320px, .75fr); gap: var(--space-12); align-items: end; }
+  .eyebrow { display: flex; align-items: center; gap: 10px; color: var(--rf); font: 700 12px/1.2 var(--mono); letter-spacing: .18em; text-transform: uppercase; }
+  .eyebrow::before { content: ""; width: 28px; height: 2px; background: var(--rf); }
+  h1, h2, h3, h4 { margin: 0; font-family: var(--mono); line-height: 1.15; }
+  h1 { max-width: 11ch; margin-top: var(--space-4); font-size: clamp(2.7rem, 8vw, 5.4rem); letter-spacing: -.06em; }
+  h1 span { color: var(--muted); font-weight: 400; }
+  h2 { margin-bottom: var(--space-3); font-size: clamp(1.55rem, 3vw, 2rem); letter-spacing: -.03em; }
+  h3 { margin-bottom: var(--space-2); font-size: 1.1rem; }
+  h4 { margin-bottom: var(--space-2); font-size: .95rem; }
+  p { max-width: 68ch; margin: 0; color: var(--muted); }
+  .lead { margin-top: var(--space-6); font-size: 1.12rem; }
+  .lead strong, strong { color: var(--text); }
+  .chip-row { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-6); }
+  .chip, .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    border: 1px solid var(--line-strong);
+    border-radius: 6px;
+    padding: 5px 9px;
+    color: var(--muted);
+    font: 600 11px/1.2 var(--mono);
+    letter-spacing: .03em;
+  }
+  .chip::before, .badge::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+  .chip.source, .badge.source { color: var(--wifi); }
+  .chip.host, .badge.host { color: var(--verified); }
+  .chip.live, .badge.live { color: var(--warn); }
+  .chip.blocked, .badge.blocked { color: var(--alert); }
+  .chip.inferred, .badge.inferred { color: var(--gps); }
+
+  .verdict-panel { border: 1px solid rgba(255, 113, 102, .55); border-radius: 10px; padding: var(--space-6); background: linear-gradient(145deg, rgba(255, 113, 102, .10), var(--surface)); }
+  .verdict-panel .label { color: var(--alert); font: 700 11px/1.2 var(--mono); letter-spacing: .16em; text-transform: uppercase; }
+  .verdict-panel strong { display: block; margin: 10px 0 8px; font: 700 1.55rem/1.1 var(--mono); }
+  .verdict-panel p { font-size: .92rem; }
+  .revision { margin-top: var(--space-4); color: var(--dim); font: 12px/1.5 var(--mono); }
+
+  .section { padding: var(--space-12) 0; border-bottom: 1px solid var(--line); scroll-margin-top: 72px; }
+  .section-kicker { margin-bottom: var(--space-2); color: var(--dim); font: 600 11px/1.2 var(--mono); letter-spacing: .18em; text-transform: uppercase; }
+  .section-intro { margin-bottom: var(--space-8); }
+  .grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-6); }
+  .grid-3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-4); }
+  .top-gap { margin-top: var(--space-6); }
+  .card { min-width: 0; border: 1px solid var(--line); border-radius: 10px; padding: var(--space-6); background: var(--surface); }
+  .card.raised { background: var(--surface-raised); }
+  .card h3 { color: var(--text); }
+  .card p + p { margin-top: var(--space-3); }
+  .card .meta { margin-bottom: var(--space-3); color: var(--dim); font: 11px/1.4 var(--mono); text-transform: uppercase; letter-spacing: .1em; }
+  .good { border-color: rgba(98, 211, 146, .42); }
+  .warn { border-color: rgba(255, 180, 91, .45); }
+  .bad { border-color: rgba(255, 113, 102, .55); }
+  .status-line { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); margin-bottom: var(--space-3); }
+
+  .architecture { border: 1px solid var(--line); border-radius: 12px; padding: var(--space-8); background: var(--surface-soft); overflow: hidden; }
+  .architecture-caption { margin-bottom: var(--space-6); color: var(--dim); font: 11px/1.4 var(--mono); letter-spacing: .12em; text-transform: uppercase; }
+  .flow-diagram { display: grid; grid-template-columns: minmax(0, 1fr) 88px minmax(0, 1fr); gap: var(--space-4); align-items: center; }
+  .node { min-height: 180px; border: 1px solid var(--line-strong); border-radius: 9px; padding: var(--space-4); background: var(--bg); }
+  .node.rf { border-color: rgba(98, 211, 146, .6); }
+  .node.uart { border-color: rgba(79, 213, 206, .6); }
+  .node.bffb { border-color: rgba(145, 186, 255, .6); }
+  .node.gps { border-color: rgba(255, 207, 135, .6); }
+  .node-label { margin-bottom: 6px; color: var(--dim); font: 10px/1.2 var(--mono); letter-spacing: .14em; text-transform: uppercase; }
+  .node-title { margin-bottom: var(--space-2); font: 700 1.05rem/1.2 var(--mono); }
+  .node.rf .node-title { color: var(--rf); }
+  .node.uart .node-title { color: var(--wifi); }
+  .node.bffb .node-title { color: var(--ble); }
+  .node.gps .node-title { color: var(--gps); }
+  .node ul { margin: 0; padding-left: 17px; color: var(--muted); font-size: .86rem; }
+  .node li + li { margin-top: 5px; }
+  .connector { display: grid; gap: 6px; justify-items: center; color: var(--wifi); text-align: center; }
+  .connector .line { width: 100%; height: 2px; background: repeating-linear-gradient(90deg, var(--wifi) 0 8px, transparent 8px 15px); animation: trace 1.2s linear infinite; }
+  .connector .arrow { font: 700 17px/1 var(--mono); }
+  .connector .caption { color: var(--dim); font: 10px/1.3 var(--mono); }
+  .flow-diagram .rf-node { grid-column: 1; }
+  .flow-diagram .rf-wire { grid-column: 2; }
+  .flow-diagram .uart-node { grid-column: 3; }
+  .flow-diagram .bffb-node { grid-column: 3; }
+  .flow-diagram .gps-node { grid-column: 1; }
+  .flow-diagram .gps-wire { grid-column: 2; }
+  .text-flow { margin-top: var(--space-6); }
+  .text-flow td:first-child { width: 30%; color: var(--text); font-weight: 600; }
+  @keyframes trace { to { background-position: 15px 0; } }
+
+  .truth-card { position: relative; overflow: hidden; }
+  .truth-card::after { content: ""; position: absolute; top: 0; right: 0; width: 72px; height: 72px; background: radial-gradient(circle at top right, rgba(79, 213, 206, .12), transparent 70%); pointer-events: none; }
+  .truth-card .number { display: block; margin: 12px 0 2px; color: var(--text); font: 700 1.55rem/1 var(--mono); }
+
+  .mode-tabs { display: flex; gap: var(--space-1); margin-bottom: var(--space-6); overflow-x: auto; border-bottom: 1px solid var(--line); }
+  .mode-tab, .filter-button {
+    border: 1px solid transparent;
+    border-bottom: 2px solid transparent;
+    border-radius: 6px 6px 0 0;
+    padding: 10px 13px;
+    color: var(--muted);
+    background: transparent;
+    cursor: pointer;
+    font: 600 12px/1 var(--mono);
+    white-space: nowrap;
+  }
+  .mode-tab:hover, .filter-button:hover { color: var(--text); background: var(--surface); }
+  .mode-tab:active, .filter-button:active { transform: translateY(1px); }
+  .mode-tab[aria-selected="true"] { color: var(--text); border-bottom-color: var(--rf); background: var(--surface); }
+  .mode-tab[data-mode="wifi"][aria-selected="true"] { border-bottom-color: var(--wifi); }
+  .mode-tab[data-mode="ble"][aria-selected="true"] { border-bottom-color: var(--ble); }
+  .mode-tab[data-mode="gps"][aria-selected="true"] { border-bottom-color: var(--gps); }
+  .mode-tab[data-mode="settings"][aria-selected="true"] { border-bottom-color: var(--warn); }
+  .mode-panel[hidden] { display: none; }
+  .mode-panel { animation: panel-in .18s ease-out; }
+  @keyframes panel-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+  .mode-head { display: flex; align-items: start; justify-content: space-between; gap: var(--space-4); margin-bottom: var(--space-6); }
+  .mode-head h3 { font-size: 1.35rem; }
+  .mode-head p { margin-top: 7px; }
+  .meter { border: 1px solid var(--line-strong); border-radius: 8px; padding: var(--space-4); background: var(--bg); }
+  .meter-head { display: flex; justify-content: space-between; gap: var(--space-4); color: var(--muted); font: 11px/1.2 var(--mono); text-transform: uppercase; letter-spacing: .1em; }
+  .meter-head strong { color: var(--text); font-size: 1.3rem; letter-spacing: 0; }
+  .meter-track { position: relative; height: 12px; margin: 15px 0 8px; border: 1px solid var(--line); border-radius: 3px; background: #0a1619; overflow: visible; }
+  .meter-fill { height: 100%; border-radius: 2px; background: linear-gradient(90deg, var(--rf), var(--gps), var(--alert)); }
+  .meter-fill.empty { width: 0; }
+  .meter-fill.half { width: 56%; }
+  .meter-fill.good { width: 78%; }
+  .meter-fill.count { width: 36%; background: var(--wifi); }
+  .meter-mark { position: absolute; top: 19px; left: 36%; color: var(--warn); font: 10px/1 var(--mono); white-space: nowrap; }
+  .meter-foot { display: flex; justify-content: space-between; color: var(--dim); font: 10px/1 var(--mono); }
+  .meter-note { margin-top: var(--space-3); color: var(--muted); font-size: .83rem; }
+  .meter.unavailable { border-style: dashed; }
+  .meter.unavailable .meter-head strong { color: var(--dim); }
+  .signal-bars { display: flex; align-items: end; gap: 3px; height: 58px; margin-top: var(--space-4); }
+  .signal-bars i { display: block; width: 8px; border-radius: 2px 2px 0 0; background: var(--rf); opacity: .78; }
+  .signal-bars i:nth-child(1) { height: 15%; }
+  .signal-bars i:nth-child(2) { height: 31%; }
+  .signal-bars i:nth-child(3) { height: 24%; }
+  .signal-bars i:nth-child(4) { height: 49%; }
+  .signal-bars i:nth-child(5) { height: 66%; }
+  .signal-bars i:nth-child(6) { height: 42%; }
+  .signal-bars i:nth-child(7) { height: 82%; background: var(--alert); }
+  .signal-bars i:nth-child(8) { height: 58%; }
+  .signal-bars i:nth-child(9) { height: 38%; }
+  .signal-bars i:nth-child(10) { height: 74%; background: var(--warn); }
+  .signal-bars i:nth-child(11) { height: 29%; }
+  .signal-bars i:nth-child(12) { height: 44%; }
+  .signal-bars i:nth-child(13) { height: 20%; }
+  .signal-bars i:nth-child(14) { height: 51%; }
+  .signal-bars i:nth-child(15) { height: 32%; }
+  .signal-bars i:nth-child(16) { height: 61%; }
+  .meter-grid { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, .9fr); gap: var(--space-6); }
+  .facts { display: grid; gap: var(--space-2); margin: 0; }
+  .facts, .meter-grid > * { min-width: 0; }
+  .fact { display: grid; min-width: 0; grid-template-columns: 145px minmax(0, 1fr); gap: var(--space-3); padding: 9px 0; border-bottom: 1px dashed var(--line); font-size: .9rem; }
+  .fact dt { color: var(--dim); font: 11px/1.5 var(--mono); text-transform: uppercase; }
+  .fact dd { min-width: 0; margin: 0; color: var(--muted); overflow-wrap: anywhere; }
+  .action-box { margin-top: var(--space-6); border-left: 3px solid var(--rf); border-radius: 0 7px 7px 0; padding: var(--space-4) var(--space-6); background: rgba(98, 211, 146, .07); }
+  .action-box h4 { color: var(--rf); }
+  .action-box p { font-size: .92rem; }
+  .action-box.warn-box { border-color: var(--warn); background: rgba(255, 180, 91, .07); }
+  .action-box.warn-box h4 { color: var(--warn); }
+
+  .finding-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); margin-bottom: var(--space-6); }
+  .filter-button { border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; }
+  .filter-button[aria-pressed="true"] { color: var(--text); border-color: var(--line-strong); background: var(--surface-raised); }
+  .finding-count { margin-left: auto; color: var(--dim); font: 11px/1 var(--mono); }
+  .findings { display: grid; gap: var(--space-3); }
+  .finding { border: 1px solid var(--line); border-radius: 8px; padding: var(--space-4) var(--space-6); background: var(--surface); }
+  .finding[data-severity="high"] { border-left: 3px solid var(--alert); }
+  .finding[data-severity="medium"] { border-left: 3px solid var(--warn); }
+  .finding[data-severity="low"] { border-left: 3px solid var(--dim); }
+  .finding[hidden] { display: none; }
+  .finding-head { display: flex; align-items: start; gap: var(--space-3); }
+  .finding-head h3 { flex: 1; font-size: 1rem; }
+  .severity { flex: 0 0 auto; color: var(--muted); font: 700 10px/1.2 var(--mono); letter-spacing: .12em; text-transform: uppercase; }
+  .severity.high { color: var(--alert); }
+  .severity.medium { color: var(--warn); }
+  .severity.low { color: var(--dim); }
+  .finding p { margin-top: var(--space-2); font-size: .9rem; }
+  details { margin-top: var(--space-3); border-top: 1px solid var(--line); padding-top: var(--space-3); }
+  summary { color: var(--wifi); cursor: pointer; font: 11px/1.4 var(--mono); }
+  .evidence { margin-top: var(--space-2); color: var(--dim); font: 11px/1.6 var(--mono); overflow-wrap: anywhere; }
+
+  .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 9px; }
+  table { width: 100%; min-width: 680px; border-collapse: collapse; font-size: .88rem; }
+  th, td { padding: 12px 14px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+  th { color: var(--dim); background: var(--surface-soft); font: 700 10px/1.3 var(--mono); letter-spacing: .12em; text-transform: uppercase; }
+  td { color: var(--muted); }
+  td:first-child { color: var(--text); font-weight: 600; }
+  tr:last-child td { border-bottom: 0; }
+  .status-text { font: 600 11px/1.4 var(--mono); }
+  .status-text.pass { color: var(--verified); }
+  .status-text.partial { color: var(--warn); }
+  .status-text.block { color: var(--alert); }
+  .status-text.open { color: var(--gps); }
+
+  .footer { padding: var(--space-8) 0 var(--space-12); color: var(--dim); font-size: .85rem; }
+  .footer-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-8); }
+  .footer h3 { color: var(--muted); font-size: .9rem; }
+  .footer ul { margin: var(--space-2) 0 0; padding-left: 18px; }
+
+  @media (max-width: 1040px) {
+    .hero-grid, .grid-3 { grid-template-columns: 1fr 1fr; }
+    .hero-grid > :first-child { grid-column: 1 / -1; }
+    .verdict-panel { max-width: 620px; }
+  }
+  @media (max-width: 720px) {
+    .container { width: min(100% - 28px, 1240px); }
+    .topbar-inner { gap: var(--space-3); }
+    .nav-links { margin-left: 0; }
+    .hero { padding-top: var(--space-12); }
+    .hero-grid, .grid-2, .grid-3, .meter-grid, .footer-grid { grid-template-columns: 1fr; }
+    .hero-grid > :first-child { grid-column: auto; }
+    .architecture { padding: var(--space-4); }
+    .flow-diagram { grid-template-columns: 1fr; }
+    .flow-diagram .rf-node, .flow-diagram .rf-wire, .flow-diagram .uart-node, .flow-diagram .bffb-node, .flow-diagram .gps-node, .flow-diagram .gps-wire { grid-column: 1; }
+    .connector { grid-template-columns: 1fr auto 1fr; align-items: center; }
+    .connector .line { width: 2px; height: 36px; background: repeating-linear-gradient(0deg, var(--wifi) 0 8px, transparent 8px 15px); }
+    .connector .arrow { transform: rotate(90deg); }
+    .fact { grid-template-columns: 1fr; gap: 3px; }
+    .finding-count { width: 100%; margin-left: 0; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+  }
+</style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="container topbar-inner">
+      <a class="brand" href="#verdict">ROOM <span>SWEEP</span> / QA</a>
+      <nav class="nav-links" aria-label="Audit sections">
+        <a href="#architecture">architecture</a>
+        <a href="#modes">modes</a>
+        <a href="#frequency">frequency</a>
+        <a href="#findings">findings</a>
+        <a href="#qa">QA matrix</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero" id="verdict">
+      <div class="container hero-grid">
+        <div>
+          <div class="eyebrow">source-backed field audit</div>
+          <h1>Room Sweep <span>reality check</span></h1>
+          <p class="lead"><strong>The RF core is real, but the current behavior does not match the expected instrument.</strong> Wi-Fi and BLE are raw UART viewers, sound and vibration are intentionally silent, and the latest commit adds RF transmission while the mission and guide still promise passive RX only.</p>
+          <div class="chip-row" aria-label="Evidence status">
+            <span class="chip source">source verified</span>
+            <span class="chip host">host NMEA pass</span>
+            <span class="chip live">Flipper runtime unverified</span>
+            <span class="chip blocked">release contract blocked</span>
+          </div>
+        </div>
+        <aside class="verdict-panel" aria-label="Audit verdict">
+          <div class="label">overall verdict</div>
+          <strong>BLOCKED FOR CLAIMED QA</strong>
+          <p>Keep the existing RF sweep as a useful foundation. Resolve the safety contract, implement honest external-radio feedback, and make the meter the primary view where the source can actually provide a signal value.</p>
+          <div class="revision">audited revision <code>7918f7b</code><br>matches <code>origin/main</code> at the time of audit</div>
+        </aside>
+      </div>
+    </section>
+
+    <section class="section" id="truth">
+      <div class="container">
+        <div class="section-kicker">01 / evidence boundary</div>
+        <h2>What is known, and what is not</h2>
+        <p class="section-intro">The repository and upstream branch are aligned. The host parser can be exercised here; the Flipper build toolchain, USB device, BFFB protocol, and device sound path were not observable in this session.</p>
+        <div class="grid-3">
+          <article class="card truth-card good">
+            <div class="meta">source-backed</div>
+            <h3>Five modes + settings</h3>
+            <span class="number">5 modes / 1 overlay</span>
+            <p><code>room_sweep.h:10-17</code> and <code>room_sweep.c:589-598</code> define and dispatch five modes; Settings is the separate Back-button overlay.</p>
+          </article>
+          <article class="card truth-card good">
+            <div class="meta">host-verified</div>
+            <h3>NMEA parser passes</h3>
+            <span class="number">44 checks</span>
+            <p>Strict host compile and <code>tests/test_nmea.c</code> execution passed with zero failures. The repository claims 48/48 elsewhere, which is not the observed count.</p>
+          </article>
+          <article class="card truth-card bad">
+            <div class="meta">live-unverified</div>
+            <h3>No device surface observed</h3>
+            <span class="number">0 USB nodes</span>
+            <p>No <code>/dev/cu.usb*</code> node or USB profiler match was visible to this session. No launch, tab, audio, LED, BFFB, or display behavior is claimed as live-tested.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="architecture">
+      <div class="container">
+        <div class="section-kicker">02 / system map</div>
+        <h2>Architecture and observable boundaries</h2>
+        <p class="section-intro">There are two sensing paths. The built-in CC1101 path produces a numeric RSSI series. The external UART path currently forwards text and trusts the attached firmware to do the sensing and formatting.</p>
+        <div class="architecture" aria-label="Room Sweep architecture diagram">
+          <div class="architecture-caption">signal path / ownership / current output</div>
+          <div class="flow-diagram">
+            <article class="node rf rf-node">
+              <div class="node-label">built-in radio</div>
+              <div class="node-title">Flipper + CC1101</div>
+              <ul>
+                <li>16 fixed RX frequencies</li>
+                <li>8 RSSI samples per channel</li>
+                <li>LED escalation from peak RSSI</li>
+                <li>Unexpected TX path also present</li>
+              </ul>
+            </article>
+            <div class="connector rf-wire" aria-hidden="true">
+              <div class="line"></div><div class="arrow">→</div><div class="caption">RSSI floats</div>
+            </div>
+            <article class="node uart uart-node">
+              <div class="node-label">owned serial bus</div>
+              <div class="node-title">USART1 / 115200</div>
+              <ul>
+                <li>Acquired handle is treated as availability</li>
+                <li>CR/LF raw lines, 8 retained</li>
+                <li>No handshake or timeout</li>
+                <li>GPS bytes feed parser only on GPS tab</li>
+              </ul>
+            </article>
+            <article class="node gps gps-node">
+              <div class="node-label">internal consumer</div>
+              <div class="node-title">RF tab / LED / viewport</div>
+              <ul>
+                <li>16 bars and peak dBm</li>
+                <li>Threshold banner at greater than -75 dBm</li>
+                <li>Global RX/TX badge can cover bars</li>
+              </ul>
+            </article>
+            <div class="connector gps-wire" aria-hidden="true">
+              <div class="line"></div><div class="arrow">→</div><div class="caption">rendered state</div>
+            </div>
+            <article class="node bffb bffb-node">
+              <div class="node-label">external probe</div>
+              <div class="node-title">BFFB ESP32 / Marauder</div>
+              <ul>
+                <li><code>scanap</code> for Wi-Fi</li>
+                <li><code>sniffbt</code> for BLE</li>
+                <li>Passive NMEA assumed for GPS</li>
+                <li>Firmware/version contract not pinned</li>
+              </ul>
+            </article>
+          </div>
+          <div class="table-wrap text-flow">
+            <table>
+              <thead><tr><th>Boundary</th><th>Current contract</th><th>Observed weakness</th></tr></thead>
+              <tbody>
+                <tr><td>CC1101 → app</td><td><code>get_rssi()</code> is averaged and stored.</td><td>Only 16 presets are visited; no arbitrary RX frequency input or band sweep exists.</td></tr>
+                <tr><td>BFFB → app</td><td>Lines are copied into a rolling text buffer.</td><td>RSSI, counts, device identity, completion, and errors are not parsed into state.</td></tr>
+                <tr><td>app → user</td><td>RF has a chart; external modes have text; all modes show shared status text.</td><td>There is no honest signal meter for Wi-Fi/BLE, and common status text can collide with RF bars.</td></tr>
+                <tr><td>controls → hardware</td><td>Sound/vibro flags toggle; teardown resets notifications.</td><td>Feedback tick emits no sound or haptic message, so ON does not create an audible event.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="modes">
+      <div class="container">
+        <div class="section-kicker">03 / mode-by-mode review</div>
+        <h2>What each tab actually does</h2>
+        <p class="section-intro">Use the tabs below as the first design conversation. The meter previews show the honest primary interface each mode can support after the missing data contract is closed.</p>
+        <nav class="mode-tabs" role="tablist" aria-label="Room Sweep modes">
+          <button class="mode-tab" id="tab-rf" role="tab" aria-controls="panel-rf" aria-selected="true" data-mode="rf">RF / Sub-GHz</button>
+          <button class="mode-tab" id="tab-wifi" role="tab" aria-controls="panel-wifi" aria-selected="false" data-mode="wifi">Wi-Fi</button>
+          <button class="mode-tab" id="tab-ble" role="tab" aria-controls="panel-ble" aria-selected="false" data-mode="ble">BLE</button>
+          <button class="mode-tab" id="tab-gps" role="tab" aria-controls="panel-gps" aria-selected="false" data-mode="gps">GPS</button>
+          <button class="mode-tab" id="tab-info" role="tab" aria-controls="panel-info" aria-selected="false" data-mode="info">Info</button>
+          <button class="mode-tab" id="tab-settings" role="tab" aria-controls="panel-settings" aria-selected="false" data-mode="settings">Settings</button>
+        </nav>
+
+        <section class="mode-panel" id="panel-rf" role="tabpanel" aria-labelledby="tab-rf" data-panel="rf">
+          <div class="mode-head">
+            <div><h3>RF / Sub-GHz sweep</h3><p>Best-functioning sensing path. It already exposes an RSSI graph and peak value, but it is a quick preset survey rather than a spectrum analyzer.</p></div>
+            <span class="badge host">partially working</span>
+          </div>
+          <div class="meter-grid">
+            <div class="card raised">
+              <div class="meter-head"><span>primary meter / peak RSSI</span><strong>-61 dBm</strong></div>
+              <div class="meter-track"><div class="meter-fill half"></div><span class="meter-mark">-75 dBm alert</span></div>
+              <div class="meter-foot"><span>noise floor</span><span>strong signal</span></div>
+              <div class="signal-bars" aria-label="16-channel RF preview"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+              <p class="meter-note">This is the right primary interaction shape: a live meter first, channel detail second.</p>
+            </div>
+            <div class="card">
+              <dl class="facts">
+                <div class="fact"><dt>Current sweep</dt><dd>16 fixed entries in <code>room_sweep.h:22-39</code>.</dd></div>
+                <div class="fact"><dt>Sampling</dt><dd>8 samples per channel, 5 ms apart, arithmetic mean.</dd></div>
+                <div class="fact"><dt>Chart map</dt><dd>-100 to -30 dBm mapped into a 42-pixel bar area.</dd></div>
+                <div class="fact"><dt>Alert</dt><dd>Mean greater than -75 dBm sets the alert and fills the bar.</dd></div>
+                <div class="fact"><dt>Feedback</dt><dd>LED bands exist. Sound/vibro are not emitted.</dd></div>
+              </dl>
+            </div>
+          </div>
+          <div class="action-box"><h4>Recommended next RF shape</h4><p>Keep <strong>Quick survey</strong> as the fast 16-preset pass. Add a separate <strong>Band sweep</strong> with explicit band, span, step, dwell, progress, peak hold, and a refinement pass around peaks. Do not promise every CC1101 synthesizer step as a useful scan: the tuned step is about 397-412 Hz, while the receiver bandwidth and dwell time determine whether a signal is actually observable.</p></div>
+          <details><summary>Source evidence</summary><div class="evidence"><code>room_sweep.h:22-42</code> / <code>room_sweep.c:193-258</code> / <code>room_sweep.c:328-405</code></div></details>
+        </section>
+
+        <section class="mode-panel" id="panel-wifi" role="tabpanel" aria-labelledby="tab-wifi" data-panel="wifi" hidden>
+          <div class="mode-head">
+            <div><h3>Wi-Fi AP scan</h3><p>Current behavior is a command-and-log view, not a proximity instrument. Moving toward a router will not change the screen unless another scan produces different output.</p></div>
+            <span class="badge blocked">missing meter</span>
+          </div>
+          <div class="meter-grid">
+            <div class="card raised">
+              <div class="meter unavailable"><div class="meter-head"><span>primary meter / strongest AP RSSI</span><strong>RSSI --</strong></div><div class="meter-track"><div class="meter-fill empty"></div></div><div class="meter-foot"><span>not parsed</span><span>no value</span></div><p class="meter-note">The UI cannot meter what the app never extracts from the UART line.</p></div>
+              <div class="chip-row"><span class="chip blocked">scan once on OK</span><span class="chip blocked">raw lines only</span></div>
+            </div>
+            <div class="card">
+              <dl class="facts">
+                <div class="fact"><dt>Trigger</dt><dd>OK sends <code>scanap\r\n</code> when a serial handle exists.</dd></div>
+                <div class="fact"><dt>Display</dt><dd>Five newest strings from the eight-line buffer.</dd></div>
+                <div class="fact"><dt>RSSI</dt><dd>No parser, numeric state, threshold, or meter exists.</dd></div>
+                <div class="fact"><dt>Refresh</dt><dd>No periodic rescan or completion/timeout transition.</dd></div>
+                <div class="fact"><dt>Connection</dt><dd>Non-null USART ownership is labelled “BFFB connected.”</dd></div>
+              </dl>
+            </div>
+          </div>
+          <div class="action-box"><h4>Recommended Wi-Fi primary UI</h4><p>Parse the actual Marauder AP result contract into <strong>strongest RSSI</strong>, <strong>AP count</strong>, last scan age, and a compact sorted result list. If the device supports it, poll/rescan on a controlled cadence and show “last sample” so movement has a visible cause-and-effect. Until then, label the screen <strong>AP scan output</strong>, not signal meter.</p></div>
+          <details><summary>Source evidence</summary><div class="evidence"><code>room_sweep.c:151-185</code> / <code>room_sweep.c:408-429</code> / <code>room_sweep.c:821-823</code></div></details>
+        </section>
+
+        <section class="mode-panel" id="panel-ble" role="tabpanel" aria-labelledby="tab-ble" data-panel="ble" hidden>
+          <div class="mode-head">
+            <div><h3>BLE sniff</h3><p>The BLE path has the same structural gap as Wi-Fi. It can show whatever the BFFB prints, but it has no application-level understanding of a device or its signal strength.</p></div>
+            <span class="badge blocked">missing meter</span>
+          </div>
+          <div class="meter-grid">
+            <div class="card raised">
+              <div class="meter unavailable"><div class="meter-head"><span>primary meter / strongest device RSSI</span><strong>RSSI --</strong></div><div class="meter-track"><div class="meter-fill empty"></div></div><div class="meter-foot"><span>not parsed</span><span>no value</span></div><p class="meter-note">A raw sniff transcript cannot provide a reliable proximity trend by itself.</p></div>
+              <div class="chip-row"><span class="chip blocked">sniff once on OK</span><span class="chip blocked">no device model</span></div>
+            </div>
+            <div class="card">
+              <dl class="facts">
+                <div class="fact"><dt>Trigger</dt><dd>OK sends <code>sniffbt\r\n</code> when a serial handle exists.</dd></div>
+                <div class="fact"><dt>Display</dt><dd>Five newest raw strings, shared with Wi-Fi state.</dd></div>
+                <div class="fact"><dt>RSSI</dt><dd>No parser or per-device signal value exists.</dd></div>
+                <div class="fact"><dt>Feedback</dt><dd>No LED, sound, or vibro path is tied to BLE detections.</dd></div>
+                <div class="fact"><dt>Failure</dt><dd><code>MarauderError</code> is rendered but never assigned.</dd></div>
+              </dl>
+            </div>
+          </div>
+          <div class="action-box"><h4>Recommended BLE primary UI</h4><p>Define a stable result model first: address or name, RSSI, last-seen time, and count. Then meter the strongest current device and show a freshness indicator. Treat “sniffing” and “results available” as separate states so a quiet room does not look like a hung command.</p></div>
+          <details><summary>Source evidence</summary><div class="evidence"><code>room_sweep.c:431-451</code> / <code>room_sweep.c:821-827</code> / <code>room_sweep.h:59-63</code></div></details>
+        </section>
+
+        <section class="mode-panel" id="panel-gps" role="tabpanel" aria-labelledby="tab-gps" data-panel="gps" hidden>
+          <div class="mode-head">
+            <div><h3>GPS</h3><p>GPS is not a simple dBm meter in this implementation. A fix/satellite health panel is the honest primary view until per-satellite C/N0 is parsed.</p></div>
+            <span class="badge host">parser tested</span>
+          </div>
+          <div class="meter-grid">
+            <div class="card raised">
+              <div class="meter"><div class="meter-head"><span>primary meter / fix health</span><strong>NO FIX</strong></div><div class="meter-track"><div class="meter-fill count"></div></div><div class="meter-foot"><span>0 used</span><span>satellite count only</span></div><p class="meter-note">The current parser exposes satellite counts, time, position, and fix state, not signal-to-noise per satellite.</p></div>
+              <div class="chip-row"><span class="chip host">NMEA parser passes</span><span class="chip inferred">115200 assumed</span></div>
+            </div>
+            <div class="card">
+              <dl class="facts">
+                <div class="fact"><dt>Input</dt><dd>Passive NMEA bytes only while GPS tab is active.</dd></div>
+                <div class="fact"><dt>Baud</dt><dd>UART remains at 115200; declared 9600 fallback is unused.</dd></div>
+                <div class="fact"><dt>Good</dt><dd>GGA/RMC/GLL/ZDA/GSV and checksum rejection have host coverage.</dd></div>
+                <div class="fact"><dt>Defect</dt><dd>Valid no-fix data does not clear an earlier fix/position.</dd></div>
+                <div class="fact"><dt>Defect</dt><dd>Short checksum-valid GLL input can read <code>fields[5]</code> after only five fields.</dd></div>
+              </dl>
+            </div>
+          </div>
+          <div class="action-box"><h4>Recommended GPS primary UI</h4><p>Show fix state, satellites used/in view, last sentence age, UTC, and position. Add C/N0 bars only after the parser accepts and models the GSV signal-strength fields. Clear the fix immediately on a valid no-fix sentence and distinguish “stale last fix” from “current fix.”</p></div>
+          <details><summary>Source evidence</summary><div class="evidence"><code>nmea.c:74-228</code> / <code>room_sweep.c:454-516</code> / <code>room_sweep.h:52-54</code></div></details>
+        </section>
+
+        <section class="mode-panel" id="panel-info" role="tabpanel" aria-labelledby="tab-info" data-panel="info" hidden>
+          <div class="mode-head">
+            <div><h3>Info</h3><p>The Info tab is useful as a capability and safety contract, but its current copy is stale and says “Passive RX. No transmit” while source exposes RF TX.</p></div>
+            <span class="badge blocked">stale contract</span>
+          </div>
+          <div class="grid-2">
+            <div class="card bad"><div class="meta">current text</div><h3>v2.0 / 16ch / passive RX</h3><p><code>room_sweep.c:518-528</code> reports v2.0 and no transmission.</p></div>
+            <div class="card warn"><div class="meta">current source</div><h3>Five modes / TX path</h3><p><code>room_sweep.h:10-17</code> defines GPS and Info; <code>room_sweep.c:268-302</code> implements a bounded OOK carrier path.</p></div>
+          </div>
+          <div class="action-box warn-box"><h4>Recommended Info surface</h4><p>Make this a live capability card: app revision, tab count, UART ownership state, BFFB handshake state, current RF mode, audio/vibro actual state, and a clear legal/safety contract. It should never be a second source of truth maintained by hand.</p></div>
+          <details><summary>Source evidence</summary><div class="evidence"><code>room_sweep.c:518-528</code> / <code>ROOM_SWEEP_GUIDE.html:591-606</code> / <code>MISSION.md:15-29</code></div></details>
+        </section>
+
+        <section class="mode-panel" id="panel-settings" role="tabpanel" aria-labelledby="tab-settings" data-panel="settings" hidden>
+          <div class="mode-head">
+            <div><h3>Settings and actions</h3><p>Settings are opened with short Back; long Back exits. Up/Down also toggle sound and vibration directly on scan screens.</p></div>
+            <span class="badge blocked">misleading controls</span>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Action</th><th>Source behavior</th><th>QA judgment</th></tr></thead>
+              <tbody>
+                <tr><td>Short Back</td><td>Opens settings overlay.</td><td><span class="status-text partial">Needs documentation</span> guide says Back exits.</td></tr>
+                <tr><td>Long Back</td><td>Stops app and begins cleanup.</td><td><span class="status-text pass">Good intent</span> needs device verification.</td></tr>
+                <tr><td>Sound / vibro</td><td>Flags toggle, but <code>feedback_tick</code> emits no messages.</td><td><span class="status-text block">Broken contract</span> ON has no user effect.</td></tr>
+                <tr><td>RF OK</td><td>First OK shows warning; second OK starts up to 3 seconds of TX.</td><td><span class="status-text block">Safety mismatch</span> mission says passive RX only.</td></tr>
+                <tr><td>TX frequency</td><td>Cycles 433.92, 868.35, 915, and 315 MHz.</td><td><span class="status-text block">Too broad</span> plan called for a single fixed frequency and hold gate.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <details><summary>Source evidence</summary><div class="evidence"><code>room_sweep.c:533-584</code> / <code>room_sweep.c:741-833</code> / <code>fix_plan.md:5-22</code></div></details>
+        </section>
+      </div>
+    </section>
+
+    <section class="section" id="frequency">
+      <div class="container">
+        <div class="section-kicker">04 / RF feasibility</div>
+        <h2>Can the scanner reach frequencies between the 16 presets?</h2>
+        <p class="section-intro"><strong>Yes, within the CC1101 operating bands, with an important qualification.</strong> The hardware can be programmed across its supported bands; the current application simply chooses 16 points. It cannot receive the entire 300-928 MHz span because the CC1101 has three separated operating bands.</p>
+        <div class="grid-2">
+          <article class="card good">
+            <div class="meta">hardware capability</div>
+            <h3>Continuous tuning inside three bands</h3>
+            <p>Official documentation lists receive coverage at 300-348 MHz, 387-464 MHz, and 779-928 MHz. TI lists a programmed frequency resolution of approximately 397-412 Hz for a 26-27 MHz crystal.</p>
+            <div class="chip-row"><span class="chip source">band-limited</span><span class="chip source">~400 Hz tuned step</span></div>
+          </article>
+          <article class="card bad">
+            <div class="meta">current implementation</div>
+            <h3>Preset-only quick survey</h3>
+            <p><code>rf_channels[]</code> has 16 entries. No user-selected RX frequency, span, step, dwell, progress, or refinement pass exists. The TX presets are a separate four-entry list and do not expand RX coverage.</p>
+            <div class="chip-row"><span class="chip blocked">16 RX points</span><span class="chip blocked">no interval sweep</span></div>
+          </article>
+        </div>
+        <div class="table-wrap top-gap">
+          <table>
+            <thead><tr><th>Option</th><th>Value to the user</th><th>Cost / tradeoff</th><th>Recommendation</th></tr></thead>
+            <tbody>
+              <tr><td>Quick survey</td><td>Fast view of known ISM/common points.</td><td>Misses signals between presets.</td><td><span class="status-text pass">Keep</span> as default.</td></tr>
+              <tr><td>Coarse band sweep</td><td>Finds unknown activity across a selected band.</td><td>Slower; step and channel bandwidth must be chosen together.</td><td><span class="status-text open">Prototype</span> with peak hold and noise-floor calibration.</td></tr>
+              <tr><td>Peak refinement</td><td>Re-scans around a detected peak at finer steps.</td><td>Only useful after a coarse hit; adds state to the UI.</td><td><span class="status-text open">Preferred</span> over scanning every synthesizer step.</td></tr>
+              <tr><td>Every tuned step</td><td>Maximum nominal frequency granularity.</td><td>Very slow and not equal to signal-resolution; current 650 kHz OOK preset is much wider than a 400 Hz bin.</td><td><span class="status-text block">Do not default</span> without a measurement plan.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="action-box"><h4>Decision needed</h4><p>Choose whether the next RF prototype should optimize for <strong>fast room survey</strong>, <strong>unknown-signal discovery</strong>, or <strong>frequency characterization</strong>. One screen cannot optimize all three without making the controls and scan time confusing.</p></div>
+        <details><summary>Primary hardware sources</summary><div class="evidence"><a href="https://docs.flipper.net/zero/sub-ghz/frequencies">Flipper Zero frequency bands</a> · <a href="https://www.ti.com/lit/ds/symlink/cc1101.pdf">TI CC1101 datasheet, frequency range and programmed resolution</a> · local source <code>room_sweep.h:22-39</code> and <code>room_sweep.c:209-220</code></div></details>
+      </div>
+    </section>
+
+    <section class="section" id="meters">
+      <div class="container">
+        <div class="section-kicker">05 / proposed interface contract</div>
+        <h2>Signal meter as the primary UI</h2>
+        <p class="section-intro">Your instinct is right for active sensing modes. The rule should be: show the strongest honest numeric signal first, then the evidence list. GPS and Info need health/status meters rather than pretending every tab has an RF-style dBm value.</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Tab</th><th>Primary meter</th><th>Secondary detail</th><th>Current blocker</th></tr></thead>
+            <tbody>
+              <tr><td>RF</td><td>Peak RSSI plus sweep progress and peak hold.</td><td>Channel/frequency bars and threshold marker.</td><td>Preset-only scan; chart overlay hides rightmost bars.</td></tr>
+              <tr><td>Wi-Fi</td><td>Strongest AP RSSI, count, last-scan age.</td><td>Sorted AP rows with SSID/channel/RSSI.</td><td>No parser or refresh loop.</td></tr>
+              <tr><td>BLE</td><td>Strongest device RSSI, count, freshness.</td><td>Device rows with name/address/RSSI.</td><td>No parser or device model.</td></tr>
+              <tr><td>GPS</td><td>Fix state, satellites used/in view, sentence age.</td><td>UTC, position, optional C/N0 bars later.</td><td>Stale fix state; C/N0 not parsed.</td></tr>
+              <tr><td>Info</td><td>Capability and connection health, not dBm.</td><td>Version, safety contract, firmware/baud.</td><td>Static copy contradicts source.</td></tr>
+              <tr><td>Settings</td><td>Actual feedback state.</td><td>Sound/vibro result and TX policy.</td><td>Flags imply behavior that is absent; TX policy conflicts with mission.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="grid-2 top-gap">
+          <article class="card good"><div class="meta">interaction rule</div><h3>Every meter needs freshness</h3><p>Show <code>live</code>, <code>last sample 2.4 s</code>, or <code>stale</code>. A frozen number is worse than an honest empty state when the user is moving a device around a room.</p></article>
+          <article class="card warn"><div class="meta">interaction rule</div><h3>Meter and list are not the same thing</h3><p>The bar should answer “is anything getting stronger?” The list should answer “what is it?” Keep both, but do not make a scrolling transcript carry the burden of a meter.</p></article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="findings">
+      <div class="container">
+        <div class="section-kicker">06 / risk register</div>
+        <h2>Findings by severity</h2>
+        <p class="section-intro">These are source-backed findings from the current upstream-aligned revision. “Live” means a device run would still be required; no live observation is smuggled into the source verdict.</p>
+        <div class="finding-toolbar" aria-label="Finding filters">
+          <button class="filter-button" type="button" data-filter="all" aria-pressed="true">all</button>
+          <button class="filter-button" type="button" data-filter="high" aria-pressed="false">high</button>
+          <button class="filter-button" type="button" data-filter="medium" aria-pressed="false">medium</button>
+          <button class="filter-button" type="button" data-filter="low" aria-pressed="false">low</button>
+          <span class="finding-count" id="finding-count" role="status">8 findings shown</span>
+        </div>
+        <div class="findings">
+          <article class="finding" data-severity="high">
+            <div class="finding-head"><span class="severity high">high</span><h3>Passive-RX mission conflicts with active RF TX</h3></div>
+            <p><code>room_sweep.c:268-302</code> starts a bounded OOK carrier after a two-OK flow, while <code>MISSION.md:15-16</code>, the Info tab, and the guide say passive RX and no transmit.</p>
+            <details><summary>What must be decided</summary><div class="evidence">Recommended for the current mission: remove or hard-disable TX. If TX is retained, rewrite the legal/safety contract, use the planned hold gate and fixed frequency, and add device QA before release.</div></details>
+          </article>
+          <article class="finding" data-severity="high">
+            <div class="finding-head"><span class="severity high">high</span><h3>Wi-Fi/BLE cannot produce the requested distance response</h3></div>
+            <p><code>scanap</code> and <code>sniffbt</code> are sent once; output is stored as raw text. There is no RSSI extraction, refresh cadence, count, freshness, or external-mode alert path.</p>
+            <details><summary>Source locations</summary><div class="evidence"><code>room_sweep.c:116-185</code> / <code>room_sweep.c:408-451</code> / <code>room_sweep.c:821-827</code></div></details>
+          </article>
+          <article class="finding" data-severity="high">
+            <div class="finding-head"><span class="severity high">high</span><h3>Sound and vibration controls are state-only</h3></div>
+            <p>The current feedback function explicitly emits no notification messages. Sound defaults OFF and toggling it cannot make the device audible in this revision.</p>
+            <details><summary>Source locations</summary><div class="evidence"><code>room_sweep.c:305-323</code> / <code>room_sweep.c:691-692</code> / <code>room_sweep.c:796-804</code></div></details>
+          </article>
+          <article class="finding" data-severity="medium">
+            <div class="finding-head"><span class="severity medium">medium</span><h3>USART ownership is labelled as BFFB connection</h3></div>
+            <p><code>app-&gt;serial != NULL</code> only proves that the Flipper acquired the serial handle. There is no handshake, response timeout, firmware identity, or scan completion/error state.</p>
+            <details><summary>Source locations</summary><div class="evidence"><code>room_sweep.c:151-165</code> / <code>room_sweep.c:420-451</code> / <code>ROOM_SWEEP_GUIDE.html:697-701</code></div></details>
+          </article>
+          <article class="finding" data-severity="medium">
+            <div class="finding-head"><span class="severity medium">medium</span><h3>GPS can display a stale fix</h3></div>
+            <p>After a valid fix, later valid no-fix GGA/RMC/GLL sentences do not clear <code>has_fix</code> or the old position. The screen can continue to claim “3D FIX.”</p>
+            <details><summary>Source locations</summary><div class="evidence"><code>nmea.c:86-152</code> / <code>room_sweep.c:466-510</code></div></details>
+          </article>
+          <article class="finding" data-severity="medium">
+            <div class="finding-head"><span class="severity medium">medium</span><h3>Short GLL input has an out-of-bounds guard bug</h3></div>
+            <p>The parser accepts <code>nf &gt;= 5</code> and then reads <code>fields[5]</code>. A checksum-valid short sentence can reach this path from the UART callback without an error state.</p>
+            <details><summary>Source locations</summary><div class="evidence"><code>nmea.c:37-49</code> / <code>nmea.c:134-152</code> / <code>tests/test_nmea.c:89-97</code></div></details>
+          </article>
+          <article class="finding" data-severity="medium">
+            <div class="finding-head"><span class="severity medium">medium</span><h3>RF chart is partially occluded by global status text</h3></div>
+            <p>Bars 13-16 occupy the right edge, then the common RX/TX badge is painted at x=106. The status indicator can cover the bars it is meant to accompany.</p>
+            <details><summary>Source locations</summary><div class="evidence"><code>room_sweep.c:346-381</code> / <code>room_sweep.c:617-635</code></div></details>
+          </article>
+          <article class="finding" data-severity="low">
+            <div class="finding-head"><span class="severity low">low</span><h3>Build and documentation evidence is not reproducible from this checkout</h3></div>
+            <p>There is no tracked build manifest or SDK pin. Verification scripts use missing absolute paths under <code>~/flipper-room-sweep</code> and <code>~/.ufbt</code>. The guide is stale relative to source.</p>
+            <details><summary>Source locations</summary><div class="evidence"><code>_verify_api.py:11-12</code> / <code>_smoke_test.py:3-5</code> / <code>ROOM_SWEEP_GUIDE.html:789-797</code></div></details>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="qa">
+      <div class="container">
+        <div class="section-kicker">07 / verification plan</div>
+        <h2>Tab-by-tab QA matrix</h2>
+        <p class="section-intro">This separates what can be checked on the host from what requires the real Flipper and BFFB. A green parser test is not evidence that a tab renders, a UART command is accepted, or a speaker makes sound.</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Scenario</th><th>Host/source check</th><th>Device check needed</th><th>Pass evidence</th></tr></thead>
+            <tbody>
+              <tr><td>RF quick survey</td><td>Inspect channel list, threshold math, and chart bounds.</td><td>Launch app, watch bars and LED, confirm no right-edge occlusion.</td><td>Video or annotated display capture plus build hash.</td></tr>
+              <tr><td>RF interval sweep</td><td>Design/test frequency iterator and timing contract.</td><td>Compare a known carrier at an in-between frequency with preset mode.</td><td>Frequency, step, dwell, and observed peak log.</td></tr>
+              <tr><td>Wi-Fi movement</td><td>Fixture parser for a known Marauder AP line.</td><td>Run repeated scans while moving toward a known router.</td><td>RSSI/time series changes and stale/error states.</td></tr>
+              <tr><td>BLE movement</td><td>Fixture parser for a known result line.</td><td>Repeat sniff/scan with one known BLE beacon.</td><td>Strongest RSSI, count, freshness, and alert behavior.</td></tr>
+              <tr><td>GPS loss of fix</td><td>Add no-fix-after-fix and short-GLL tests.</td><td>Move from outdoor fix to shielded/indoor conditions.</td><td>Fix clears; stale state is explicitly labelled.</td></tr>
+              <tr><td>Audio/vibro</td><td>Unit-test feedback state transitions if extracted.</td><td>Toggle ON, trigger known RF event, hear click/feel pulse.</td><td>Audible/haptic observation; no source-only pass.</td></tr>
+              <tr><td>Teardown</td><td>Review join/release paths.</td><td>Long Back from every tab and overlay; relaunch another app.</td><td>No stuck UART, radio, LED, sound, or crash.</td></tr>
+              <tr><td>Documentation</td><td>Compare Info/guide against source revision.</td><td>Read on-device labels during every flow.</td><td>One versioned contract, no passive/TX contradiction.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="grid-2 top-gap">
+          <article class="card good"><div class="meta">completed here</div><h3>Host parser smoke</h3><p><code>cc -std=c11 -Wall -Wextra -Werror -I. tests/test_nmea.c nmea.c</code> compiled and ran with zero failures.</p></article>
+          <article class="card bad"><div class="meta">blocked here</div><h3>Firmware and device QA</h3><p><code>ufbt</code>, the configured SDK export table, and the expected USB serial device were unavailable. The deployment scripts were not run because their paths are stale and device use was not performed.</p></article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="decisions">
+      <div class="container">
+        <div class="section-kicker">08 / next conversation</div>
+        <h2>Decisions that unlock the next part</h2>
+        <div class="grid-2">
+          <article class="card bad"><div class="meta">safety contract</div><h3>Should RF TX exist at all?</h3><p>The mission currently says passive RX only. My recommendation is to remove or hard-disable TX before improving the scanner. If you want a controlled test transmitter, that is a separate product mode with a new safety and legal contract.</p></article>
+          <article class="card good"><div class="meta">RF scope</div><h3>Quick survey or discovery sweep?</h3><p>Choose between keeping the 16-point view, adding coarse band sweeps plus peak refinement, or building a characterization tool. The best meter layout depends on this choice.</p></article>
+          <article class="card warn"><div class="meta">BFFB contract</div><h3>Can we pin the response format?</h3><p>The Wi-Fi/BLE meter needs a stable line or packet contract with RSSI, identity, and freshness. The current app cannot infer that reliably from arbitrary raw output.</p></article>
+          <article class="card warn"><div class="meta">feedback policy</div><h3>Should sound default OFF or ON?</h3><p>Current defaults are OFF, and ON is not wired. Once real feedback exists, decide the default and use an immediate test pulse when the setting changes so “enabled” is observable.</p></article>
+        </div>
+        <div class="action-box"><h4>Recommended build order</h4><p>1. Resolve passive RX versus TX. 2. Make sound/vibro controls truthful. 3. Add a BFFB handshake and response parser fixture. 4. Add Wi-Fi/BLE meters and freshness. 5. Fix GPS stale-state and short-GLL bounds. 6. Prototype coarse RF sweep plus peak refinement. 7. Re-run the full device matrix and update the guide from the resulting contract.</p></div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="container footer-grid">
+      <div>
+        <h3>Local evidence</h3>
+        <ul>
+          <li><code>room_sweep.c</code> / <code>room_sweep.h</code> current implementation</li>
+          <li><code>MISSION.md</code> and <code>fix_plan.md</code> intended contract</li>
+          <li><a href=".omo/evidence/subghz-rf-ui-audit-code-review.md">RF audit</a> · <a href=".omo/evidence/external-bffb-uart-audit-code-review.md">BFFB/audio/GPS audit</a> · <a href=".omo/evidence/audit-qa-build-deployment-coverage-code-review.md">QA/build audit</a></li>
+        </ul>
+      </div>
+      <div>
+        <h3>Artifact notes</h3>
+        <ul>
+          <li>This file is a source/host audit, not a claim that the Flipper UI passed live QA.</li>
+          <li>Design tokens for this surface are documented in <a href="DESIGN.md"><code>DESIGN.md</code></a>.</li>
+          <li>Generated as a standalone, dependency-free HTML file for offline review.</li>
+        </ul>
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    (() => {
+      const tabs = [...document.querySelectorAll('[role="tab"]')];
+      const panels = [...document.querySelectorAll('[role="tabpanel"]')];
+
+      function selectMode(mode, updateHash = true) {
+        tabs.forEach((tab) => {
+          const selected = tab.dataset.mode === mode;
+          tab.setAttribute('aria-selected', String(selected));
+          tab.tabIndex = selected ? 0 : -1;
+        });
+        panels.forEach((panel) => {
+          panel.hidden = panel.dataset.panel !== mode;
+        });
+        if (updateHash) history.replaceState(null, '', `#mode-${mode}`);
+      }
+
+      tabs.forEach((tab, index) => {
+        tab.addEventListener('click', () => selectMode(tab.dataset.mode));
+        tab.addEventListener('keydown', (event) => {
+          if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+          event.preventDefault();
+          const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : (index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
+          tabs[next].focus();
+          selectMode(tabs[next].dataset.mode);
+        });
+      });
+
+      const modeHash = location.hash.match(/^#mode-(rf|wifi|ble|gps|info|settings)$/);
+      selectMode(modeHash ? modeHash[1] : 'rf', false);
+
+      const filterButtons = [...document.querySelectorAll('[data-filter]')];
+      const findings = [...document.querySelectorAll('.finding')];
+      const findingCount = document.querySelector('#finding-count');
+
+      function filterFindings(filter) {
+        let visible = 0;
+        findings.forEach((finding) => {
+          const show = filter === 'all' || finding.dataset.severity === filter;
+          finding.hidden = !show;
+          if (show) visible += 1;
+        });
+        filterButtons.forEach((button) => button.setAttribute('aria-pressed', String(button.dataset.filter === filter)));
+        findingCount.textContent = `${visible} finding${visible === 1 ? '' : 's'} shown`;
+      }
+
+      filterButtons.forEach((button) => button.addEventListener('click', () => filterFindings(button.dataset.filter)));
+    })();
+  </script>
+</body>
+</html>
