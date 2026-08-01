@@ -1,7 +1,7 @@
-# MISSION CONTRACT — Room Sweep v3.0
+# MISSION CONTRACT — Room Sweep v3.0.1
 
 **Owner:** 0-CYBERDYNE-SYSTEMS-0 · **Date:** 2026-08-01
-**Status:** DEPLOYED FOR FIELD TEST
+**Status:** DEPLOYED — READY FOR FIELD TEST v2
 
 ## What this app does
 
@@ -40,11 +40,20 @@ TX NEVER activates on tab entry. Multiple deliberate actions required.
 ## Feedback contract
 
 - Sound defaults OFF, vibro defaults OFF
-- When enabled: Geiger-style clicks proportional to signal strength
-- Sustained lock tone when signal holds above threshold
-- Vibro pulses on detection edges and sustained lock
+- **CONTINUOUS** when enabled: heartbeat click every 2s at idle, accelerating to 60ms at extreme signal
+- Sustained lock tone when signal holds above threshold for 5+ ticks
+- Vibro: heartbeat pulse every 4s, detection edge pulse, sustained lock pulse every 800ms
 - Enabling sound/vibro produces an immediate test pulse (observable)
 - LED escalation: green → yellow → red → red blink (by peak RSSI)
+
+## v3.0.1 fixes (post field-test 1)
+
+- [x] Settings crash fixed: removed InputTypePress from event filter (double-fire bug)
+- [x] Audio made continuous: heartbeat model (2s idle → 60ms hot), not just threshold clicks
+- [x] Marauder parser rewritten: handles bare RSSI at line start, skips '#' echo lines
+- [x] Removed fake "done" markers — scans stream until stopscan
+- [x] User guide written (USER_GUIDE.md)
+- [x] QA audit: settings + input handler verified crash-safe
 
 ## Control scheme
 

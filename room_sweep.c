@@ -280,8 +280,12 @@ static void marauder_send(App* app, const char* cmd) {
 
 /* ================================================================== */
 /* Marauder line parser — extract RSSI/identity from UART lines        */
-/* Handles: "RSSI: -45", "rssi":-45, "ESSID:"/"essid", "Channel:",    */
-/* "BSSID:"/"bssid", "Name:"/"name", "MAC:"/"mac"                     */
+/* Actual Marauder scanap format:                                      */
+/*   "-45 Ch: 6 AA:BB:CC:DD:EE:FF ESSID: NetworkName 00 00"           */
+/* Actual Marauder sniffbt format:                                     */
+/*   "-60 Device: DeviceName"                                          */
+/* Also handles generic "RSSI: -45" fallback for other firmware.       */
+/* Lines starting with '#' are command echoes — skip.                  */
 /* ================================================================== */
 
 /* Find integer value after a key string. Returns true if found. */
@@ -297,7 +301,7 @@ static bool parse_int_after(const char* line, const char* key, int* out) {
     return true;
 }
 
-/* Extract quoted or delimited string value after key. */
+/* Extract string value after key (up to space/comma/quote/end). */
 static void parse_str_after(const char* line, const char* key, char* out, size_t out_sz) {
     out[0] = '\0';
     const char* p = strstr(line, key);
@@ -305,34 +309,93 @@ static void parse_str_after(const char* line, const char* key, char* out, size_t
     p += strlen(key);
     while(*p == ' ' || *p == ':' || *p == '"') p++;
     size_t i = 0;
-    while(*p && *p != '"' && *p != ',' && *p != ' ' && i < out_sz - 1) {
+    while(*p && *p != '"' && *p != ',' && i < out_sz - 1) {
+        if(*p == ' ' && i > 0) break; /* stop at first space after content */
         out[i++] = *p++;
     }
     out[i] = '\0';
 }
 
-/* Parse a WiFi AP result line into the AP table */
-static void parse_wifi_line(App* app, const char* line) {
-    int rssi_val = 0;
-    if(!parse_int_after(line, "RSSI", &rssi_val) &&
-       !parse_int_after(line, "rssi", &rssi_val)) {
-        return; /* No RSSI — not a result line */
+/* Extract ESSID which may contain spaces (everything after "ESSID: " to end) */
+static void parse_essid(const char* line, char* out, size_t out_sz) {
+    out[0] = '\0';
+    const char* p = strstr(line, "ESSID: ");
+    if(!p) p = strstr(line, "ESSID:");
+    if(!p) return;
+    p += 6; /* skip "ESSID:" */
+    while(*p == ' ') p++;
+    size_t i = 0;
+    /* ESSID goes to end of line (may contain spaces), strip trailing hex */
+    const char* end = line + strlen(line);
+    /* Trim trailing " XX XX" capability bytes if present */
+    const char* trim = end;
+    while(trim > p && *(trim-1) == ' ') trim--;
+    /* Check for trailing 2 hex byte pairs " XX XX" */
+    if(trim - p > 6 && *(trim-6) == ' ' && *(trim-3) == ' ') {
+        trim -= 6;
     }
-    if(rssi_val > 0 || rssi_val < -120) return; /* sanity */
+    while(p < trim && i < out_sz - 1) {
+        out[i++] = *p++;
+    }
+    out[i] = '\0';
+}
+
+/* Parse a WiFi AP result line into the AP table.
+ * Format: "-45 Ch: 6 AA:BB:CC:DD:EE:FF ESSID: Name 00 00" */
+static void parse_wifi_line(App* app, const char* line) {
+    if(line[0] == '#') return; /* command echo */
+    if(line[0] == '>') return; /* prompt */
+
+    int rssi_val = 0;
+    bool found_rssi = false;
+
+    /* Primary: line starts with negative number (Marauder format) */
+    if(line[0] == '-' && line[1] >= '0' && line[1] <= '9') {
+        char* end;
+        long v = strtol(line, &end, 10);
+        if(v >= -120 && v <= 0 && (*end == ' ' || *end == '\0')) {
+            rssi_val = (int)v;
+            found_rssi = true;
+        }
+    }
+    /* Fallback: "RSSI: -45" or "rssi":-45 (other firmware) */
+    if(!found_rssi) {
+        if(!parse_int_after(line, "RSSI", &rssi_val) &&
+           !parse_int_after(line, "rssi", &rssi_val)) {
+            return;
+        }
+    }
+    if(rssi_val > 0 || rssi_val < -120) return;
+
+    /* Must have ESSID or Ch: to be a WiFi AP line */
+    if(!strstr(line, "ESSID") && !strstr(line, "Ch:") && !strstr(line, "essid")) {
+        return;
+    }
 
     char ssid[33] = {0};
-    parse_str_after(line, "ESSID", ssid, sizeof(ssid));
-    if(ssid[0] == '\0') parse_str_after(line, "essid", ssid, sizeof(ssid));
-    if(ssid[0] == '\0') parse_str_after(line, "SSID", ssid, sizeof(ssid));
+    parse_essid(line, ssid, sizeof(ssid));
+    if(ssid[0] == '\0') {
+        parse_str_after(line, "ESSID", ssid, sizeof(ssid));
+    }
     if(ssid[0] == '\0') snprintf(ssid, sizeof(ssid), "AP_%d", app->wifi_count);
 
     int ch_val = 0;
-    parse_int_after(line, "Channel", &ch_val);
-    if(ch_val == 0) parse_int_after(line, "channel", &ch_val);
+    parse_int_after(line, "Ch:", &ch_val);
+    if(ch_val == 0) parse_int_after(line, "Channel", &ch_val);
 
+    /* BSSID: look for MAC pattern (XX:XX:XX:XX:XX:XX) */
     char bssid[18] = {0};
-    parse_str_after(line, "BSSID", bssid, sizeof(bssid));
-    if(bssid[0] == '\0') parse_str_after(line, "bssid", bssid, sizeof(bssid));
+    const char* mac_p = strstr(line, ":");
+    if(mac_p && mac_p > line + 2) {
+        /* Back up to find start of MAC (17 chars: XX:XX:XX:XX:XX:XX) */
+        const char* start = mac_p - 2;
+        while(start > line && *(start-1) != ' ') start--;
+        size_t len = 0;
+        const char* m = start;
+        while(*m && *m != ' ' && len < 17) { bssid[len++] = *m++; }
+        bssid[len] = '\0';
+        if(len < 11) bssid[0] = '\0'; /* not a valid MAC */
+    }
 
     /* Update existing or add new */
     uint32_t now = furi_get_tick();
@@ -346,7 +409,6 @@ static void parse_wifi_line(App* app, const char* line) {
             return;
         }
     }
-    /* Find empty slot */
     for(uint8_t i = 0; i < MAX_WIFI_APS; i++) {
         if(!app->wifi_aps[i].valid) {
             app->wifi_aps[i].valid = true;
@@ -361,23 +423,46 @@ static void parse_wifi_line(App* app, const char* line) {
     }
 }
 
-/* Parse a BLE device result line */
+/* Parse a BLE device result line.
+ * Format: "-60 Device: DeviceName" */
 static void parse_ble_line(App* app, const char* line) {
+    if(line[0] == '#') return;
+    if(line[0] == '>') return;
+
     int rssi_val = 0;
-    if(!parse_int_after(line, "RSSI", &rssi_val) &&
-       !parse_int_after(line, "rssi", &rssi_val)) {
-        return;
+    bool found_rssi = false;
+
+    /* Primary: line starts with negative number */
+    if(line[0] == '-' && line[1] >= '0' && line[1] <= '9') {
+        char* end;
+        long v = strtol(line, &end, 10);
+        if(v >= -120 && v <= 0 && (*end == ' ' || *end == '\0')) {
+            rssi_val = (int)v;
+            found_rssi = true;
+        }
+    }
+    /* Fallback */
+    if(!found_rssi) {
+        if(!parse_int_after(line, "RSSI", &rssi_val) &&
+           !parse_int_after(line, "rssi", &rssi_val)) {
+            return;
+        }
     }
     if(rssi_val > 0 || rssi_val < -120) return;
 
+    /* Must have "Device:" or "Name:" to be a BLE line */
+    if(!strstr(line, "Device") && !strstr(line, "Name") && !strstr(line, "name")) {
+        return;
+    }
+
     char name[33] = {0};
-    parse_str_after(line, "Name", name, sizeof(name));
-    if(name[0] == '\0') parse_str_after(line, "name", name, sizeof(name));
+    parse_str_after(line, "Device:", name, sizeof(name));
+    if(name[0] == '\0') parse_str_after(line, "Device", name, sizeof(name));
+    if(name[0] == '\0') parse_str_after(line, "Name", name, sizeof(name));
     if(name[0] == '\0') snprintf(name, sizeof(name), "BLE_%d", app->ble_count);
 
     char mac[18] = {0};
     parse_str_after(line, "MAC", mac, sizeof(mac));
-    if(mac[0] == '\0') parse_str_after(line, "mac", mac, sizeof(mac));
 
     uint32_t now = furi_get_tick();
     for(uint8_t i = 0; i < MAX_BLE_DEVS; i++) {
@@ -402,28 +487,27 @@ static void parse_ble_line(App* app, const char* line) {
     }
 }
 
-/* Process new UART lines — route to appropriate parser */
+/* Process new UART lines — route to appropriate parser.
+ * Marauder streams results continuously until stopscan — no "done" marker.
+ * Lines starting with '#' are command echoes; '> ' is the prompt. */
 static void process_uart_lines(App* app) {
     if(!app->uart_rx_flag) return;
     app->uart_rx_flag = false;
 
-    /* Check for completion/error markers */
     const char* latest = app->lines[0];
-    if(strstr(latest, "done") || strstr(latest, "Done") ||
-       strstr(latest, "complete") || strstr(latest, "finished")) {
-        if(app->marauder_state == MarauderScanning) {
-            app->marauder_state = MarauderDone;
-        }
-    }
-    if(strstr(latest, "error") || strstr(latest, "Error") ||
-       strstr(latest, "fail") || strstr(latest, "Fail")) {
+
+    /* Skip command echoes and prompts */
+    if(latest[0] == '#' || latest[0] == '>') return;
+
+    /* Error detection */
+    if(strstr(latest, "not supported") || strstr(latest, "Index not in range")) {
         app->marauder_state = MarauderError;
+        return;
     }
 
     /* Route based on current tab */
     if(app->mode == SweepModeWifi) {
         parse_wifi_line(app, latest);
-        /* Update strongest */
         app->wifi_strongest = -127;
         for(uint8_t i = 0; i < MAX_WIFI_APS; i++) {
             if(app->wifi_aps[i].valid && app->wifi_aps[i].rssi > app->wifi_strongest) {
@@ -431,6 +515,9 @@ static void process_uart_lines(App* app) {
             }
         }
         app->wifi_last_scan_tick = furi_get_tick();
+        if(app->marauder_state == MarauderIdle) {
+            app->marauder_state = MarauderScanning;
+        }
     } else if(app->mode == SweepModeBle) {
         parse_ble_line(app, latest);
         app->ble_strongest = -127;
@@ -440,6 +527,9 @@ static void process_uart_lines(App* app) {
             }
         }
         app->ble_last_scan_tick = furi_get_tick();
+        if(app->marauder_state == MarauderIdle) {
+            app->marauder_state = MarauderScanning;
+        }
     }
 }
 
@@ -646,15 +736,16 @@ static int32_t tx_thread(void* ctx) {
 }
 
 /* ================================================================== */
-/* Feedback tick — actual sound + vibration                            */
+/* Feedback tick — continuous Geiger audio + vibro                     */
+/* When enabled: slow heartbeat always, faster/louder near signals     */
 /* ================================================================== */
 static void feedback_tick(App* app) {
     float peak = app->peak_rssi;
 
-    /* WiFi/BLE can also drive feedback */
-    if(app->mode == SweepModeWifi && app->wifi_strongest > -100) {
+    /* WiFi/BLE RSSI can drive feedback too */
+    if(app->mode == SweepModeWifi && app->wifi_strongest > -127) {
         peak = (float)app->wifi_strongest;
-    } else if(app->mode == SweepModeBle && app->ble_strongest > -100) {
+    } else if(app->mode == SweepModeBle && app->ble_strongest > -127) {
         peak = (float)app->ble_strongest;
     }
 
@@ -663,37 +754,44 @@ static void feedback_tick(App* app) {
 
     uint32_t now = furi_get_tick();
 
-    /* Geiger clicks: rate proportional to signal strength */
-    if(app->sound_on && peak > -95.0f) {
-        /* Interval: strong signal = fast clicks, weak = slow */
+    if(app->sound_on) {
+        /* Geiger click rate: heartbeat at 2s idle → 60ms when very strong */
         uint32_t interval;
-        if(peak > -55.0f) interval = 80;
-        else if(peak > -65.0f) interval = 150;
-        else if(peak > -75.0f) interval = 300;
-        else if(peak > -85.0f) interval = 600;
-        else interval = 1200;
+        if(peak > -50.0f) interval = 60;
+        else if(peak > -60.0f) interval = 100;
+        else if(peak > -70.0f) interval = 180;
+        else if(peak > -80.0f) interval = 350;
+        else if(peak > -90.0f) interval = 700;
+        else if(peak > -100.0f) interval = 1200;
+        else interval = 2000; /* heartbeat: slow tick confirming audio is live */
 
         if(now - app->last_click_ms >= interval) {
             app->last_click_ms = now;
             notification_message(app->notif, &seq_geiger_click);
         }
 
-        /* Sustained lock tone when locked above threshold for 5+ ticks */
+        /* Lock tone when sustained above threshold */
         if(app->lock_ticks == 5) {
             notification_message(app->notif, &seq_lock_tone);
         }
-    } else if(!alerting && app->was_alerting && app->sound_on) {
-        /* Stop lock tone when signal drops */
-        notification_message(app->notif, &seq_sound_stop);
+        /* Stop tone when signal drops */
+        if(!alerting && app->was_alerting) {
+            notification_message(app->notif, &seq_sound_stop);
+        }
     }
 
-    /* Vibro: pulse on rising edge of alert */
-    if(app->vibro_on && alerting && !app->was_alerting) {
-        notification_message(app->notif, &seq_vibro_pulse);
-    }
-    /* Sustained vibro: pulse every 800ms while locked */
-    if(app->vibro_on && app->lock_ticks > 5) {
-        if(now - app->last_vibro_ms >= 800) {
+    if(app->vibro_on) {
+        /* Vibro: pulse on rising edge */
+        if(alerting && !app->was_alerting) {
+            notification_message(app->notif, &seq_vibro_pulse);
+        }
+        /* Sustained: periodic pulse while locked */
+        if(app->lock_ticks > 5 && now - app->last_vibro_ms >= 800) {
+            app->last_vibro_ms = now;
+            notification_message(app->notif, &seq_vibro_pulse);
+        }
+        /* Heartbeat vibro: very slow pulse so user knows it's active */
+        if(!alerting && now - app->last_vibro_ms >= 4000) {
             app->last_vibro_ms = now;
             notification_message(app->notif, &seq_vibro_pulse);
         }
@@ -1347,8 +1445,7 @@ int32_t room_sweep_app(void* p) {
             view_port_update(view_port);
             continue;
         }
-        if(event.type != InputTypeShort && event.type != InputTypeLong &&
-           event.type != InputTypePress) continue;
+        if(event.type != InputTypeShort && event.type != InputTypeLong) continue;
 
         /* --- Settings overlay input --- */
         if(app->settings_active) {

@@ -20,7 +20,16 @@
 [x] Build: clean with -Werror, API 87.1, target 7
 [x] Deployed to device via USB
 
-## NEXT (field-test driven)
+## DONE (v3.0.1 — field-test fix round)
+
+[x] Settings crash: removed InputTypePress from event filter (was double-firing)
+[x] Audio continuous: heartbeat 2s idle → 60ms hot (not just threshold clicks)
+[x] Marauder parser: bare RSSI at line start, skip '#' echoes, no fake done markers
+[x] User guide: USER_GUIDE.md (every button/tab/mode/setting documented)
+[x] QA audit: settings + input handler verified crash-safe (no bounds/null/div issues)
+[x] MISSION.md updated to v3.0.1
+
+## NEXT (field-test 2 driven)
 
 [ ] Verify audio is audible on device (user test near WiFi router)
 [ ] Verify TX guardrails work end-to-end on device
