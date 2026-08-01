@@ -1,0 +1,878 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ROOM SWEEP v1.0 — Field Manual</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0b1417;
+    --bg2:#0e1a1e;
+    --surface:#101d22;
+    --surface2:#14232a;
+    --line:#1e3138;
+    --line2:#2a444e;
+    --text:#e8f1ef;
+    --muted:#8fa8a3;
+    --dim:#5f7873;
+    /* functional accents — one per sensing path / tab */
+    --rf:#5fd08a;        /* sub-GHz sweep  */
+    --wifi:#4dd6d0;      /* WiFi AP scan   */
+    --ble:#8ab4ff;       /* BLE sniff      */
+    --info:#a7b3ba;      /* info tab       */
+    --alert:#ff6b5e;     /* signal / error */
+    --amber:#ffb454;     /* threshold/warn */
+    /* flipper LCD */
+    --lcd:#ffcf87;
+    --lcdpix:#231604;
+    --disp:'Chakra Petch',ui-monospace,monospace;
+    --body:'IBM Plex Sans',system-ui,sans-serif;
+    --mono:'IBM Plex Mono',ui-monospace,monospace;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    background:var(--bg);
+    color:var(--text);
+    font-family:var(--body);
+    font-size:16px;
+    line-height:1.65;
+    overflow-x:hidden;
+  }
+  /* layered ambient background */
+  body::before{
+    content:"";position:fixed;inset:0;z-index:-2;pointer-events:none;
+    background:
+      radial-gradient(900px 600px at 85% -10%, rgba(77,214,208,.07), transparent 60%),
+      radial-gradient(800px 700px at -10% 30%, rgba(95,208,138,.06), transparent 55%),
+      radial-gradient(700px 600px at 60% 110%, rgba(255,180,84,.05), transparent 55%);
+  }
+  body::after{
+    content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;opacity:.5;
+    background-image:
+      linear-gradient(rgba(95,208,138,.035) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(95,208,138,.035) 1px, transparent 1px);
+    background-size:44px 44px;
+    mask-image:radial-gradient(1200px 900px at 50% 0%, #000 30%, transparent 100%);
+  }
+  ::selection{background:var(--rf);color:#04110a}
+
+  a{color:var(--wifi);text-decoration:none}
+  a:hover{text-decoration:underline}
+  code,kbd,.mono{font-family:var(--mono)}
+  .wrap{max-width:1080px;margin:0 auto;padding:0 28px}
+
+  /* ---------- top nav ---------- */
+  nav{
+    position:sticky;top:0;z-index:50;
+    background:rgba(11,20,23,.88);backdrop-filter:blur(10px);
+    border-bottom:1px solid var(--line);
+  }
+  nav .wrap{display:flex;align-items:center;gap:20px;height:56px}
+  nav .brand{font-family:var(--disp);font-weight:700;font-size:15px;letter-spacing:.06em;white-space:nowrap}
+  nav .brand em{font-style:normal;color:var(--rf)}
+  nav .links{display:flex;gap:4px;margin-left:auto;overflow-x:auto}
+  nav .links a{
+    font-family:var(--mono);font-size:12px;color:var(--muted);
+    padding:6px 10px;border-radius:6px;white-space:nowrap;transition:.18s;
+  }
+  nav .links a:hover{color:var(--text);background:var(--surface2);text-decoration:none}
+  nav .links a.active{color:var(--rf);background:rgba(95,208,138,.1)}
+
+  /* ---------- hero ---------- */
+  header.hero{padding:72px 0 56px;border-bottom:1px solid var(--line)}
+  .hero .wrap{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:56px;align-items:center}
+  @media(max-width:880px){.hero .wrap{grid-template-columns:1fr}}
+  .kicker{
+    font-family:var(--mono);font-size:12px;letter-spacing:.22em;text-transform:uppercase;
+    color:var(--rf);display:flex;align-items:center;gap:10px;margin-bottom:18px;
+  }
+  .kicker::before{content:"";width:26px;height:2px;background:var(--rf)}
+  h1{
+    font-family:var(--disp);font-weight:700;
+    font-size:clamp(40px,6vw,64px);line-height:1.02;letter-spacing:.01em;
+  }
+  h1 .thin{color:var(--muted);font-weight:500}
+  .tagline{margin-top:18px;color:var(--muted);font-size:17px;max-width:46ch}
+  .tagline b{color:var(--text)}
+  .chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:26px}
+  .chip{
+    font-family:var(--mono);font-size:12px;color:var(--muted);
+    border:1px solid var(--line2);border-radius:6px;padding:5px 11px;
+    background:var(--surface);transition:.18s;
+  }
+  .chip b{color:var(--text);font-weight:600}
+  .chip:hover{border-color:var(--rf);color:var(--text);transform:translateY(-1px)}
+
+  /* ---------- flipper screen mockup ---------- */
+  .device{justify-self:center}
+  .bezel{
+    background:#16211f;border:1px solid #24342f;border-radius:22px;
+    padding:22px 20px 26px;box-shadow:0 24px 60px -20px rgba(0,0,0,.7), inset 0 1px 0 rgba(255,255,255,.05);
+    position:relative;
+  }
+  .bezel .label{
+    position:absolute;bottom:7px;left:0;right:0;text-align:center;
+    font-family:var(--mono);font-size:9px;letter-spacing:.3em;color:#3c554e;
+  }
+  .screen{
+    width:320px;height:160px;background:var(--lcd);border-radius:8px;
+    position:relative;overflow:hidden;
+    box-shadow:inset 0 2px 10px rgba(60,35,0,.35);
+  }
+  .screen .px{color:var(--lcdpix)}
+  .screen-tabbar{position:absolute;top:3px;left:4px;right:4px;display:flex;gap:8px}
+  .screen-tabbar span{flex:1;height:7px;border:2px solid var(--lcdpix);border-radius:2px;opacity:.85}
+  .screen-tabbar span.on{background:var(--lcdpix)}
+  .screen-title{
+    position:absolute;top:16px;left:6px;font-family:var(--mono);
+    font-size:11px;color:var(--lcdpix);font-weight:500;
+  }
+  .rfbars{position:absolute;left:4px;right:4px;bottom:8px;height:118px;display:flex;align-items:flex-end;gap:0}
+  .rfbars i{flex:1;display:flex;justify-content:center}
+  .rfbars i b{
+    width:13px;background:var(--lcdpix);display:block;
+    transform-origin:bottom;animation:bar 2.6s ease-in-out infinite alternate;
+  }
+  @keyframes bar{from{transform:scaleY(.12)}to{transform:scaleY(1)}}
+  .threshold-line{
+    position:absolute;left:0;right:0;bottom:46px;height:2px;background:var(--lcdpix);opacity:.8;
+  }
+  .signal{
+    position:absolute;top:16px;right:8px;font-family:var(--mono);font-size:11px;
+    color:var(--lcdpix);font-weight:700;animation:blink 1.1s steps(2) infinite;
+  }
+  @keyframes blink{50%{opacity:0}}
+  .dpr{display:flex;gap:26px;justify-content:center;margin-top:20px}
+  .dpr .btn{width:34px;height:34px;border-radius:50%;border:2px solid #2c423b;display:grid;place-items:center;color:#4a6a60;font-family:var(--mono);font-size:12px}
+  .dpr .btn.ok{width:44px;height:44px;border-color:#3d5a51}
+
+  /* ---------- sections ---------- */
+  section{padding:76px 0;border-bottom:1px solid var(--line);scroll-margin-top:72px}
+  section:last-of-type{border-bottom:none}
+  .secnum{font-family:var(--mono);font-size:13px;color:var(--dim);letter-spacing:.2em}
+  h2{
+    font-family:var(--disp);font-weight:700;font-size:clamp(28px,3.6vw,38px);
+    margin:8px 0 14px;letter-spacing:.01em;
+  }
+  h3{font-family:var(--disp);font-weight:600;font-size:21px;margin:34px 0 12px}
+  .lead{color:var(--muted);max-width:70ch;margin-bottom:8px}
+  .lead b{color:var(--text)}
+  p+p{margin-top:12px}
+
+  /* callout */
+  .note{
+    border-left:3px solid var(--amber);background:rgba(255,180,84,.06);
+    padding:14px 18px;border-radius:0 8px 8px 0;margin:22px 0;font-size:15px;color:var(--muted);
+  }
+  .note b{color:var(--amber)}
+  .note.danger{border-color:var(--alert);background:rgba(255,107,94,.06)}
+  .note.danger b{color:var(--alert)}
+  .note.good{border-color:var(--rf);background:rgba(95,208,138,.06)}
+  .note.good b{color:var(--rf)}
+
+  /* tables */
+  table{width:100%;border-collapse:collapse;margin:20px 0;font-size:14.5px}
+  th,td{text-align:left;padding:11px 14px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{
+    font-family:var(--mono);font-size:12px;letter-spacing:.12em;text-transform:uppercase;
+    color:var(--muted);border-bottom:1px solid var(--line2);background:var(--surface);
+  }
+  tr:hover td{background:rgba(255,255,255,.02)}
+  td code{background:var(--surface2);padding:2px 7px;border-radius:5px;font-size:13px;color:var(--wifi)}
+
+  /* code blocks */
+  pre{
+    background:#0a1214;border:1px solid var(--line);border-radius:10px;
+    padding:18px 20px;overflow-x:auto;margin:18px 0;position:relative;
+  }
+  pre code{font-size:13.5px;line-height:1.7;color:#cfe3de}
+  pre .c{color:var(--dim)}
+  pre .g{color:var(--rf)}
+  pre .y{color:var(--amber)}
+  pre .cap{
+    position:absolute;top:10px;right:14px;font-family:var(--mono);font-size:10px;
+    letter-spacing:.18em;color:var(--dim);text-transform:uppercase;
+  }
+
+  /* diagrams */
+  .diagram{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:30px 26px;margin:26px 0;overflow-x:auto}
+  .diagram .dtitle{font-family:var(--mono);font-size:12px;letter-spacing:.18em;text-transform:uppercase;color:var(--dim);margin-bottom:22px}
+  .topo{display:grid;grid-template-columns:1fr auto 1fr;gap:0;align-items:stretch;min-width:640px}
+  .node{
+    border:1.5px solid var(--line2);border-radius:12px;padding:18px;background:var(--bg2);
+    position:relative;transition:.2s;
+  }
+  .node:hover{transform:translateY(-3px);box-shadow:0 12px 30px -14px rgba(0,0,0,.6)}
+  .node .nname{font-family:var(--disp);font-weight:700;font-size:16px;margin-bottom:4px}
+  .node .nsub{font-family:var(--mono);font-size:11px;color:var(--dim);margin-bottom:12px;letter-spacing:.06em}
+  .node ul{list-style:none}
+  .node li{font-size:13px;color:var(--muted);padding:4px 0 4px 16px;position:relative}
+  .node li::before{content:"▸";position:absolute;left:0;color:var(--dim)}
+  .node li b{color:var(--text);font-weight:600}
+  .node.flipper{border-color:rgba(95,208,138,.4)}
+  .node.flipper .nname{color:var(--rf)}
+  .node.esp{border-color:rgba(77,214,208,.4)}
+  .node.esp .nname{color:var(--wifi)}
+  .link{display:flex;flex-direction:column;justify-content:center;align-items:center;gap:6px;padding:0 14px;min-width:150px}
+  .link .pipe{width:100%;height:2px;background:repeating-linear-gradient(90deg,var(--wifi) 0 8px,transparent 8px 15px);position:relative;animation:flow 1.2s linear infinite}
+  .link .pipe::after{content:"";position:absolute;right:-2px;top:-4px;border:5px solid transparent;border-left:8px solid var(--wifi)}
+  @keyframes flow{to{background-position:15px 0}}
+  .link .ltag{font-family:var(--mono);font-size:11px;color:var(--wifi);white-space:nowrap}
+  .link .lsub{font-family:var(--mono);font-size:10px;color:var(--dim);white-space:nowrap}
+
+  /* software stack */
+  .stack{display:flex;flex-direction:column;gap:0;min-width:620px}
+  .layer{
+    border:1.5px solid var(--line2);border-radius:10px;padding:14px 18px;background:var(--bg2);
+    display:flex;align-items:center;gap:16px;transition:.2s;
+  }
+  .layer:hover{border-color:var(--line2);transform:translateX(4px)}
+  .layer+.layer{margin-top:10px;position:relative}
+  .layer+.layer::before{content:"";position:absolute;left:50%;top:-11px;width:2px;height:11px;background:var(--line2)}
+  .layer .lname{font-family:var(--mono);font-size:13px;font-weight:600;min-width:170px}
+  .layer .ldesc{font-size:13px;color:var(--muted)}
+  .layer.entry{border-color:rgba(255,180,84,.45)} .layer.entry .lname{color:var(--amber)}
+  .layer.core{border-color:rgba(95,208,138,.45)} .layer.core .lname{color:var(--rf)}
+  .layer.thread{border-color:rgba(77,214,208,.35)} .layer.thread .lname{color:var(--wifi)}
+  .layer.render{border-color:rgba(167,179,186,.3)} .layer.render .lname{color:var(--info)}
+  .fork{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+  .fork .layer{margin-top:0}
+
+  /* flow steps */
+  .flow{display:flex;flex-direction:column;gap:0;counter-reset:step}
+  .fstep{
+    display:grid;grid-template-columns:44px 1fr;gap:18px;position:relative;padding-bottom:26px;
+  }
+  .fstep::before{content:"";position:absolute;left:21px;top:44px;bottom:0;width:2px;background:var(--line)}
+  .fstep:last-child::before{display:none}
+  .fstep .num{
+    width:44px;height:44px;border-radius:50%;border:1.5px solid var(--line2);
+    display:grid;place-items:center;font-family:var(--mono);font-size:15px;font-weight:600;
+    background:var(--surface);color:var(--muted);counter-increment:step;transition:.2s;
+  }
+  .fstep:hover .num{border-color:var(--rf);color:var(--rf);transform:scale(1.08)}
+  .fstep .body h4{font-family:var(--disp);font-size:17px;margin-bottom:4px}
+  .fstep .body p{font-size:14.5px;color:var(--muted)}
+  .fstep .body code{background:var(--surface2);padding:2px 7px;border-radius:5px;font-size:13px;color:var(--wifi)}
+
+  /* journey */
+  .journey{counter-reset:jn}
+  .jstep{
+    display:grid;grid-template-columns:120px 1fr;gap:28px;padding:26px 0;border-bottom:1px dashed var(--line);
+    align-items:start;transition:.2s;
+  }
+  .jstep:last-child{border-bottom:none}
+  .jstep:hover{background:rgba(255,255,255,.015)}
+  .jstep .jno{font-family:var(--disp);font-weight:700;font-size:44px;line-height:1;color:var(--line2);counter-increment:jn}
+  .jstep .jno::after{content:counter(jn,decimal-leading-zero)}
+  .jstep h4{font-family:var(--disp);font-size:18px;margin-bottom:6px}
+  .jstep .act{font-size:14.5px;color:var(--muted)}
+  .jstep .see{
+    margin-top:10px;font-size:13.5px;color:var(--text);border-left:3px solid var(--rf);
+    padding:8px 14px;background:rgba(95,208,138,.05);border-radius:0 8px 8px 0;
+  }
+  .jstep .see b{color:var(--rf)}
+  @media(max-width:760px){.jstep{grid-template-columns:1fr}.jstep .jno{font-size:30px}}
+
+  /* mini screens in journey */
+  .mini{
+    display:inline-block;width:180px;height:90px;background:var(--lcd);border-radius:6px;
+    position:relative;overflow:hidden;margin-top:10px;vertical-align:top;
+    box-shadow:inset 0 2px 8px rgba(60,35,0,.3);
+  }
+  .mini .t{position:absolute;top:8px;left:6px;font-family:var(--mono);font-size:7.5px;color:var(--lcdpix)}
+  .mini .tb{position:absolute;top:3px;left:4px;right:4px;display:flex;gap:4px}
+  .mini .tb span{flex:1;height:4px;border:1.5px solid var(--lcdpix);border-radius:1px;opacity:.85}
+  .mini .tb span.on{background:var(--lcdpix)}
+  .mini .msg{position:absolute;top:38px;left:8px;font-family:var(--mono);font-size:8px;color:var(--lcdpix)}
+
+  /* reveal on scroll */
+  .rv{opacity:0;transform:translateY(18px);transition:opacity .6s ease,transform .6s ease}
+  .rv.in{opacity:1;transform:none}
+
+  footer{padding:44px 0 60px;color:var(--dim);font-size:13.5px}
+  footer .mono{color:var(--muted)}
+
+  /* legend */
+  .legend{display:flex;flex-wrap:wrap;gap:16px;margin:6px 0 0}
+  .legend span{font-family:var(--mono);font-size:12px;color:var(--muted);display:flex;align-items:center;gap:7px}
+  .legend i{width:10px;height:10px;border-radius:3px;display:inline-block}
+
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:22px}
+  @media(max-width:760px){.two{grid-template-columns:1fr}}
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:22px;transition:.2s}
+  .card:hover{border-color:var(--line2);transform:translateY(-2px)}
+  .card h4{font-family:var(--disp);font-size:16px;margin-bottom:8px}
+  .card p{font-size:14px;color:var(--muted)}
+  .card .dot{width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:8px}
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap">
+    <div class="brand">ROOM<em>SWEEP</em> <span style="color:var(--dim)">v1.0</span></div>
+    <div class="links">
+      <a href="#what">what it is</a>
+      <a href="#arch">architecture</a>
+      <a href="#flows">data flows</a>
+      <a href="#journey">user journey</a>
+      <a href="#controls">controls</a>
+      <a href="#expect">what to expect</a>
+      <a href="#limits">limits</a>
+      <a href="#legal">legal</a>
+      <a href="#build">build</a>
+    </div>
+  </div>
+</nav>
+
+<!-- ================= HERO ================= -->
+<header class="hero">
+  <div class="wrap">
+    <div>
+      <div class="kicker">Flipper Zero app · field manual</div>
+      <h1>ROOM SWEEP<br><span class="thin">wireless surveillance detector</span></h1>
+      <p class="tagline">
+        A passive, <b>receive-only</b> sweep tool that looks for hidden transmitters in a room
+        across <b>two independent sensing paths</b>: the Flipper's own sub-GHz radio, and an
+        external ESP32 running Marauder for WiFi &amp; Bluetooth.
+      </p>
+      <div class="chips">
+        <div class="chip"><b>16</b> sub-GHz channels</div>
+        <div class="chip"><b>4</b> tabs</div>
+        <div class="chip"><b>304–925</b> MHz</div>
+        <div class="chip"><b>115200</b> baud UART</div>
+        <div class="chip"><b>0</b> transmitters — RX only</div>
+        <div class="chip">API <b>87.1</b></div>
+      </div>
+    </div>
+    <div class="device rv">
+      <div class="bezel">
+        <div class="screen">
+          <div class="screen-tabbar"><span class="on"></span><span></span><span></span><span></span></div>
+          <div class="screen-title">RF Sweep (Sub-GHz)</div>
+          <div class="signal">SIGNAL!</div>
+          <div class="rfbars" id="heroBars"></div>
+          <div class="threshold-line"></div>
+        </div>
+        <div class="label">FLIPPER&nbsp;ZERO&nbsp;·&nbsp;ROOM&nbsp;SWEEP</div>
+      </div>
+      <div class="dpr">
+        <div class="btn">◀</div><div class="btn ok">OK</div><div class="btn">▶</div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- ================= WHAT IT IS ================= -->
+<section id="what">
+  <div class="wrap">
+    <div class="secnum">01</div>
+    <h2>What this is</h2>
+    <p class="lead">
+      <b>Room Sweep</b> answers one question: <b>"is anything in this room transmitting right now?"</b>
+      It sweeps a fixed list of frequencies and bands commonly used by analog bugs, wireless cameras,
+      and trackers, and separately listens for WiFi access points and Bluetooth devices via an external radio.
+    </p>
+    <p class="lead">
+      It is <b>purely passive</b>. It never transmits on any radio. The CC1101 sub-GHz front-end is held in
+      receive, and the Marauder ESP32 is put in monitor/sniff mode. This matters legally and operationally —
+      a detector that transmits would itself be a bug.
+    </p>
+
+    <div class="two" style="margin-top:26px">
+      <div class="card rv">
+        <h4><span class="dot" style="background:var(--rf)"></span>Path A — Sub-GHz RSSI sweep (built in)</h4>
+        <p>The Flipper's internal CC1101 hops across 16 ISM/surveillance channels, averages 8 RSSI samples
+        per channel, and draws a live bar chart. Any channel above <b>−75&nbsp;dBm</b> fills solid, prints
+        <b>SIGNAL!</b>, and lights the red LED. Needs no external hardware.</p>
+      </div>
+      <div class="card rv">
+        <h4><span class="dot" style="background:var(--wifi)"></span>Path B — Marauder over UART (external)</h4>
+        <p>An ESP32 (the "BFFB" board) running Marauder firmware connects to the Flipper's USART at
+        <b>115200 baud</b>. The app sends <code class="mono">scanap</code> (WiFi APs) or
+        <code class="mono">sniffbt</code> (BLE) and streams the last 5 result lines on screen.</p>
+      </div>
+    </div>
+
+    <div class="note good">
+      <b>Deployment status:</b> the current build (<span class="mono">room_sweep.fap</span>) is installed at
+      <span class="mono">/ext/apps/Tools/room_sweep.fap</span> and verified running on the device.
+      The earlier launch crash was traced to a single non-existent HAL call and is fixed — see
+      <a href="#limits">Limits &amp; history</a>.
+    </div>
+  </div>
+</section>
+
+<!-- ================= ARCHITECTURE ================= -->
+<section id="arch">
+  <div class="wrap">
+    <div class="secnum">02</div>
+    <h2>Architecture</h2>
+    <p class="lead">Two radios, one microcontroller, one external board. Here is how the pieces connect.</p>
+
+    <h3>Hardware topology</h3>
+    <div class="diagram rv">
+      <div class="dtitle">Physical layout · RX only, no transmit path</div>
+      <div class="topo">
+        <div class="node flipper">
+          <div class="nname">Flipper Zero</div>
+          <div class="nsub">STM32WB55 · Momentum mntm-012</div>
+          <ul>
+            <li><b>CC1101</b> sub-GHz radio → Path A sweep</li>
+            <li><b>128×64</b> mono LCD · 4 tabs</li>
+            <li><b>D-pad + OK</b> → input queue</li>
+            <li><b>USART1</b> (PC0&nbsp;TX / PC1&nbsp;RX) → ESP32</li>
+            <li><b>Red LED</b> → signal alert</li>
+          </ul>
+        </div>
+        <div class="link">
+          <div class="ltag">UART · USART1</div>
+          <div class="pipe"></div>
+          <div class="lsub">115200 baud · \r\n lines</div>
+        </div>
+        <div class="node esp">
+          <div class="nname">BFFB ESP32</div>
+          <div class="nsub">Marauder firmware · optional</div>
+          <ul>
+            <li><b>WiFi</b> monitor → <code class="mono" style="background:none;color:var(--wifi)">scanap</code></li>
+            <li><b>Bluetooth</b> sniff → <code class="mono" style="background:none;color:var(--wifi)">sniffbt</code></li>
+            <li>Streams ASCII result lines back</li>
+            <li>Powered from Flipper GPIO / own supply</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <h3>Software architecture</h3>
+    <div class="diagram rv">
+      <div class="dtitle">From firmware entry point to pixels</div>
+      <div class="stack">
+        <div class="layer entry">
+          <div class="lname">application.fam</div>
+          <div class="ldesc">appid <span class="mono">room_sweep</span> · entry <span class="mono">room_sweep_app</span> · stack 4&nbsp;KB · category Tools</div>
+        </div>
+        <div class="layer core">
+          <div class="lname">room_sweep_app()</div>
+          <div class="ldesc">allocates <span class="mono">App{}</span> · opens notification · opens UART · starts RF thread · registers fullscreen ViewPort</div>
+        </div>
+        <div class="fork">
+          <div class="layer thread">
+            <div class="lname">RF Thread</div>
+            <div class="ldesc" style="font-size:12px"><span class="mono">RoomSweepRF</span> · 2&nbsp;KB stack · continuous hop/sample loop</div>
+          </div>
+          <div class="layer thread">
+            <div class="lname">UART ISR</div>
+            <div class="ldesc" style="font-size:12px">byte → line buffer → rolling 8 lines (no alloc in ISR)</div>
+          </div>
+          <div class="layer thread">
+            <div class="lname">Main Loop</div>
+            <div class="ldesc" style="font-size:12px">input queue (4 ev) · 100&nbsp;ms tick · drives redraw</div>
+          </div>
+        </div>
+        <div class="layer render">
+          <div class="lname">draw_cb()</div>
+          <div class="ldesc">dispatches to 4 tab renderers → 128×64 canvas · tab indicator strip</div>
+        </div>
+      </div>
+      <div class="legend">
+        <span><i style="background:var(--amber)"></i>bootstrap</span>
+        <span><i style="background:var(--rf)"></i>app core</span>
+        <span><i style="background:var(--wifi)"></i>concurrency</span>
+        <span><i style="background:var(--info)"></i>rendering</span>
+      </div>
+    </div>
+
+    <div class="note">
+      <b>Concurrency model:</b> three execution contexts share the <span class="mono">App</span> struct.
+      The RF thread writes <span class="mono">rssi[16]</span> under a mutex; the ISR appends UART lines;
+      the main loop only reads state to draw. Nothing blocks — the GUI tick is 100&nbsp;ms.
+    </div>
+  </div>
+</section>
+
+<!-- ================= DATA FLOWS ================= -->
+<section id="flows">
+  <div class="wrap">
+    <div class="secnum">03</div>
+    <h2>Data flows</h2>
+
+    <h3>RF sweep loop <span style="color:var(--dim);font-size:14px">— Path A, runs the whole time the app is open</span></h3>
+    <div class="flow rv">
+      <div class="fstep"><div class="num">1</div><div class="body"><h4>Reset &amp; load preset</h4>
+        <p>Once at start: <code>furi_hal_subghz_reset()</code> then load the OOK&nbsp;650&nbsp;kHz async
+        preset from <code>cc1101_configs.h</code>. This is a wide-bandwidth receive configuration,
+        deliberately broad so it hears OOK/ASK bugs across each channel.</p></div></div>
+      <div class="fstep"><div class="num">2</div><div class="body"><h4>For each of 16 channels</h4>
+        <p><code>set_frequency_and_path(freq)</code> → <code>rx()</code> → sample RSSI <b>8 times</b>,
+        5&nbsp;ms apart → average → <code>idle()</code>. Averaging rejects impulse noise so one radar ping
+        doesn't light the whole bar.</p></div></div>
+      <div class="fstep"><div class="num">3</div><div class="body"><h4>Store under mutex</h4>
+        <p>Average RSSI written to <code>rssi[ch]</code> and <code>sweep_ch</code> updated while holding the
+        app mutex — the draw callback reads the same array, so this prevents torn frames.</p></div></div>
+      <div class="fstep"><div class="num">4</div><div class="body"><h4>Compare to threshold</h4>
+        <p>avg&nbsp;&gt;&nbsp;<b>−75&nbsp;dBm</b> ⇒ channel flagged. After a full pass, if any channel is hot the
+        red LED is set (<code>sequence_set_red_255</code>), otherwise cleared.</p></div></div>
+      <div class="fstep"><div class="num">5</div><div class="body"><h4>Repeat</h4>
+        <p>The loop runs until you press <b>Back</b>. One full 16-channel pass is ~1 second, so the chart
+        refreshes roughly once per second.</p></div></div>
+    </div>
+
+    <h3>UART pipeline <span style="color:var(--dim);font-size:14px">— Path B, only active when the BFFB is attached</span></h3>
+    <div class="flow rv">
+      <div class="fstep"><div class="num">1</div><div class="body"><h4>Own the USART</h4>
+        <p>On app start the expansion-module service is disabled and the USART handle is acquired
+        (<code>furi_hal_serial_control_acquire</code>), then initialised at <b>115200</b> with async RX.</p></div></div>
+      <div class="fstep"><div class="num">2</div><div class="body"><h4>Trigger a scan</h4>
+        <p>Press <b>OK</b> on the WiFi tab → app sends <code>scanap\r\n</code>. On the BLE tab →
+        <code>sniffbt\r\n</code>. State flips to <span style="color:var(--wifi)">Scanning…</span>.</p></div></div>
+      <div class="fstep"><div class="num">3</div><div class="body"><h4>ISR assembles lines</h4>
+        <p>Each byte is appended to a 128-char line buffer in the interrupt handler (no allocation).
+        On <code>\r</code>/<code>\n</code> the line is shifted into a rolling window of the <b>8 most recent</b>.</p></div></div>
+      <div class="fstep"><div class="num">4</div><div class="body"><h4>Screen shows last 5</h4>
+        <p>The WiFi/BLE renderer draws the newest 5 lines in a small keyboard font. Marauder output such as
+        <span class="mono" style="color:var(--wifi)">AP: SSID Ch -60 …</span> scrolls in from the top.</p></div></div>
+      <div class="fstep"><div class="num">5</div><div class="body"><h4>Teardown restores the bus</h4>
+        <p>On exit: async RX stopped, USART deinitialised and released, expansion module re-enabled — so other
+        GPIO apps work again afterwards.</p></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= USER JOURNEY ================= -->
+<section id="journey">
+  <div class="wrap">
+    <div class="secnum">04</div>
+    <h2>User journey</h2>
+    <p class="lead">What you will actually do and see, from cold start to exit. Steps 1–5 work with just the
+    Flipper. Steps 6–8 require the BFFB ESP32.</p>
+
+    <div class="journey">
+      <div class="jstep rv">
+        <div class="jno"></div>
+        <div>
+          <h4>Power on &amp; launch</h4>
+          <div class="act">From the Flipper home screen: <b>Apps → Tools → Room Sweep</b> (or deploy over USB
+          with <code class="mono">ufbt launch</code>, which installs and opens it for you).</div>
+          <div class="see"><b>You'll see:</b> a fullscreen view. The <b>RF Sweep</b> tab is active by default
+          and the bar chart is already moving — sweeping starts the instant the app opens, no button press needed.</div>
+        </div>
+      </div>
+
+      <div class="jstep rv">
+        <div class="jno"></div>
+        <div>
+          <h4>Watch the sub-GHz chart</h4>
+          <div class="act">Hold the Flipper where you'd hold a detector and slowly turn. Sixteen hollow bars
+          rise and fall with ambient noise. The horizontal line is the −75&nbsp;dBm alert threshold.</div>
+          <div class="see"><b>You'll see:</b> mostly short hollow bars (ambient noise is well below threshold).
+          Labels appear under every 4th bar (<span class="mono">304 390 434 450</span>).</div>
+        </div>
+      </div>
+
+      <div class="jstep rv">
+        <div class="jno"></div>
+        <div>
+          <h4>A signal appears</h4>
+          <div class="act">Bring a transmitting source near (e.g. your own 433&nbsp;MHz sensor in test mode).
+          Its bar fills <b>solid</b>, <span class="mono">SIGNAL!</span> prints top-right, and the <b>red LED lights</b>.</div>
+          <div class="see"><b>You'll see:</b> one or more filled bars + red LED. The source's approximate band is
+          the bar's position on the chart. Move closer — the bar grows.</div>
+        </div>
+      </div>
+
+      <div class="jstep rv">
+        <div class="jno"></div>
+        <div>
+          <h4>Switch tabs</h4>
+          <div class="act">Press <b>◀ / ▶</b> to cycle RF → WiFi → BLE → Info and wrap around. The little strip at
+          the very top shows which tab is active (filled = current).</div>
+          <div class="see"><b>You'll see:</b> the WiFi and BLE tabs. With no BFFB attached they show the
+          "BFFB not connected" message (see <a href="#expect">what to expect</a> for the exact condition).</div>
+        </div>
+      </div>
+
+      <div class="jstep rv">
+        <div class="jno"></div>
+        <div>
+          <h4>Check the Info tab</h4>
+          <div class="act">The last tab is a static reference card: version, frequency range, the BFFB requirement,
+          and the legal reminder (own property only, passive RX).</div>
+          <div class="see"><b>You'll see:</b> <span class="mono">Room Sweep v1.0 · RF: 16ch ISM sweep 304-925M ·
+          No TX. Passive RX only.</span></div>
+        </div>
+      </div>
+
+      <div class="jstep rv">
+        <div class="jno"></div>
+        <div>
+          <h4>Plug in the BFFB ESP32</h4>
+          <div class="act">Wire the ESP32's UART to the Flipper GPIO header (<b>PC0 = Flipper TX → ESP32 RX</b>,
+          <b>PC1 = Flipper RX → ESP32 TX</b>, common ground). Power the ESP32. Relaunch the app so it acquires the UART at boot.</div>
+          <div class="see"><b>You'll see:</b> on the WiFi/BLE tabs the placeholder message is replaced by
+          <span class="mono">Idle</span> in the corner — the UART is now owned by the app.</div>
+        </div>
+      </div>
+
+      <div class="jstep rv">
+        <div class="jno"></div>
+        <div>
+          <h4>Run a WiFi AP scan</h4>
+          <div class="act">On the WiFi tab press <b>OK</b>. The app sends <code class="mono">scanap</code> and
+          the status changes to <span class="mono">Scanning…</span>.</div>
+          <div class="see"><b>You'll see:</b> Marauder result lines scroll in from the top, e.g.
+          <span class="mono">AP: <b>YourNetwork</b> Ch:6 RSSI:-52 MAC:aa:bb:…</span>. Only the newest 5 are shown.</div>
+        </div>
+      </div>
+
+      <div class="jstep rv">
+        <div class="jno"></div>
+        <div>
+          <h4>Run a BLE sniff, then exit</h4>
+          <div class="act">Move to the BLE tab and press <b>OK</b> to send <code class="mono">sniffbt</code>.
+          When done, press <b>Back</b>. The app stops the RF thread, releases the UART, re-enables the expansion
+          module, and returns to the app list.</div>
+          <div class="see"><b>You'll see:</b> BLE advertisements (MACs / names) scrolling. After exit, the red LED
+          is cleared and other GPIO apps work normally again.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= CONTROLS ================= -->
+<section id="controls">
+  <div class="wrap">
+    <div class="secnum">05</div>
+    <h2>Controls reference</h2>
+    <table>
+      <tr><th>Input</th><th>Action</th><th>Scope / notes</th></tr>
+      <tr><td><b>◀ / ▶</b></td><td>Switch tab (wraps around)</td><td>RF → WiFi → BLE → Info. Clears the line buffer and resets scan state when switching.</td></tr>
+      <tr><td><b>OK</b></td><td>Start scan</td><td>Only on the <b>WiFi</b> (<code>scanap</code>) and <b>BLE</b> (<code>sniffbt</code>) tabs, and only when the UART is open. Does nothing on RF/Info tabs.</td></tr>
+      <tr><td><b>Back</b></td><td>Exit</td><td>Full teardown: RF thread joined, UART released, expansion re-enabled, LEDs reset.</td></tr>
+      <tr><td><b>▲ / ▼</b></td><td>—</td><td>Currently unused.</td></tr>
+    </table>
+    <div class="note">
+      <b>RF sweep has no start/stop control</b> — it runs continuously from launch to exit. That is by design:
+      a bug detector should always be listening while it's open.
+    </div>
+  </div>
+</section>
+
+<!-- ================= WHAT TO EXPECT ================= -->
+<section id="expect">
+  <div class="wrap">
+    <div class="secnum">06</div>
+    <h2>What to expect</h2>
+
+    <table>
+      <tr><th>Situation</th><th>RF tab</th><th>WiFi / BLE tabs</th></tr>
+      <tr>
+        <td><b>Flipper only</b> (no BFFB)</td>
+        <td>Live bar chart, ~1 pass/sec. Ambient bars stay hollow and short.</td>
+        <td>Usually shows <span class="mono">Idle</span> — the UART is owned by the app even with nothing plugged in. No lines appear because nothing is transmitting. See the note below.</td>
+      </tr>
+      <tr>
+        <td><b>BFFB attached</b>, scan not started</td>
+        <td>Unchanged.</td>
+        <td><span class="mono">Idle</span> in the corner, empty list.</td>
+      </tr>
+      <tr>
+        <td><b>BFFB attached</b>, OK pressed</td>
+        <td>Unchanged.</td>
+        <td><span class="mono">Scanning…</span> / <span class="mono">Sniffing…</span>, result lines streaming.</td>
+      </tr>
+      <tr>
+        <td><b>UART acquisition fails</b> (another app/expansion holds it)</td>
+        <td>Unchanged.</td>
+        <td><span class="mono">BFFB not connected</span> placeholder.</td>
+      </tr>
+    </table>
+
+    <div class="note">
+      <b>Honest caveat about "BFFB not connected":</b> the app detects "UART available," not "ESP32 present."
+      Because the Flipper's USART exists on its own GPIO header, acquisition succeeds even with the BFFB
+      unplugged — so you'll see <span class="mono">Idle</span>, not the placeholder. The reliable tell that the
+      BFFB is really talking is <b>result lines appearing after you press OK</b>. If nothing streams, check
+      wiring/baud before assuming a software fault.
+    </div>
+
+    <h3>Reading the RF chart</h3>
+    <div class="two">
+      <div class="card rv">
+        <h4>Hollow bar</h4>
+        <p>RSSI below −75&nbsp;dBm. Normal ambient noise, distant transmitters, or nothing. This is the resting state.</p>
+      </div>
+      <div class="card rv">
+        <h4>Solid bar + SIGNAL! + red LED</h4>
+        <p>Average RSSI above −75&nbsp;dBm on that channel. Something nearby is transmitting in that band.
+        The bar's horizontal position tells you roughly <i>where</i> in the spectrum.</p>
+      </div>
+    </div>
+
+    <h3>Realistic expectations</h3>
+    <ul style="color:var(--muted);padding-left:20px;max-width:70ch">
+      <li style="margin-bottom:8px"><b style="color:var(--text)">It will alert on legitimate stuff.</b> Your own routers,
+        keyfobs, weather sensors, and neighbouring WiFi all look like "signals." Sweep in a known-quiet spot first to learn
+        your baseline.</li>
+      <li style="margin-bottom:8px"><b style="color:var(--text)">RSSI is a detector, not a locator.</b> A tall bar means
+        "energy here," not distance. To locate, move and watch the bar grow/shrink.</li>
+      <li><b style="color:var(--text)">Sub-GHz only sees analog/OOK transmitters.</b> A modern WiFi-only bug or an
+        LTE tracker will not light the RF chart — that's what the BFFB WiFi/BLE path is for.</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ================= LIMITS ================= -->
+<section id="limits">
+  <div class="wrap">
+    <div class="secnum">07</div>
+    <h2>Limits &amp; honest notes</h2>
+
+    <table>
+      <tr><th>Item</th><th>Reality</th></tr>
+      <tr><td>Channel list is fixed</td><td>16 hard-coded ISM/surveillance frequencies (304–925&nbsp;MHz). You can't add channels from the UI — edit <code>room_sweep.h</code> and rebuild.</td></tr>
+      <tr><td>CC1101 band gaps</td><td>The chip only covers <b>300–348 / 387–464 / 779–928&nbsp;MHz</b>. Two original channels (350&nbsp;&amp;&nbsp;470&nbsp;MHz) sat in dead gaps and were removed — every channel on the chart is physically receivable.</td></tr>
+      <tr><td>No BFFB presence detection</td><td>App can't tell if the ESP32 is physically there — only whether it owns the UART. Watch for actual result lines.</td></tr>
+      <tr><td>Only last 5 lines shown</td><td>Marauder output scrolls fast; the screen keeps 8, shows 5. Long sessions are better monitored over USB serial on the host.</td></tr>
+      <tr><td>No demodulation</td><td>The RF chart measures <i>energy</i>, not content. It won't decode what a bug is saying.</td></tr>
+      <tr><td>WiFi/BLE scan needs OK each time</td><td>Switching tabs resets scan state; re-press OK to resume after tabbing away.</td></tr>
+    </table>
+
+    <h3>Development history — the launch crash</h3>
+    <p class="lead">An earlier build rebooted the Flipper the instant it launched. Root cause: the code called
+    <code class="mono" style="color:var(--alert)">furi_hal_subghz_load_preset()</code>, a function that
+    <b>does not exist</b> in any Flipper firmware. The FAP loader couldn't resolve the symbol and hard-faulted.
+    The fix was one line — load the preset from the CC1101 config table instead:</p>
+<pre><code><span class="c">// WRONG — symbol does not exist:</span>
+<span class="y">furi_hal_subghz_load_preset</span>(FuriHalSubGhzPresetOok650Async);
+
+<span class="c">// CORRECT:</span>
+#include &lt;lib/subghz/devices/cc1101_configs.h&gt;
+<span class="g">furi_hal_subghz_load_custom_preset</span>(subghz_device_cc1101_preset_ook_650khz_async_regs);</code></pre>
+    <p class="lead">Every API call in the current source has since been checked against the Momentum
+    <span class="mono">api_symbols.csv</span> export table (API&nbsp;87.1, ~2,400 functions), and the build
+    compiles with zero warnings and a matching API tag.</p>
+  </div>
+</section>
+
+<!-- ================= LEGAL ================= -->
+<section id="legal">
+  <div class="wrap">
+    <div class="secnum">08</div>
+    <h2>Legal &amp; safety</h2>
+    <div class="note danger">
+      <b>Use on property you own or have written authorization to assess.</b> Passive reception of RF energy is
+      broadly lawful in most jurisdictions, but <b>scanning for / enumerating WiFi networks and Bluetooth devices
+      that aren't yours</b> can run afoul of computer-misuse and wiretap statutes depending on where you are.
+      This tool is a detector for <b>your</b> rooms, <b>your</b> lab.
+    </div>
+    <ul style="color:var(--muted);padding-left:20px;max-width:72ch">
+      <li style="margin-bottom:8px"><b style="color:var(--text)">It never transmits.</b> Both radios stay in receive.
+        This keeps you clear of FCC Part 15 transmit rules and means the detector can't reveal itself.</li>
+      <li style="margin-bottom:8px"><b style="color:var(--text)">It captures metadata, not content.</b> Marauder in
+        this configuration reports SSIDs, MACs, channels, and RSSI — it does not crack handshakes or read traffic.</li>
+      <li><b style="color:var(--text)">Findings stay private.</b> If you sweep a shared/rented space, you may learn
+        things about neighbours. Treat that data as confidential and act only on your own property.</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ================= BUILD ================= -->
+<section id="build">
+  <div class="wrap">
+    <div class="secnum">09</div>
+    <h2>Build &amp; deploy</h2>
+    <p class="lead">Uses <span class="mono">ufbt</span> (micro Flipper Build Tool) against the Momentum SDK.
+    The toolchain venv lives at <span class="mono">/tmp/flipper-dev</span>.</p>
+<pre><code><span class="cap">shell</span><span class="c"># from the project root</span>
+cd /Users/scrimwiggins/flipper-room-sweep
+source /tmp/flipper-dev/bin/activate
+
+<span class="g">ufbt</span>          <span class="c"># build  → dist/room_sweep.fap  (API 87.1, zero warnings)</span>
+<span class="g">ufbt launch</span>   <span class="c"># install to /ext/apps/Tools/ + open on device</span></code></pre>
+    <div class="note">
+      <b>Deploy gotcha:</b> Room Sweep is a <b>fullscreen</b> app, so while it's running the CLI can't close it
+      with <span class="mono">loader close</span> and <span class="mono">ufbt launch</span> fails with
+      "has to be closed manually." To redeploy while it's open, send a Back button press first:
+      <span class="mono">input send back short</span>, then <span class="mono">ufbt launch</span>.
+    </div>
+    <p class="lead">To change the swept channels or the alert threshold, edit
+    <code>room_sweep.h</code> (<span class="mono">rf_channels[]</span> and
+    <span class="mono">RF_ALERT_THRESHOLD</span>) and rebuild. Keep every frequency inside a CC1101 band.</p>
+  </div>
+</section>
+
+<!-- ================= APPENDIX ================= -->
+<section id="specs">
+  <div class="wrap">
+    <div class="secnum">10</div>
+    <h2>Appendix — technical specs</h2>
+    <table>
+      <tr><th>Parameter</th><th>Value</th></tr>
+      <tr><td>App ID / name</td><td><code>room_sweep</code> / "Room Sweep" · category Tools</td></tr>
+      <tr><td>Firmware / API</td><td>Momentum mntm-012 · API 87.1</td></tr>
+      <tr><td>App stack</td><td>4 KB (main) + 2 KB (RF thread)</td></tr>
+      <tr><td>RF channels</td><td>16 · 303.9 / 315 / 330 / 345 / 390 / 418 / 433.1 / 433.4 / 433.9 / 434.4 / 434.8 / 420 / 450 / 868.4 / 915 / 925 MHz</td></tr>
+      <tr><td>RF preset</td><td>OOK 650 kHz async (wideband AM receive)</td></tr>
+      <tr><td>Samples / channel</td><td>8, 5 ms apart, averaged</td></tr>
+      <tr><td>Alert threshold</td><td>−75 dBm (average)</td></tr>
+      <tr><td>RSSI display map</td><td>−100 → −30 dBm mapped to 0 → 48 px bar height</td></tr>
+      <tr><td>UART</td><td>USART1 · PC0 TX / PC1 RX · 115200 baud · \r\n framing</td></tr>
+      <tr><td>UART buffer</td><td>8 lines × 128 chars rolling window · 5 shown</td></tr>
+      <tr><td>Marauder commands</td><td><code>scanap</code> (WiFi APs) · <code>sniffbt</code> (BLE)</td></tr>
+      <tr><td>GUI</td><td>Fullscreen ViewPort · 128×64 · 100 ms redraw tick · input queue 4</td></tr>
+    </table>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <span class="mono">ROOM SWEEP v1.0</span> · passive receive-only surveillance detector ·
+    Flipper Zero + BFFB ESP32 (Marauder) · built with ufbt against Momentum API 87.1.<br>
+    Guide generated from the deployed source (<span class="mono">room_sweep.c</span> / <span class="mono">room_sweep.h</span>).
+    Verify on hardware before trusting any screen state.
+  </div>
+</footer>
+
+<script>
+  // hero RF bars — organic-looking animated sweep
+  (function(){
+    var host=document.getElementById('heroBars');
+    if(!host)return;
+    for(var i=0;i<16;i++){
+      var slot=document.createElement('i');
+      var b=document.createElement('b');
+      var base=0.12+Math.random()*0.25;
+      var peak=(i===8)?0.92:(Math.random()>0.8?0.55+Math.random()*0.3:base);
+      b.style.animationDuration=(1.6+Math.random()*2.2).toFixed(2)+'s';
+      b.style.animationDelay=(-Math.random()*2).toFixed(2)+'s';
+      b.style.height=(peak*118).toFixed(0)+'px';
+      slot.appendChild(b);host.appendChild(slot);
+    }
+  })();
+
+  // scroll reveal
+  var io=new IntersectionObserver(function(es){
+    es.forEach(function(e){ if(e.isIntersecting){ e.target.classList.add('in'); io.unobserve(e.target);} });
+  },{threshold:0.12});
+  document.querySelectorAll('.rv').forEach(function(el){io.observe(el);});
+
+  // nav active link
+  var links=document.querySelectorAll('nav .links a');
+  var secs=[].map.call(links,function(a){return document.querySelector(a.getAttribute('href'));});
+  var navIO=new IntersectionObserver(function(es){
+    es.forEach(function(e){
+      if(e.isIntersecting){
+        links.forEach(function(a){a.classList.toggle('active',a.getAttribute('href')==='#'+e.target.id);});
+      }
+    });
+  },{rootMargin:'-40% 0px -55% 0px'});
+  secs.forEach(function(s){ if(s) navIO.observe(s); });
+</script>
+</body>
+</html>

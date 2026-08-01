@@ -1,0 +1,19 @@
+# Build artifacts
+dist/
+build/
+*.fap
+*.elf
+*.map
+.ufbt_state/
+
+# Python tooling
+__pycache__/
+*.pyc
+
+# Editor
+.vscode/
+.DS_Store
+
+# Diagnostic scratch scripts (kept in history, not tracked going forward)
+diag_*.py
+bisect_ladder.py

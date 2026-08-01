@@ -1,0 +1,10 @@
+App(
+    appid="room_sweep",
+    name="Room Sweep",
+    apptype=FlipperAppType.EXTERNAL,
+    entry_point="room_sweep_app",
+    stack_size=4 * 1024,
+    fap_category="Tools",
+    fap_icon="icon.png",
+    fap_icon_assets="images",
+)
