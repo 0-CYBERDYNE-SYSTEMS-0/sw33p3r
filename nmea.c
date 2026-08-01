@@ -101,6 +101,9 @@ static void process_sentence(GpsFix* fix, char* sent) {
                 fix->longitude = parse_lon(fields[4], fields[5]);
                 fix->has_pos = true;
                 fix->has_fix = true;
+            } else {
+                fix->has_fix = false;
+                fix->has_pos = false;
             }
         }
     } else if(strcmp(type, "RMC") == 0) {
@@ -114,7 +117,12 @@ static void process_sentence(GpsFix* fix, char* sent) {
                 fix->has_time = true;
             }
             bool active = (fields[2][0] == 'A');
-            if(active) fix->has_fix = true;
+            if(active) {
+                fix->has_fix = true;
+            } else {
+                fix->has_fix = false;
+                fix->has_pos = false;
+            }
             if(active && fields[3][0] && fields[5][0]) {
                 fix->latitude = parse_lat(fields[3], fields[4]);
                 fix->longitude = parse_lon(fields[5], fields[6]);
@@ -134,7 +142,7 @@ static void process_sentence(GpsFix* fix, char* sent) {
     } else if(strcmp(type, "GLL") == 0) {
         /* $--GLL,lat,N,lon,E,time,status,mode*cs
          * Broadcast every second even with no fix — gives us time. */
-        if(nf >= 5) {
+        if(nf >= 7) {
             const char* t = fields[5];
             if(strlen(t) >= 6) {
                 fix->hour = (uint8_t)((t[0] - '0') * 10 + (t[1] - '0'));
@@ -142,12 +150,15 @@ static void process_sentence(GpsFix* fix, char* sent) {
                 fix->second = (uint8_t)((t[4] - '0') * 10 + (t[5] - '0'));
                 fix->has_time = true;
             }
-            bool active = (nf >= 6 && fields[6][0] == 'A');
+            bool active = (fields[6][0] == 'A');
             if(active && fields[1][0] && fields[3][0]) {
                 fix->latitude = parse_lat(fields[1], fields[2]);
                 fix->longitude = parse_lon(fields[3], fields[4]);
                 fix->has_pos = true;
                 fix->has_fix = true;
+            } else {
+                fix->has_fix = false;
+                fix->has_pos = false;
             }
         }
     } else if(strcmp(type, "ZDA") == 0) {

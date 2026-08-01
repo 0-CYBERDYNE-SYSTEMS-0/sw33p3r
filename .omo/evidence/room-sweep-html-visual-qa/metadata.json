@@ -1,0 +1,266 @@
+{
+  "url": "file:///Users/scrimwiggins/sw33p3r/ROOM_SWEEP_QA_AUDIT.html",
+  "source_sha256": "304b8b7cd6f11953f5c0e0e41aea91f09ca301c5ff83c0c4676c40a60ad2a455",
+  "capture_method": "Python Playwright sync_api with Chromium 141.0.7390.37; explicit tab click and selection assertion before each screenshot; focused tab scrolled into viewport before focus capture",
+  "page_count": 22,
+  "records": [
+    {
+      "viewport": "mobile",
+      "width": 375,
+      "height": 900,
+      "requested_mode": "rf",
+      "selected": "rf",
+      "visible_panel": "rf",
+      "overflow_px": 0
+    },
+    {
+      "viewport": "mobile",
+      "width": 375,
+      "height": 900,
+      "requested_mode": "wifi",
+      "selected": "wifi",
+      "visible_panel": "wifi",
+      "overflow_px": 0
+    },
+    {
+      "viewport": "mobile",
+      "width": 375,
+      "height": 900,
+      "requested_mode": "ble",
+      "selected": "ble",
+      "visible_panel": "ble",
+      "overflow_px": 0
+    },
+    {
+      "viewport": "mobile",
+      "width": 375,
+      "height": 900,
+      "requested_mode": "gps",
+      "selected": "gps",
+      "visible_panel": "gps",
+      "overflow_px": 0
+    },
+    {
+      "viewport": "mobile",
+      "width": 375,
+      "height": 900,
+      "requested_mode": "info",
+      "selected": "info",
+      "visible_panel": "info",
+      "overflow_px": 0
+    },
+    {
+      "viewport": "mobile",
+      "width": 375,
+      "height": 900,
+      "requested_mode": "settings",
+      "selected": "settings",
+      "visible_panel": "settings",
+      "overflow_px": 0
+    },
+    {
+      "viewport": "mobile",
+      "width": 375,
+      "height": 900,
+      "requested_mode": "findings-high-filter",
+      "visible_findings": 3,
+      "filter_counts": {
+        "all": 8,
+        "high": 3,
+        "medium": 4,
+        "low": 1
+      }
+    },
+    {
+      "viewport": "tablet",
+      "width": 768,
+      "height": 1000,
+      "requested_mode": "rf",
+      "selected": "rf",
+      "visible_panel": "rf",
+      "overflow_px": 0
+    },
+    {
+      "viewport": "tablet",
+      "width": 768,
+      "height": 1000,
+      "requested_mode": "wifi",
+      "selected": "wifi",
+      "visible_panel": "wifi",
+      "overflow_px": 0
+    },
+    {
+      "viewport": "tablet",
+      "width": 768,
+      "height": 1000,
+      "requested_mode": "ble",
+      "selected": "ble",
+      "visible_panel": "ble",
+      "overflow_px": 0
+    },
+    {
+      "viewport": "tablet",
+      "width": 768,
+      "height": 1000,
+      "requested_mode": "gps",
+      "selected": "gps",
+      "visible_panel": "gps",
+      "overflow_px": 0
+    },
+    {
+      "viewport": "tablet",
+      "width": 768,
+      "height": 1000,
+      "requested_mode": "info",
+      "selected": "info",
+      "visible_panel": "info",
+      "overflow_px": 0
+    },
+    {
+      "viewport": "tablet",
+      "width": 768,
+      "height": 1000,
+      "requested_mode": "settings",
+      "selected": "settings",
+      "visible_panel": "settings",
+      "overflow_px": 0
+    },
+    {
+      "viewport": "tablet",
+      "width": 768,
+      "height": 1000,
+      "requested_mode": "findings-high-filter",
+      "visible_findings": 3,
+      "filter_counts": {
+        "all": 8,
+        "high": 3,
+        "medium": 4,
+        "low": 1
+      }
+    },
+    {
+      "viewport": "desktop",
+      "width": 1280,
+      "height": 1000,
+      "requested_mode": "rf",
+      "selected": "rf",
+      "visible_panel": "rf",
+      "overflow_px": 0
+    },
+    {
+      "viewport": "desktop",
+      "width": 1280,
+      "height": 1000,
+      "requested_mode": "wifi",
+      "selected": "wifi",
+      "visible_panel": "wifi",
+      "overflow_px": 0
+    },
+    {
+      "viewport": "desktop",
+      "width": 1280,
+      "height": 1000,
+      "requested_mode": "ble",
+      "selected": "ble",
+      "visible_panel": "ble",
+      "overflow_px": 0
+    },
+    {
+      "viewport": "desktop",
+      "width": 1280,
+      "height": 1000,
+      "requested_mode": "gps",
+      "selected": "gps",
+      "visible_panel": "gps",
+      "overflow_px": 0
+    },
+    {
+      "viewport": "desktop",
+      "width": 1280,
+      "height": 1000,
+      "requested_mode": "info",
+      "selected": "info",
+      "visible_panel": "info",
+      "overflow_px": 0
+    },
+    {
+      "viewport": "desktop",
+      "width": 1280,
+      "height": 1000,
+      "requested_mode": "settings",
+      "selected": "settings",
+      "visible_panel": "settings",
+      "overflow_px": 0
+    },
+    {
+      "viewport": "desktop",
+      "width": 1280,
+      "height": 1000,
+      "requested_mode": "findings-high-filter",
+      "visible_findings": 3,
+      "filter_counts": {
+        "all": 8,
+        "high": 3,
+        "medium": 4,
+        "low": 1
+      }
+    }
+  ],
+  "automated_checks": {
+    "mode_selection": "pass",
+    "filter_counts": {
+      "all": 8,
+      "high": 3,
+      "medium": 4,
+      "low": 1
+    },
+    "horizontal_overflow": "pass",
+    "reduced_motion": {
+      "pass": true,
+      "animation_duration": "1e-05s"
+    },
+    "semantic_landmarks": "pass",
+    "keyboard_navigation": {
+      "pass": true,
+      "initial_tab_indexes": [
+        {
+          "id": "tab-rf",
+          "tabIndex": 0
+        },
+        {
+          "id": "tab-wifi",
+          "tabIndex": -1
+        },
+        {
+          "id": "tab-ble",
+          "tabIndex": -1
+        },
+        {
+          "id": "tab-gps",
+          "tabIndex": -1
+        },
+        {
+          "id": "tab-info",
+          "tabIndex": -1
+        },
+        {
+          "id": "tab-settings",
+          "tabIndex": -1
+        }
+      ],
+      "arrow_right_selected": "wifi",
+      "arrow_right_focus": "tab-wifi",
+      "home_selected": "rf",
+      "end_selected": "settings",
+      "capture": "desktop-keyboard-focus.png"
+    },
+    "contrast": {
+      "pass": true,
+      "dim_on_surface_raised": 5.125,
+      "computed_dim": "#7c9a94",
+      "target": ">= 4.5:1"
+    },
+    "console_errors": [],
+    "page_errors": []
+  }
+}
