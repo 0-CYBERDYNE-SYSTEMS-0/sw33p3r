@@ -1,4 +1,4 @@
-/* Room Sweep — multi-tab wireless surveillance detector
+/* Room Sweep v2.0 — multi-tab wireless surveillance detector
  * Tab 1: Sub-GHz RSSI sweep (analog bugs / wireless cameras)
  * Tab 2: Marauder WiFi AP scan over UART (BFFB ESP32)
  * Tab 3: Marauder BLE sniff over UART (BFFB ESP32)
@@ -18,6 +18,7 @@
 #include <expansion/expansion.h>
 #include <notification/notification.h>
 #include <notification/notification_messages.h>
+#include <notification/notification_messages_notes.h>
 #include <lib/subghz/devices/cc1101_configs.h>
 
 #include "room_sweep.h"
@@ -34,6 +35,8 @@ typedef struct {
     volatile float rssi[RF_NUM_CHANNELS];
     volatile uint8_t sweep_ch;     // current channel being measured
     volatile bool rf_alert;        // any channel above threshold
+    volatile float peak_rssi;      // strongest channel this sweep
+    volatile uint8_t peak_ch;      // index of strongest channel
     FuriThread* rf_thread;
 
     /* Marauder UART */
@@ -45,9 +48,38 @@ typedef struct {
     uint8_t line_pos;
     volatile bool uart_rx_flag;    // ISR -> thread signal
 
-    /* notification */
+    /* notification / feedback */
     NotificationApp* notif;
+    bool sound_on;                 // Up toggles
+    bool vibro_on;                 // Down toggles
+    uint32_t tick_count;           // main loop iteration counter
+    uint32_t last_click_ms;        // last Geiger click time
+    uint32_t last_vibro_ms;        // last vibro pulse time
+    bool was_alerting;             // previous tick alert state (edge detect)
+    uint8_t lock_ticks;            // consecutive ticks above threshold
 } App;
+
+/* ------------------------------------------------------------------ */
+/* Custom notification sequences (Geiger click, lock tone, vibro)      */
+/* ------------------------------------------------------------------ */
+static const NotificationSequence seq_geiger_click = {
+    &message_click,
+    &message_delay_1,
+    NULL,
+};
+
+static const NotificationSequence seq_lock_tone = {
+    &message_note_g5,
+    &message_delay_100,
+    NULL,
+};
+
+static const NotificationSequence seq_vibro_pulse = {
+    &message_vibro_on,
+    &message_delay_50,
+    &message_vibro_off,
+    NULL,
+};
 
 /* ------------------------------------------------------------------ */
 /* UART ISR callback — feeds ring of lines, ISR-safe (no alloc)        */
@@ -127,6 +159,9 @@ static int32_t rf_sweep_thread(void* ctx) {
 
     while(app->running) {
         bool any_alert = false;
+        float peak = -120.0f;
+        uint8_t peak_idx = 0;
+
         for(uint8_t ch = 0; ch < RF_NUM_CHANNELS && app->running; ch++) {
             furi_hal_subghz_set_frequency_and_path(rf_channels[ch]);
             furi_hal_subghz_rx();
@@ -146,12 +181,36 @@ static int32_t rf_sweep_thread(void* ctx) {
             furi_mutex_release(app->mutex);
 
             if(avg > RF_ALERT_THRESHOLD) any_alert = true;
+            if(avg > peak) {
+                peak = avg;
+                peak_idx = ch;
+            }
         }
+
+        app->peak_rssi = peak;
+        app->peak_ch = peak_idx;
         app->rf_alert = any_alert;
-        if(any_alert) {
+
+        /* LED streaming: escalate color + blink with signal strength.
+         * Bands: off (<-85), green (-85..-75), yellow (-75..-65),
+         * red solid (-65..-55), red blink (>= -55). */
+        if(peak >= -55.0f) {
+            /* Very strong: fast blink red (alternate set/reset each sweep) */
+            static bool blink_state = false;
+            blink_state = !blink_state;
+            if(blink_state) {
+                notification_message(app->notif, &sequence_set_red_255);
+            } else {
+                notification_message(app->notif, &sequence_reset_rgb);
+            }
+        } else if(peak >= -65.0f) {
             notification_message(app->notif, &sequence_set_red_255);
+        } else if(peak >= -75.0f) {
+            notification_message(app->notif, &sequence_solid_yellow);
+        } else if(peak >= -85.0f) {
+            notification_message(app->notif, &sequence_set_green_255);
         } else {
-            notification_message(app->notif, &sequence_reset_red);
+            notification_message(app->notif, &sequence_reset_rgb);
         }
     }
 
@@ -160,107 +219,187 @@ static int32_t rf_sweep_thread(void* ctx) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Feedback logic (called from main loop each tick)                    */
+/* ------------------------------------------------------------------ */
+static void feedback_tick(App* app) {
+    float peak = app->peak_rssi;
+    bool alerting = (peak > RF_ALERT_THRESHOLD);
+    uint32_t now = furi_get_tick();
+
+    /* --- Vibro: single pulse on rising edge of detection --- */
+    if(app->vibro_on && alerting && !app->was_alerting) {
+        if(now - app->last_vibro_ms > 200) {
+            notification_message(app->notif, &seq_vibro_pulse);
+            app->last_vibro_ms = now;
+        }
+    }
+
+    /* --- Audio: Geiger clicks that resolve to a steady tone --- */
+    if(app->sound_on) {
+        app->lock_ticks = alerting ? (app->lock_ticks + 1) : 0;
+        bool locked = (app->lock_ticks >= 3); // sustained ~300ms
+
+        if(locked) {
+            /* Steady tone while locked — one note per tick = continuous */
+            notification_message(app->notif, &seq_lock_tone);
+        } else if(peak >= -90.0f) {
+            /* Geiger regime: click rate scales with proximity.
+             * -90 dBm -> 900ms interval; -55 dBm -> 80ms interval. */
+            float closeness = (peak - (-90.0f)) / ((-55.0f) - (-90.0f));
+            if(closeness < 0) closeness = 0;
+            if(closeness > 1) closeness = 1;
+            uint32_t interval = (uint32_t)(900 - closeness * 820);
+            if(now - app->last_click_ms > interval) {
+                notification_message(app->notif, &seq_geiger_click);
+                app->last_click_ms = now;
+            }
+        }
+    } else {
+        app->lock_ticks = 0;
+    }
+
+    app->was_alerting = alerting;
+}
+
+/* ------------------------------------------------------------------ */
 /* Drawing helpers                                                     */
 /* ------------------------------------------------------------------ */
 static void draw_rf_tab(Canvas* canvas, App* app) {
     canvas_clear(canvas);
+
+    /* --- Header (y 0..12) --- */
     canvas_set_font(canvas, FontSecondary);
-    canvas_draw_str(canvas, 2, 10, "RF Sweep  (Sub-GHz)");
+    canvas_draw_str(canvas, 1, 11, "Sub-GHz  RF Sweep");
 
-    /* bar chart: 16 channels, 7px wide, 50px tall area starting at y=14 */
+    /* Peak RSSI numeric readout (large, right-aligned) */
+    char buf[16];
+    float peak = app->peak_rssi;
+    snprintf(buf, sizeof(buf), "%.0f", (double)peak);
+    canvas_set_font(canvas, FontPrimary);
+    uint16_t num_w = canvas_string_width(canvas, buf);
+    canvas_draw_str(canvas, 127 - (int)num_w, 11, buf);
+    /* tiny "dBm" suffix */
+    canvas_set_font(canvas, FontKeyboard);
+    canvas_draw_str(canvas, 127 - (int)num_w - 16, 11, "dBm");
+
+    /* --- Bar chart area (y 14..56) --- */
     const uint8_t bar_w = 7;
-    const uint8_t area_h = 48;
-    const uint8_t base_y = 63;
+    const uint8_t bar_gap = 1;
+    const uint8_t area_h = 42;
+    const uint8_t base_y = 56; /* bottom row of bars (NOT last pixel) */
 
+    /* Threshold reference line — dotted, drawn FIRST (behind bars) */
+    int th_y = base_y - (int)((RF_ALERT_THRESHOLD + 100.0f) * area_h / 70.0f);
+    canvas_set_color(canvas, ColorBlack);
+    for(uint8_t dx = 0; dx < 128; dx += 4) {
+        canvas_draw_dot(canvas, dx, th_y);
+        canvas_draw_dot(canvas, dx + 1, th_y);
+    }
+
+    /* Bars */
     furi_mutex_acquire(app->mutex, FuriWaitForever);
     for(uint8_t i = 0; i < RF_NUM_CHANNELS; i++) {
-        /* Map RSSI [-100..-30] -> [0..area_h] */
         float r = app->rssi[i];
         int h = (int)((r + 100.0f) * area_h / 70.0f);
         if(h < 0) h = 0;
         if(h > area_h) h = area_h;
-        uint8_t x = 1 + i * (bar_w + 0);
 
-        if(app->rssi[i] > RF_ALERT_THRESHOLD) {
-            canvas_draw_box(canvas, x, base_y - h, bar_w - 1, h);
-        } else {
-            canvas_draw_frame(canvas, x, base_y - h, bar_w - 1, h);
+        uint8_t x = i * (bar_w + bar_gap);
+
+        if(r > RF_ALERT_THRESHOLD) {
+            /* Above threshold: solid filled bar */
+            canvas_draw_box(canvas, x, base_y - (h > 0 ? h : 1), bar_w, h > 0 ? (uint8_t)h : 1);
+        } else if(h >= 3) {
+            /* Tall enough for a hollow frame to read correctly */
+            canvas_draw_frame(canvas, x, base_y - h, bar_w, h);
+        } else if(h >= 1) {
+            /* Very short: single filled row (no hollow-frame artifact) */
+            canvas_draw_box(canvas, x, base_y - 1, bar_w, 1);
         }
-        /* channel label every 4th */
-        if(i % 4 == 0) {
-            canvas_set_font(canvas, FontKeyboard);
-            canvas_draw_str(canvas, x, base_y + 1, rf_labels[i]);
-            canvas_set_font(canvas, FontSecondary);
-        }
+        /* h == 0: draw nothing — clean baseline */
     }
     furi_mutex_release(app->mutex);
 
-    /* threshold line */
-    int th_y = base_y - (int)((RF_ALERT_THRESHOLD + 100.0f) * area_h / 70.0f);
-    canvas_draw_line(canvas, 0, th_y, 127, th_y);
+    /* Baseline */
+    canvas_draw_line(canvas, 0, base_y, 127, base_y);
 
-    /* status */
+    /* --- Frequency labels (y 63, last visible row) --- */
+    canvas_set_font(canvas, FontKeyboard);
+    for(uint8_t i = 0; i < RF_NUM_CHANNELS; i += 4) {
+        uint8_t x = i * (bar_w + bar_gap);
+        canvas_draw_str(canvas, x, 63, rf_labels[i]);
+    }
+
+    /* --- SIGNAL! alert banner (overlay, inverse video) --- */
     if(app->rf_alert) {
-        canvas_draw_str(canvas, 80, 10, "SIGNAL!");
+        canvas_set_font(canvas, FontBigNumbers);
+        const char* sig = "SIGNAL!";
+        uint16_t w = canvas_string_width(canvas, sig);
+        uint8_t sx = (128 - w) / 2;
+        /* White knockout box behind text */
+        canvas_set_color(canvas, ColorWhite);
+        canvas_draw_box(canvas, sx - 2, 24, w + 4, 14);
+        canvas_set_color(canvas, ColorBlack);
+        canvas_draw_str(canvas, sx, 36, sig);
     }
 }
 
 static void draw_wifi_tab(Canvas* canvas, App* app) {
     canvas_clear(canvas);
+    canvas_set_font(canvas, FontPrimary);
+    canvas_draw_str(canvas, 2, 12, "WiFi AP Scan");
     canvas_set_font(canvas, FontSecondary);
-    canvas_draw_str(canvas, 2, 10, "WiFi AP Scan (Marauder)");
 
     if(!app->serial) {
-        canvas_draw_str(canvas, 10, 35, "BFFB not connected");
-        canvas_draw_str(canvas, 10, 47, "Plug in ESP32 via UART");
+        canvas_draw_str(canvas, 8, 32, "BFFB not connected");
+        canvas_draw_str(canvas, 8, 44, "Plug in ESP32 via UART");
         return;
     }
 
     const char* state_str = app->marauder_state == MarauderScanning ? "Scanning..." :
                             app->marauder_state == MarauderError    ? "Error" : "Idle";
-    canvas_draw_str(canvas, 90, 10, state_str);
+    canvas_draw_str(canvas, 80, 12, state_str);
 
-    /* show last captured lines */
     canvas_set_font(canvas, FontKeyboard);
     uint8_t shown = app->line_count < 5 ? app->line_count : 5;
     for(uint8_t i = 0; i < shown; i++) {
-        canvas_draw_str(canvas, 2, 22 + i * 9, app->lines[i]);
+        canvas_draw_str(canvas, 2, 24 + i * 9, app->lines[i]);
     }
-    canvas_set_font(canvas, FontSecondary);
 }
 
 static void draw_ble_tab(Canvas* canvas, App* app) {
     canvas_clear(canvas);
+    canvas_set_font(canvas, FontPrimary);
+    canvas_draw_str(canvas, 2, 12, "BLE Sniff");
     canvas_set_font(canvas, FontSecondary);
-    canvas_draw_str(canvas, 2, 10, "BLE Sniff (Marauder)");
 
     if(!app->serial) {
-        canvas_draw_str(canvas, 10, 35, "BFFB not connected");
-        canvas_draw_str(canvas, 10, 47, "Plug in ESP32 via UART");
+        canvas_draw_str(canvas, 8, 32, "BFFB not connected");
+        canvas_draw_str(canvas, 8, 44, "Plug in ESP32 via UART");
         return;
     }
 
     const char* state_str = app->marauder_state == MarauderScanning ? "Sniffing..." :
                             app->marauder_state == MarauderError    ? "Error" : "Idle";
-    canvas_draw_str(canvas, 90, 10, state_str);
+    canvas_draw_str(canvas, 80, 12, state_str);
 
     canvas_set_font(canvas, FontKeyboard);
     uint8_t shown = app->line_count < 5 ? app->line_count : 5;
     for(uint8_t i = 0; i < shown; i++) {
-        canvas_draw_str(canvas, 2, 22 + i * 9, app->lines[i]);
+        canvas_draw_str(canvas, 2, 24 + i * 9, app->lines[i]);
     }
-    canvas_set_font(canvas, FontSecondary);
 }
 
 static void draw_info_tab(Canvas* canvas, App* app) {
     UNUSED(app);
     canvas_clear(canvas);
+    canvas_set_font(canvas, FontPrimary);
+    canvas_draw_str(canvas, 2, 12, "Room Sweep v2.0");
     canvas_set_font(canvas, FontSecondary);
-    canvas_draw_str(canvas, 2, 10, "Room Sweep v1.0");
-    canvas_draw_str(canvas, 2, 22, "RF: 16ch ISM sweep 304-925M");
-    canvas_draw_str(canvas, 2, 33, "WiFi/BLE: needs BFFB ESP32");
-    canvas_draw_str(canvas, 2, 44, "Legal: own property only.");
-    canvas_draw_str(canvas, 2, 55, "No TX. Passive RX only.");
+    canvas_draw_str(canvas, 2, 24, "RF: 16ch ISM 304-925MHz");
+    canvas_draw_str(canvas, 2, 35, "WiFi/BLE: needs BFFB ESP32");
+    canvas_draw_str(canvas, 2, 46, "Legal: own property only.");
+    canvas_draw_str(canvas, 2, 57, "Passive RX. No transmit.");
 }
 
 /* ------------------------------------------------------------------ */
@@ -275,14 +414,37 @@ static void draw_cb(Canvas* canvas, void* ctx) {
     case SweepModeInfo:  draw_info_tab(canvas, app);  break;
     default: break;
     }
-    /* tab indicator bar */
+
+    /* --- Tab indicator strip (y 0..3) --- */
     canvas_draw_line(canvas, 0, 0, 127, 0);
+    static const char* tab_labels[] = {"RF", "Wi", "BT", "i"};
     for(int t = 0; t < SweepModeCount; t++) {
         uint8_t x = 2 + t * 32;
         if(t == (int)app->mode) {
             canvas_draw_box(canvas, x, 1, 28, 3);
+            /* Label under the active tab */
+            canvas_set_font(canvas, FontKeyboard);
+            canvas_set_color(canvas, ColorWhite);
+            canvas_draw_str(canvas, x + 8, 4, tab_labels[t]);
+            canvas_set_color(canvas, ColorBlack);
         } else {
             canvas_draw_frame(canvas, x, 1, 28, 3);
+        }
+    }
+
+    /* --- Sound / Vibro state icons (top-right corner) --- */
+    canvas_set_font(canvas, FontKeyboard);
+    if(app->sound_on) {
+        canvas_draw_str(canvas, 104, 11, "S:ON");
+    } else {
+        canvas_draw_str(canvas, 104, 11, "S:off");
+    }
+    /* Note: only show in non-RF tabs to avoid clutter with the RSSI readout */
+    if(app->mode != SweepModeRF) {
+        if(app->vibro_on) {
+            canvas_draw_str(canvas, 104, 19, "V:ON");
+        } else {
+            canvas_draw_str(canvas, 104, 19, "V:off");
         }
     }
 }
@@ -305,6 +467,9 @@ int32_t room_sweep_app(void* p) {
     app->mutex = furi_mutex_alloc(FuriMutexTypeNormal);
     app->running = true;
     app->mode = SweepModeRF;
+    app->sound_on = true;   /* default: sound enabled */
+    app->vibro_on = false;  /* default: vibro off (can be noisy) */
+    app->peak_rssi = -120.0f;
 
     /* notification service */
     app->notif = furi_record_open(RECORD_NOTIFICATION);
@@ -328,6 +493,9 @@ int32_t room_sweep_app(void* p) {
     InputEvent event;
     while(app->running) {
         if(furi_message_queue_get(input_queue, &event, 100) != FuriStatusOk) {
+            /* No input this tick — run feedback + redraw */
+            app->tick_count++;
+            feedback_tick(app);
             view_port_update(view_port);
             continue;
         }
@@ -353,6 +521,24 @@ int32_t room_sweep_app(void* p) {
                 app->marauder_state = MarauderIdle;
             }
         }
+        if(event.key == InputKeyUp) {
+            /* Toggle sound */
+            app->sound_on = !app->sound_on;
+            if(!app->sound_on) {
+                notification_message(app->notif, &sequence_reset_sound);
+            } else {
+                /* Audible confirmation: short click */
+                notification_message(app->notif, &seq_geiger_click);
+            }
+        }
+        if(event.key == InputKeyDown) {
+            /* Toggle vibro */
+            app->vibro_on = !app->vibro_on;
+            if(app->vibro_on) {
+                /* Haptic confirmation */
+                notification_message(app->notif, &seq_vibro_pulse);
+            }
+        }
         if(event.key == InputKeyOk && app->serial) {
             /* start scan for wifi/ble tabs */
             if(app->mode == SweepModeWifi) {
@@ -363,11 +549,15 @@ int32_t room_sweep_app(void* p) {
                 app->marauder_state = MarauderScanning;
             }
         }
+        app->tick_count++;
+        feedback_tick(app);
         view_port_update(view_port);
     }
 
     /* Cleanup */
     notification_message(app->notif, &sequence_reset_rgb);
+    notification_message(app->notif, &sequence_reset_sound);
+    notification_message(app->notif, &sequence_reset_vibro);
     furi_record_close(RECORD_NOTIFICATION);
 
     app->running = false;
