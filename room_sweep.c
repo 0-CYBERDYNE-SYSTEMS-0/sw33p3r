@@ -20,6 +20,7 @@
 #include <notification/notification_messages.h>
 #include <notification/notification_messages_notes.h>
 #include <lib/subghz/devices/cc1101_configs.h>
+#include <lib/toolbox/level_duration.h>
 #include <string.h>
 
 #include "room_sweep.h"
@@ -68,29 +69,46 @@ typedef struct {
     volatile float gps_lon;
     volatile float gps_alt_m;
     volatile bool gps_fix_valid;
+
+    /* RF transmit (SubGHz carrier test — safety-gated, OWN PROPERTY ONLY) */
+    volatile bool tx_active;       // true while transmitting (stands RX down)
+    FuriThread* tx_thread;
+    volatile uint32_t tx_freq_hz;  // transmit frequency (default 433.92 MHz)
+    volatile uint32_t tx_start_tick;
+    bool tx_warning_shown;         // user acknowledged the safety warning
+    bool tx_warning_active;        // safety overlay currently displayed
+
+    /* Settings menu (opened via Back button from scan view) */
+    bool settings_active;          // settings overlay displayed
+    uint8_t settings_sel;          // highlighted item index
+    uint8_t tx_freq_idx;           // index into tx_freq_presets[]
 } App;
 
 /* ------------------------------------------------------------------ */
-/* Custom notification sequences (Geiger click, lock tone, vibro)      */
+/* TX frequency presets (ISM / common bands, CC1101-valid)            */
 /* ------------------------------------------------------------------ */
-static const NotificationSequence seq_geiger_click = {
-    &message_click,
-    &message_delay_1,
-    NULL,
+#define TX_FREQ_PRESET_COUNT 4
+static const uint32_t tx_freq_presets[TX_FREQ_PRESET_COUNT] = {
+    433920000, 868350000, 915000000, 315000000,
+};
+static const char* tx_freq_labels[TX_FREQ_PRESET_COUNT] = {
+    "433.92 MHz", "868.35 MHz", "915.00 MHz", "315.00 MHz",
 };
 
-static const NotificationSequence seq_lock_tone = {
-    &message_note_g5,
-    &message_delay_100,
-    NULL,
+/* Settings menu item indices */
+enum {
+    SET_SOUND = 0,
+    SET_VIBRO,
+    SET_TXFREQ,
+    SET_COUNT,
 };
 
-static const NotificationSequence seq_vibro_pulse = {
-    &message_vibro_on,
-    &message_delay_50,
-    &message_vibro_off,
-    NULL,
-};
+/* ------------------------------------------------------------------ */
+/* Notification sequences                                             */
+/* SILENT OPERATION MODE: no custom sound/vibro sequences are defined.  */
+/* All alerting is LED-only (RF sweep thread). The SDK reset sequences  */
+/* are used at teardown to clear any stuck LED/sound/vibro state.       */
+/* ------------------------------------------------------------------ */
 
 /* ------------------------------------------------------------------ */
 /* UART ISR callback — feeds ring of lines, ISR-safe (no alloc)        */
@@ -176,6 +194,14 @@ static int32_t rf_sweep_thread(void* ctx) {
     furi_hal_subghz_load_custom_preset(subghz_device_cc1101_preset_ook_650khz_async_regs);
 
     while(app->running) {
+        /* Yield radio to TX thread if transmitting — RX/TX share the CC1101
+         * and MUST NOT run simultaneously (hardware fault otherwise). */
+        if(app->tx_active) {
+            furi_hal_subghz_idle();
+            furi_delay_ms(20);
+            continue;
+        }
+
         bool any_alert = false;
         float peak = -120.0f;
         uint8_t peak_idx = 0;
@@ -237,45 +263,62 @@ static int32_t rf_sweep_thread(void* ctx) {
 }
 
 /* ------------------------------------------------------------------ */
+/* RF transmit (carrier test) — safety-gated, OWN PROPERTY ONLY        */
+/* ------------------------------------------------------------------ */
+/* Async TX callback: emit a continuous OOK carrier (level HIGH, long
+ * duration) so a receiver on the same frequency sees a steady signal.
+ * Returning the same high level repeatedly holds the carrier on. */
+static LevelDuration tx_carrier_cb(void* context) {
+    UNUSED(context);
+    return level_duration_make(true, 1000000); /* HIGH for 1,000,000 us */
+}
+
+/* TX thread: stand up the carrier on tx_freq_hz for a bounded window
+ * (TX_MAX_MS) then stop automatically. Never transmits indefinitely. */
+#define TX_MAX_MS 3000U
+
+static int32_t tx_thread(void* ctx) {
+    App* app = ctx;
+
+    /* Wait until the RX sweep thread has yielded the radio. */
+    uint32_t waited = 0;
+    while(app->tx_active && app->running && waited < 500) {
+        furi_delay_ms(10);
+        waited += 10;
+    }
+
+    furi_hal_subghz_set_frequency_and_path(app->tx_freq_hz);
+    if(furi_hal_subghz_start_async_tx(tx_carrier_cb, app)) {
+        uint32_t elapsed = 0;
+        while(app->running && elapsed < TX_MAX_MS) {
+            furi_delay_ms(50);
+            elapsed += 50;
+        }
+        furi_hal_subghz_stop_async_tx();
+    }
+    furi_hal_subghz_idle();
+
+    app->tx_active = false; /* release radio back to the RX sweep */
+    return 0;
+}
+
+/* ------------------------------------------------------------------ */
 /* Feedback logic (called from main loop each tick)                    */
+/*                                                                     */
+/* SILENT OPERATION MODE: audio (Geiger clicks / lock tone) and vibro  */
+/* pulses are intentionally DISABLED — the user is sleeping in the     */
+/* room. Only the LED escalation (driven by the RF sweep thread)       */
+/* provides alerts, which is silent. The sound_on / vibro_on flags are */
+/* still tracked so the UI can show their state and so the behavior    */
+/* can be restored, but nothing here emits sound or vibration.         */
 /* ------------------------------------------------------------------ */
 static void feedback_tick(App* app) {
     float peak = app->peak_rssi;
     bool alerting = (peak > RF_ALERT_THRESHOLD);
-    uint32_t now = furi_get_tick();
 
-    /* --- Vibro: single pulse on rising edge of detection --- */
-    if(app->vibro_on && alerting && !app->was_alerting) {
-        if(now - app->last_vibro_ms > 200) {
-            notification_message(app->notif, &seq_vibro_pulse);
-            app->last_vibro_ms = now;
-        }
-    }
-
-    /* --- Audio: Geiger clicks that resolve to a steady tone --- */
-    if(app->sound_on) {
-        app->lock_ticks = alerting ? (app->lock_ticks + 1) : 0;
-        bool locked = (app->lock_ticks >= 3); // sustained ~300ms
-
-        if(locked) {
-            /* Steady tone while locked — one note per tick = continuous */
-            notification_message(app->notif, &seq_lock_tone);
-        } else if(peak >= -90.0f) {
-            /* Geiger regime: click rate scales with proximity.
-             * -90 dBm -> 900ms interval; -55 dBm -> 80ms interval. */
-            float closeness = (peak - (-90.0f)) / ((-55.0f) - (-90.0f));
-            if(closeness < 0) closeness = 0;
-            if(closeness > 1) closeness = 1;
-            uint32_t interval = (uint32_t)(900 - closeness * 820);
-            if(now - app->last_click_ms > interval) {
-                notification_message(app->notif, &seq_geiger_click);
-                app->last_click_ms = now;
-            }
-        }
-    } else {
-        app->lock_ticks = 0;
-    }
-
+    /* Track alert state only (LED path reads app->rf_alert separately).
+     * No notification_message() calls — guaranteed silent. */
+    app->lock_ticks = alerting ? (app->lock_ticks + 1) : 0;
     app->was_alerting = alerting;
 }
 
@@ -485,6 +528,62 @@ static void draw_info_tab(Canvas* canvas, App* app) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Settings menu overlay                                               */
+/* ------------------------------------------------------------------ */
+static void draw_settings_menu(Canvas* canvas, App* app) {
+    /* Dim background */
+    canvas_set_color(canvas, ColorWhite);
+    canvas_draw_box(canvas, 0, 0, 128, 64);
+
+    /* Frame */
+    canvas_set_color(canvas, ColorBlack);
+    canvas_draw_frame(canvas, 1, 1, 126, 62);
+
+    /* Title */
+    canvas_set_font(canvas, FontPrimary);
+    canvas_draw_str(canvas, 8, 15, "Settings");
+    canvas_draw_line(canvas, 8, 19, 120, 19);
+
+    /* Menu items */
+    canvas_set_font(canvas, FontSecondary);
+
+    /* Row positions: y = 30, 42, 54 */
+    const char* labels[SET_COUNT] = {
+        "Sound Alerts",
+        "Vibration",
+        "TX Frequency",
+    };
+
+    for(int i = 0; i < SET_COUNT; i++) {
+        uint8_t y = 30 + i * 12;
+        if(i == (int)app->settings_sel) {
+            canvas_draw_box(canvas, 4, y - 9, 120, 11);
+            canvas_set_color(canvas, ColorWhite);
+            canvas_draw_str(canvas, 8, y, labels[i]);
+            canvas_set_color(canvas, ColorBlack);
+        } else {
+            canvas_draw_str(canvas, 8, y, labels[i]);
+        }
+
+        /* Right-aligned values */
+        char val[16];
+        if(i == SET_SOUND) {
+            snprintf(val, sizeof(val), "%s", app->sound_on ? "ON" : "OFF");
+        } else if(i == SET_VIBRO) {
+            snprintf(val, sizeof(val), "%s", app->vibro_on ? "ON" : "OFF");
+        } else if(i == SET_TXFREQ) {
+            snprintf(val, sizeof(val), "%s", tx_freq_labels[app->tx_freq_idx]);
+        }
+        uint16_t w = canvas_string_width(canvas, val);
+        canvas_draw_str(canvas, 118 - w, y, val);
+    }
+
+    /* Bottom hint */
+    canvas_set_font(canvas, FontKeyboard);
+    canvas_draw_str(canvas, 8, 61, "OK=toggle B=back");
+}
+
+/* ------------------------------------------------------------------ */
 /* Main draw callback                                                  */
 /* ------------------------------------------------------------------ */
 static void draw_cb(Canvas* canvas, void* ctx) {
@@ -515,20 +614,59 @@ static void draw_cb(Canvas* canvas, void* ctx) {
         }
     }
 
-    /* --- Sound / Vibro state icons (top-right corner) --- */
+    /* --- Status indicators (top-right, moved BELOW header to avoid clutter) --- */
     canvas_set_font(canvas, FontKeyboard);
-    if(app->sound_on) {
-        canvas_draw_str(canvas, 104, 11, "S:ON");
+
+    /* TX / RX indicator — always visible (below tab strip) */
+    if(app->tx_active) {
+        /* Inverse-video "TX" badge */
+        canvas_set_color(canvas, ColorBlack);
+        canvas_draw_box(canvas, 106, 16, 20, 10);
+        canvas_set_color(canvas, ColorWhite);
+        canvas_draw_str(canvas, 109, 24, "TX");
+        canvas_set_color(canvas, ColorBlack);
     } else {
-        canvas_draw_str(canvas, 104, 11, "S:off");
+        canvas_draw_str(canvas, 106, 24, "RX");
     }
-    /* Note: only show in non-RF tabs to avoid clutter with the RSSI readout */
+
+    /* Sound/Vibro state — only in non-RF tabs */
     if(app->mode != SweepModeRF) {
-        if(app->vibro_on) {
-            canvas_draw_str(canvas, 104, 19, "V:ON");
-        } else {
-            canvas_draw_str(canvas, 104, 19, "V:off");
-        }
+        canvas_draw_str(canvas, 104, 23, app->sound_on ? "S:ON" : "S:off");
+        canvas_draw_str(canvas, 104, 31, app->vibro_on ? "V:ON" : "V:off");
+    }
+
+    /* --- TX SAFETY WARNING overlay (highest priority, covers screen) --- */
+    if(app->tx_warning_active) {
+        canvas_set_color(canvas, ColorWhite);
+        canvas_draw_box(canvas, 0, 0, 128, 64);
+        canvas_set_color(canvas, ColorBlack);
+        canvas_draw_frame(canvas, 1, 1, 126, 62);
+
+        canvas_set_font(canvas, FontPrimary);
+        canvas_draw_str(canvas, 8, 14, "!! TRANSMIT !!");
+
+        canvas_set_font(canvas, FontSecondary);
+        canvas_draw_str(canvas, 8, 26, "Radiates RF energy.");
+        canvas_draw_str(canvas, 8, 36, "AUTHORIZED USE ONLY:");
+        canvas_draw_str(canvas, 8, 45, "own property / licensed.");
+
+        char fbuf[40];
+        snprintf(fbuf, sizeof(fbuf), "Freq: %06lu kHz, 3s max",
+                 (unsigned long)(app->tx_freq_hz / 1000));
+        canvas_set_font(canvas, FontKeyboard);
+        canvas_draw_str(canvas, 8, 56, fbuf);
+
+        /* Inverse-video prompt */
+        canvas_set_color(canvas, ColorBlack);
+        canvas_draw_box(canvas, 70, 58, 54, 6);
+        canvas_set_color(canvas, ColorWhite);
+        canvas_draw_str(canvas, 72, 63, "OK=send B=cxl");
+        canvas_set_color(canvas, ColorBlack);
+    }
+
+    /* --- SETTINGS MENU overlay (highest priority, covers screen) --- */
+    if(app->settings_active) {
+        draw_settings_menu(canvas, app);
     }
 }
 
@@ -553,6 +691,18 @@ int32_t room_sweep_app(void* p) {
     app->sound_on = false;  /* default: SOUND OFF (silent operation; Up toggles) */
     app->vibro_on = false;  /* default: vibro off (can be noisy) */
     app->peak_rssi = -120.0f;
+
+    /* RF transmit defaults (safety-gated, OWN PROPERTY ONLY) */
+    app->tx_freq_hz = 433920000;  /* 433.92 MHz ISM carrier-test freq */
+    app->tx_freq_idx = 0;
+    app->tx_active = false;
+    app->tx_warning_shown = false;
+    app->tx_warning_active = false;
+    app->tx_thread = NULL;
+
+    /* Settings menu defaults */
+    app->settings_active = false;
+    app->settings_sel = 0;
 
     /* GPS parser init (host-tested: 48/48 assertions pass) */
     nmea_init(&app->gps);
@@ -588,9 +738,41 @@ int32_t room_sweep_app(void* p) {
         }
         if(event.type != InputTypeShort && event.type != InputTypeLong) continue;
 
+        /* --- SETTINGS MENU INPUT (when overlay active) --- */
+        if(app->settings_active) {
+            if(event.key == InputKeyBack) {
+                app->settings_active = false;
+            } else if(event.key == InputKeyUp) {
+                app->settings_sel = (app->settings_sel + SET_COUNT - 1) % SET_COUNT;
+            } else if(event.key == InputKeyDown) {
+                app->settings_sel = (app->settings_sel + 1) % SET_COUNT;
+            } else if(event.key == InputKeyOk) {
+                if(app->settings_sel == SET_SOUND) {
+                    app->sound_on = !app->sound_on;
+                } else if(app->settings_sel == SET_VIBRO) {
+                    app->vibro_on = !app->vibro_on;
+                } else if(app->settings_sel == SET_TXFREQ) {
+                    app->tx_freq_idx = (app->tx_freq_idx + 1) % TX_FREQ_PRESET_COUNT;
+                    app->tx_freq_hz = tx_freq_presets[app->tx_freq_idx];
+                }
+            }
+            continue; /* consume event, don't fall through to scan handlers */
+        }
+
         if(event.key == InputKeyBack) {
-            app->running = false;
-            break;
+            /* If the TX safety warning is showing, Back cancels it (not exit). */
+            if(app->tx_warning_active) {
+                app->tx_warning_active = false;
+                continue;
+            }
+            /* LONG press Back = exit app. SHORT press = open Settings. */
+            if(event.type == InputTypeLong) {
+                app->running = false;
+                break;
+            }
+            app->settings_active = true;
+            app->settings_sel = 0;
+            continue;
         }
         if(event.key == InputKeyLeft) {
             app->mode = (app->mode == 0) ? (SweepMode)(SweepModeCount - 1)
@@ -612,32 +794,43 @@ int32_t room_sweep_app(void* p) {
             app->gps_active = (app->mode == SweepModeGps && app->serial != NULL);
         }
         if(event.key == InputKeyUp) {
-            /* Toggle sound */
+            /* Toggle sound flag (state only — SILENT MODE emits no audio). */
             app->sound_on = !app->sound_on;
-            if(!app->sound_on) {
-                notification_message(app->notif, &sequence_reset_sound);
-            } else {
-                /* Audible confirmation: short click */
-                notification_message(app->notif, &seq_geiger_click);
-            }
+            /* Intentionally NO notification_message: silent operation. */
         }
         if(event.key == InputKeyDown) {
-            /* Toggle vibro */
+            /* Toggle vibro flag (state only — SILENT MODE emits no haptics). */
             app->vibro_on = !app->vibro_on;
-            if(app->vibro_on) {
-                /* Haptic confirmation */
-                notification_message(app->notif, &seq_vibro_pulse);
-            }
+            /* Intentionally NO notification_message: silent operation. */
         }
-        if(event.key == InputKeyOk && app->serial) {
-            /* start scan for wifi/ble tabs */
-            if(app->mode == SweepModeWifi) {
+        if(event.key == InputKeyOk) {
+            /* --- TX SAFETY GATE (RF tab only) --- */
+            if(app->tx_warning_active) {
+                /* Second OK: user confirmed → transmit a 3s bounded carrier */
+                app->tx_warning_active = false;
+                app->tx_warning_shown = true;
+                app->tx_active = true;
+                app->tx_start_tick = furi_get_tick();
+                if(app->tx_thread == NULL) {
+                    app->tx_thread = furi_thread_alloc_ex("RoomSweepTX", 2048, tx_thread, app);
+                }
+                furi_thread_start(app->tx_thread);
+            } else if(app->mode == SweepModeRF && !app->tx_active) {
+                /* First OK on RF tab: show the safety warning overlay */
+                app->tx_warning_active = true;
+            } else if(app->mode == SweepModeWifi && app->serial) {
                 marauder_send(app, "scanap");
                 app->marauder_state = MarauderScanning;
-            } else if(app->mode == SweepModeBle) {
+            } else if(app->mode == SweepModeBle && app->serial) {
                 marauder_send(app, "sniffbt");
                 app->marauder_state = MarauderScanning;
             }
+        }
+        /* Cancel TX warning overlay with Left/Right too */
+        if(app->tx_warning_active &&
+           (event.key == InputKeyLeft || event.key == InputKeyRight)) {
+            app->tx_warning_active = false;
+            continue; /* don't also change tabs */
         }
         app->tick_count++;
         feedback_tick(app);
@@ -651,6 +844,14 @@ int32_t room_sweep_app(void* p) {
     furi_record_close(RECORD_NOTIFICATION);
 
     app->running = false;
+
+    /* Stop + join TX thread first (it owns the radio while active) */
+    if(app->tx_thread) {
+        furi_thread_join(app->tx_thread);
+        furi_thread_free(app->tx_thread);
+        app->tx_thread = NULL;
+    }
+
     furi_thread_join(app->rf_thread);
     furi_thread_free(app->rf_thread);
 
