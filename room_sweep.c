@@ -1,14 +1,14 @@
-/* Room Sweep v3.1 — multi-tab wireless assessment tool
+/* Room Sweep v3.2 — multi-tab wireless assessment tool
  * Tabs: RF (survey/sweep/peak) | WiFi | BLE | GPS | TX | Info
- * TX is a dedicated safety-gated tab. Sound/vibro/LED per-tab.
- * BLE timeout fixed; GPS requests Marauder NMEA stream (BFFB).
- * All API calls verified against Momentum mntm-012 API 87.1.
+ * RF prefers BFFB external CC1101 (cc1101_ext) via subghz_devices;
+ * falls back to Flipper internal CC1101. WiFi/BLE/GPS via Marauder UART.
+ * Momentum mntm-012, API 87.1.
  */
 #include <furi.h>
 #include <gui/gui.h>
 #include <gui/view_port.h>
 #include <input/input.h>
-#include <furi_hal_subghz.h>
+#include <furi_hal_power.h>
 #include <furi_hal_serial.h>
 #include <furi_hal_serial_types.h>
 #include <furi_hal_serial_control.h>
@@ -16,7 +16,9 @@
 #include <notification/notification.h>
 #include <notification/notification_messages.h>
 #include <notification/notification_messages_notes.h>
-#include <lib/subghz/devices/cc1101_configs.h>
+#include <lib/subghz/devices/devices.h>
+#include <lib/subghz/devices/cc1101_int/cc1101_int_interconnect.h>
+#include <applications/drivers/subghz/cc1101_ext/cc1101_ext_interconnect.h>
 #include <lib/toolbox/level_duration.h>
 #include <string.h>
 #include <stdlib.h>
@@ -26,6 +28,12 @@
 #include "room_sweep_input.h"
 #include "room_sweep_scan.h"
 #include "nmea.h"
+
+typedef enum {
+    RadioPathNone = 0,
+    RadioPathInternal,
+    RadioPathExternal, /* BFFB dual CC1101 on SPI (Momentum cc1101_ext) */
+} RadioPath;
 
 /* ================================================================== */
 /* Notification sequences (actual sound + vibro)                       */
@@ -130,6 +138,11 @@ typedef struct {
 
     /* Last detected signal (for TX pre-load) */
     uint32_t last_signal_freq;
+
+    /* SubGHz radio: prefer BFFB external SPI CC1101, else internal */
+    const SubGhzDevice* radio;
+    RadioPath radio_path;
+    bool radio_otg_on;
 
     /* Marauder UART */
     MarauderState marauder_state;
@@ -720,24 +733,114 @@ static void process_uart_lines(App* app) {
 }
 
 /* ================================================================== */
+/* SubGHz radio — BFFB external CC1101 (SPI) preferred, else internal  */
+/* BFFB wiki: dual CC1101 on Flipper SPI; top switch 400 vs 900 MHz;   */
+/* bottom switch ESP32 for CC1101 access. Momentum: cc1101_ext.        */
+/* ================================================================== */
+static void radio_otg_on(App* app) {
+    if(!furi_hal_power_is_otg_enabled()) {
+        furi_hal_power_enable_otg();
+        app->radio_otg_on = true;
+        furi_delay_ms(50);
+    }
+}
+
+static void radio_otg_off(App* app) {
+    if(app->radio_otg_on) {
+        furi_hal_power_disable_otg();
+        app->radio_otg_on = false;
+    }
+}
+
+static bool radio_open(App* app) {
+    app->radio = NULL;
+    app->radio_path = RadioPathNone;
+    app->radio_otg_on = false;
+
+    subghz_devices_init();
+
+    /* Prefer external SPI CC1101 (BFFB dual modules / Flux Capacitor / etc.) */
+    radio_otg_on(app);
+    const SubGhzDevice* ext = subghz_devices_get_by_name(SUBGHZ_DEVICE_CC1101_EXT_NAME);
+    if(ext && subghz_devices_is_connect(ext)) {
+        if(subghz_devices_begin(ext)) {
+            app->radio = ext;
+            app->radio_path = RadioPathExternal;
+        }
+    }
+
+    if(!app->radio) {
+        radio_otg_off(app);
+        const SubGhzDevice* inter = subghz_devices_get_by_name(SUBGHZ_DEVICE_CC1101_INT_NAME);
+        if(inter) {
+            app->radio = inter;
+            app->radio_path = RadioPathInternal;
+        }
+    }
+
+    if(!app->radio) {
+        subghz_devices_deinit();
+        return false;
+    }
+
+    subghz_devices_reset(app->radio);
+    subghz_devices_idle(app->radio);
+    subghz_devices_load_preset(app->radio, FuriHalSubGhzPresetOok650Async, NULL);
+    return true;
+}
+
+static void radio_close(App* app) {
+    if(app->radio) {
+        subghz_devices_idle(app->radio);
+        subghz_devices_sleep(app->radio);
+        if(app->radio_path == RadioPathExternal) {
+            subghz_devices_end(app->radio);
+        }
+        app->radio = NULL;
+    }
+    radio_otg_off(app);
+    subghz_devices_deinit();
+    app->radio_path = RadioPathNone;
+}
+
+static void radio_rx_at(App* app, uint32_t hz) {
+    if(!app->radio) return;
+    subghz_devices_idle(app->radio);
+    subghz_devices_set_frequency(app->radio, hz);
+    subghz_devices_flush_rx(app->radio);
+    subghz_devices_set_rx(app->radio);
+}
+
+static float radio_rssi(App* app) {
+    if(!app->radio) return -120.0f;
+    return subghz_devices_get_rssi(app->radio);
+}
+
+static void radio_idle(App* app) {
+    if(app->radio) subghz_devices_idle(app->radio);
+}
+
+/* ================================================================== */
 /* RF sweep thread (handles survey / band sweep / peak refine)         */
 /* ================================================================== */
 static int32_t rf_sweep_thread(void* ctx) {
     App* app = ctx;
 
     furi_mutex_acquire(app->radio_mutex, FuriWaitForever);
-    furi_hal_subghz_reset();
-    furi_hal_subghz_load_custom_preset(subghz_device_cc1101_preset_ook_650khz_async_regs);
+    if(app->radio) {
+        subghz_devices_reset(app->radio);
+        subghz_devices_idle(app->radio);
+        subghz_devices_load_preset(app->radio, FuriHalSubGhzPresetOok650Async, NULL);
+    }
     furi_mutex_release(app->radio_mutex);
 
     while(app->running) {
-        if(app->tx_active) {
+        if(app->tx_active || !app->radio) {
             furi_delay_ms(20);
             continue;
         }
 
         if(app->rf_sub == RfSubSurvey) {
-            /* --- Quick survey: 16 preset channels --- */
             bool any_alert = false;
             float peak = -120.0f;
             uint8_t peak_idx = 0;
@@ -745,21 +848,20 @@ static int32_t rf_sweep_thread(void* ctx) {
             for(uint8_t ch = 0; ch < RF_NUM_CHANNELS && app->running; ch++) {
                 if(app->tx_active) break;
                 furi_mutex_acquire(app->radio_mutex, FuriWaitForever);
-                if(!app->running || app->tx_active) {
+                if(!app->running || app->tx_active || !app->radio) {
                     furi_mutex_release(app->radio_mutex);
                     break;
                 }
-                furi_hal_subghz_set_frequency_and_path(rf_channels[ch]);
-                furi_hal_subghz_rx();
+                radio_rx_at(app, rf_channels[ch]);
 
                 float sum = 0;
                 for(uint8_t s = 0; s < RF_SAMPLES_PER_CH && app->running && !app->tx_active; s++) {
-                    sum += furi_hal_subghz_get_rssi();
+                    sum += radio_rssi(app);
                     furi_delay_ms(5);
                 }
                 bool sample_valid = app->running && !app->tx_active;
                 float avg = sum / RF_SAMPLES_PER_CH;
-                furi_hal_subghz_idle();
+                radio_idle(app);
                 furi_mutex_release(app->radio_mutex);
                 if(!sample_valid) break;
 
@@ -781,10 +883,8 @@ static int32_t rf_sweep_thread(void* ctx) {
             if(peak > RF_ALERT_THRESHOLD) {
                 app->last_signal_freq = rf_channels[peak_idx];
             }
-            /* LED is driven by feedback_tick for the active tab — not here. */
 
         } else if(app->rf_sub == RfSubSweep && app->sweep_running) {
-            /* --- Coarse band sweep --- */
             const RfBand* band = &rf_bands[app->sweep_band_idx];
             uint32_t total_steps = (band->stop_hz - band->start_hz) / SWEEP_STEP_COARSE;
             if(total_steps > SWEEP_MAX_POINTS) total_steps = SWEEP_MAX_POINTS;
@@ -800,21 +900,20 @@ static int32_t rf_sweep_thread(void* ctx) {
                 app->sweep_freq = freq;
 
                 furi_mutex_acquire(app->radio_mutex, FuriWaitForever);
-                if(!app->running || app->tx_active || !app->sweep_running) {
+                if(!app->running || app->tx_active || !app->sweep_running || !app->radio) {
                     furi_mutex_release(app->radio_mutex);
                     break;
                 }
-                furi_hal_subghz_set_frequency_and_path(freq);
-                furi_hal_subghz_rx();
+                radio_rx_at(app, freq);
 
                 float sum = 0;
                 for(uint8_t s = 0; s < SWEEP_SAMPLES && app->running && !app->tx_active && app->sweep_running; s++) {
-                    sum += furi_hal_subghz_get_rssi();
+                    sum += radio_rssi(app);
                     furi_delay_ms(SWEEP_DWELL_MS / SWEEP_SAMPLES);
                 }
                 bool sample_valid = app->running && !app->tx_active && app->sweep_running;
                 float avg = sum / SWEEP_SAMPLES;
-                furi_hal_subghz_idle();
+                radio_idle(app);
                 furi_mutex_release(app->radio_mutex);
                 if(!sample_valid) break;
 
@@ -836,7 +935,6 @@ static int32_t rf_sweep_thread(void* ctx) {
             app->peak_rssi = best_rssi;
 
         } else if(app->rf_sub == RfSubPeak && app->peak_running) {
-            /* --- Fine peak refinement --- */
             uint32_t center = app->last_signal_freq;
             const RfBand* band = NULL;
             for(uint8_t i = 0; i < RF_BAND_COUNT; i++) {
@@ -862,21 +960,20 @@ static int32_t rf_sweep_thread(void* ctx) {
                 if(app->tx_active) break;
                 uint32_t freq = start + step * SWEEP_STEP_FINE;
                 furi_mutex_acquire(app->radio_mutex, FuriWaitForever);
-                if(!app->running || app->tx_active || !app->peak_running) {
+                if(!app->running || app->tx_active || !app->peak_running || !app->radio) {
                     furi_mutex_release(app->radio_mutex);
                     break;
                 }
-                furi_hal_subghz_set_frequency_and_path(freq);
-                furi_hal_subghz_rx();
+                radio_rx_at(app, freq);
 
                 float sum = 0;
                 for(uint8_t s = 0; s < SWEEP_SAMPLES && app->running && !app->tx_active && app->peak_running; s++) {
-                    sum += furi_hal_subghz_get_rssi();
+                    sum += radio_rssi(app);
                     furi_delay_ms(SWEEP_DWELL_MS / SWEEP_SAMPLES);
                 }
                 bool sample_valid = app->running && !app->tx_active && app->peak_running;
                 float avg = sum / SWEEP_SAMPLES;
-                furi_hal_subghz_idle();
+                radio_idle(app);
                 furi_mutex_release(app->radio_mutex);
                 if(!sample_valid) break;
 
@@ -894,16 +991,15 @@ static int32_t rf_sweep_thread(void* ctx) {
             app->peak_rssi = best_rssi;
             app->peak_fine_rssi = best_rssi;
         } else {
-            /* Idle sub-mode — brief pause to avoid busy-wait */
             furi_mutex_acquire(app->radio_mutex, FuriWaitForever);
-            furi_hal_subghz_idle();
+            radio_idle(app);
             furi_mutex_release(app->radio_mutex);
             furi_delay_ms(50);
         }
     }
 
     furi_mutex_acquire(app->radio_mutex, FuriWaitForever);
-    furi_hal_subghz_sleep();
+    if(app->radio) subghz_devices_sleep(app->radio);
     furi_mutex_release(app->radio_mutex);
     return 0;
 }
@@ -928,20 +1024,22 @@ static int32_t tx_thread(void* ctx) {
     app->tx_remaining_ms = duration_ms;
 
     furi_mutex_acquire(app->radio_mutex, FuriWaitForever);
-    if(app->running && app->tx_active) {
+    if(app->running && app->tx_active && app->radio) {
         app->tx_level = false;
         app->tx_started = false;
-        furi_hal_subghz_set_frequency_and_path(app->tx_freq_hz);
-        if(furi_hal_subghz_start_async_tx(tx_carrier_cb, app)) {
+        subghz_devices_idle(app->radio);
+        subghz_devices_load_preset(app->radio, FuriHalSubGhzPresetOok650Async, NULL);
+        subghz_devices_set_frequency(app->radio, app->tx_freq_hz);
+        if(subghz_devices_start_async_tx(app->radio, tx_carrier_cb, app)) {
             uint32_t elapsed = 0;
             while(app->running && app->tx_active && elapsed < duration_ms) {
                 furi_delay_ms(50);
                 elapsed += 50;
                 app->tx_remaining_ms = duration_ms - elapsed;
             }
-            furi_hal_subghz_stop_async_tx();
+            subghz_devices_stop_async_tx(app->radio);
         }
-        furi_hal_subghz_idle();
+        subghz_devices_idle(app->radio);
     }
     furi_mutex_release(app->radio_mutex);
 
@@ -1131,9 +1229,10 @@ static void draw_rf_survey(Canvas* canvas, App* app) {
     canvas_set_font(canvas, FontSecondary);
     canvas_draw_str(canvas, 1, 12, "RF Survey");
 
-    /* Sub-mode indicator */
+    /* Sub-mode + radio path (EXT = BFFB SPI CC1101) */
     canvas_set_font(canvas, FontKeyboard);
-    canvas_draw_str(canvas, 52, 12, "[SURVEY]");
+    canvas_draw_str(canvas, 52, 12,
+                    app->radio_path == RadioPathExternal ? "[SURVEY EXT]" : "[SURVEY INT]");
 
     /* Peak RSSI (right-aligned) */
     char buf[16];
@@ -1200,7 +1299,8 @@ static void draw_rf_sweep(Canvas* canvas, App* app) {
     canvas_set_font(canvas, FontSecondary);
     canvas_draw_str(canvas, 1, 12, "RF Sweep");
     canvas_set_font(canvas, FontKeyboard);
-    canvas_draw_str(canvas, 52, 12, "[SWEEP]");
+    canvas_draw_str(canvas, 52, 12,
+                    app->radio_path == RadioPathExternal ? "[SWEEP EXT]" : "[SWEEP INT]");
 
     const RfBand* band = &rf_bands[app->sweep_band_idx];
 
@@ -1252,7 +1352,8 @@ static void draw_rf_peak(Canvas* canvas, App* app) {
     canvas_set_font(canvas, FontSecondary);
     canvas_draw_str(canvas, 1, 12, "RF Peak");
     canvas_set_font(canvas, FontKeyboard);
-    canvas_draw_str(canvas, 52, 12, "[PEAK]");
+    canvas_draw_str(canvas, 52, 12,
+                    app->radio_path == RadioPathExternal ? "[PEAK EXT]" : "[PEAK INT]");
 
     if(app->peak_running) {
         char buf[32];
@@ -1642,12 +1743,14 @@ static void draw_tx_tab(Canvas* canvas, App* app) {
 /* ================================================================== */
 static void draw_info_tab(Canvas* canvas, App* app) {
     canvas_set_font(canvas, FontSecondary);
-    canvas_draw_str(canvas, 2, 12, "Room Sweep v3.1");
+    canvas_draw_str(canvas, 2, 12, "Room Sweep v3.2");
 
     canvas_set_font(canvas, FontKeyboard);
     char buf[40];
 
-    snprintf(buf, sizeof(buf), "Tabs: 6  RF: 3 sub-modes");
+    snprintf(buf, sizeof(buf), "RF: %s",
+             app->radio_path == RadioPathExternal ? "BFFB EXT CC1101" :
+             app->radio_path == RadioPathInternal ? "internal CC1101" : "no radio");
     canvas_draw_str(canvas, 2, 23, buf);
 
     snprintf(buf, sizeof(buf), "UART: %s",
@@ -1664,7 +1767,7 @@ static void draw_info_tab(Canvas* canvas, App* app) {
              app->tx_state == TxArmed ? "ARMED" : "ACTIVE");
     canvas_draw_str(canvas, 2, 48, buf);
 
-    canvas_draw_str(canvas, 2, 56, "Legal: own property");
+    canvas_draw_str(canvas, 2, 56, "BFFB SW: ESP32+400/900");
     canvas_draw_str(canvas, 2, 63, "API 87.1 / Momentum");
 }
 
@@ -1816,7 +1919,10 @@ int32_t room_sweep_app(void* p) {
     /* Notification service */
     app->notif = furi_record_open(RECORD_NOTIFICATION);
 
-    /* UART */
+    /* SubGHz: BFFB external CC1101 if present, else internal */
+    radio_open(app);
+
+    /* UART (BFFB Marauder) */
     marauder_open(app);
 
     /* RF sweep thread */
@@ -2103,6 +2209,8 @@ int32_t room_sweep_app(void* p) {
 
     furi_thread_join(app->rf_thread);
     furi_thread_free(app->rf_thread);
+
+    radio_close(app);
 
     notification_message(app->notif, &sequence_reset_rgb);
     notification_message(app->notif, &sequence_reset_sound);

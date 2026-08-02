@@ -11,7 +11,7 @@ Wiki: https://github.com/justcallmekoko/ESP32Marauder/wiki/BFFB
 | ESP32 runs **Marauder Dev Board Pro** firmware (`_marauder_dev_board_pro.bin`) | CLI command set = current ESP32Marauder `CommandLine.h` |
 | **GPS is wired to the ESP32 only**, not Flipper GPIO | Stock Flipper GPS apps will **not** see BFFB GPS. Must use Marauder CLI (`nmea`, `gps -g …`) over UART |
 | Bottom module switch selects **NRF24 vs ESP32** | For WiFi/BLE/GPS via Marauder, switch must be on **ESP32** |
-| Dual CC1101 + nRF24 are on Flipper **SPI** | Momentum SubGHz/nRF apps use those; Room Sweep **RF tab uses Flipper internal CC1101** via `furi_hal_subghz` |
+| Dual CC1101 + nRF24 are on Flipper **SPI** | Room Sweep RF prefers Momentum **`cc1101_ext`** (BFFB dual CC1101). Top switch = 400 vs 900 MHz; bottom = **ESP32** for CC1101. Falls back to internal if external not detected. |
 | Official Flipper UI | [Marauder Companion](https://github.com/0xchocolate/flipperzero-wifi-marauder) |
 
 ## UART path (Momentum FAP)
