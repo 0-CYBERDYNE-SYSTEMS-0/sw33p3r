@@ -289,10 +289,12 @@ static void marauder_close(App* app) {
     furi_record_close(RECORD_EXPANSION);
 }
 
+/* Marauder CLI (JCMK): readStringUntil('\\n') + trim. Official Flipper
+ * companion (0xchocolate) transmits command + '\\n' only — not CRLF. */
 static void marauder_send(App* app, const char* cmd) {
     if(!app->serial) return;
     furi_hal_serial_tx(app->serial, (const uint8_t*)cmd, strlen(cmd));
-    furi_hal_serial_tx(app->serial, (const uint8_t*)"\r\n", 2);
+    furi_hal_serial_tx(app->serial, (const uint8_t*)"\n", 1);
 }
 
 static void clear_wifi_results(App* app) {
@@ -317,6 +319,7 @@ static void marauder_reset_results(App* app) {
 }
 
 static void marauder_stop_scan(App* app) {
+    /* Companion uses "stopscan" on Back; menu "Shutdown" uses "stopscan -f". */
     if(app->marauder_state == MarauderScanning) marauder_send(app, "stopscan");
     if(app->marauder_state != MarauderNoDevice) app->marauder_state = MarauderIdle;
 }
@@ -330,8 +333,11 @@ static void marauder_start_scan(App* app, const char* command) {
     app->last_rescan_tick = furi_get_tick();
 }
 
-/* Request NMEA stream from Just Call Me Koko Marauder (BFFB).
- * Passive listen never works: GPS is on ESP32 Serial2; CLI must emit NMEA. */
+/* BFFB wiki: GPS is wired to the ESP32 only — not Flipper GPIO — so stock
+ * Flipper GPS apps cannot see it. JCMK Marauder CLI must stream NMEA:
+ *   nmea          → WIFI_SCAN_GPS_NMEA (companion "NMEA Stream")
+ *   gps -g nmea   → one-shot synthetic GGA+RMC (companion GPS Data menu)
+ * Dev Board Pro build (BFFB firmware target) includes HAS_GPS. */
 static void gps_request_stream(App* app) {
     if(!app->serial) return;
     marauder_send(app, "nmea");
@@ -367,13 +373,14 @@ static void clear_uart_lines(App* app) {
 }
 
 /* ================================================================== */
-/* Marauder line parser — extract RSSI/identity from UART lines        */
-/* Actual Marauder scanap format:                                      */
+/* Marauder line parser — JCMK ESP32Marauder (BFFB = Dev Board Pro)    */
+/*                                                                     */
+/* WiFi (scanall / sniffbeacon → AP beacon path in WiFiScan.cpp):      */
 /*   "-45 Ch: 6 AA:BB:CC:DD:EE:FF ESSID: NetworkName 00 00"           */
-/* Actual Marauder sniffbt format:                                     */
-/*   "-60 Device: DeviceName"                                          */
-/* Also handles generic "RSSI: -45" fallback for other firmware.       */
-/* Lines starting with '#' are command echoes — skip.                  */
+/* BLE (sniffbt → BT_SCAN_ALL callback):                               */
+/*   "<rssi> Device: <name|mac>"  e.g. "-60 Device: AirPods"           */
+/* GPS (nmea): Serial.println of NMEA + generateGXgga/GXrmc.         */
+/* Lines starting with '#' are echoes — skip. No scan "done" marker.   */
 /* ================================================================== */
 
 /* Find integer value after a key string. Returns true if found. */
@@ -1431,10 +1438,11 @@ static void draw_gps_tab(Canvas* canvas, App* app) {
     canvas_set_font(canvas, FontSecondary);
 
     if(app->gps.sentences == 0) {
-        canvas_draw_str(canvas, 2, 26, "Requesting NMEA...");
-        canvas_draw_str(canvas, 2, 38, "BFFB: nmea / gps -g");
+        canvas_draw_str(canvas, 2, 26, "nmea stream...");
+        canvas_draw_str(canvas, 2, 38, "GPS on BFFB ESP32");
         canvas_set_font(canvas, FontKeyboard);
-        canvas_draw_str(canvas, 2, 52, "OK=retry  needs GPS module");
+        canvas_draw_str(canvas, 2, 50, "OK=retry  SW=ESP32");
+        canvas_draw_str(canvas, 2, 60, "not Flipper GPIO");
         return;
     }
 
@@ -1794,8 +1802,11 @@ int32_t room_sweep_app(void* p) {
                 }
                 if(app->auto_rescan && now - app->last_rescan_tick >= RESCAN_INTERVAL_MS) {
                     if(app->mode == SweepModeWifi) {
-                        marauder_start_scan(app, "scanap");
+                        /* Current Marauder CLI: scanall (SCAN_ALL_CMD).
+                         * Legacy "scanap" was removed from CommandLine.h. */
+                        marauder_start_scan(app, "scanall");
                     } else if(app->mode == SweepModeBle) {
+                        /* BT_SNIFF_CMD — companion Sniff → bt */
                         marauder_start_scan(app, "sniffbt");
                     }
                 }
@@ -1977,9 +1988,9 @@ int32_t room_sweep_app(void* p) {
             }
         }
 
-        /* --- WiFi/BLE: OK starts scan --- */
+        /* --- WiFi/BLE: OK starts Marauder scan (JCMK CLI names) --- */
         if(event.key == InputKeyOk && app->mode == SweepModeWifi && app->serial) {
-            marauder_start_scan(app, "scanap");
+            marauder_start_scan(app, "scanall");
         }
         if(event.key == InputKeyOk && app->mode == SweepModeBle && app->serial) {
             marauder_start_scan(app, "sniffbt");

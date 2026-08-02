@@ -85,15 +85,23 @@ static const RfBand rf_bands[RF_BAND_COUNT] = {
 #define PEAK_REFINE_SPAN  1000000UL  /* +/- 1 MHz around peak for refinement */
 
 /* ---------------------------------------------------------------------------
- * Marauder UART configuration (BFFB -> Flipper USART1)
+ * JCMK BFFB / Marauder UART (matches 0xchocolate companion + Momentum FAP)
+ *
+ * BFFB wiki: ESP32 runs Dev Board Pro Marauder; GPS is on the ESP32 only
+ * (not Flipper GPIO). Flipper talks Marauder CLI over USART @ 115200 after
+ * expansion_disable() — same path as wifi_marauder_uart.c (BAUDRATE 115200,
+ * FuriHalSerialIdUsart).
+ *
+ * BFFB front switch: bottom switch must be ESP32 (not NRF24) for Marauder.
+ * Dual on-board CC1101s are SPI to Flipper for Momentum SubGHz — separate
+ * from this UART path; Room Sweep RF tab uses the Flipper internal CC1101.
  * --------------------------------------------------------------------------- */
 #define MARAUDER_BAUD        115200UL
 #define MARAUDER_RX_BUF_SIZE 1024
 #define MARAUDER_LINE_MAX    128
 #define MARAUDER_MAX_LINES   8
 
-/* GPS alternate baud */
-#define GPS_BAUD_ALT         9600UL
+/* NMEA sentence cap for host-testable parser (not a second UART baud). */
 #define GPS_SENTENCE_MAX     96
 
 /* ---------------------------------------------------------------------------

@@ -42,7 +42,9 @@ The RF tab has **3 sub-modes** (cycle with **Up ▲ / Down ▼**):
 
 ### 2. WiFi Tab — Access Point Scanner
 
-**Requires:** BFFB ESP32 with Marauder connected via UART. The app can acquire the
+**Requires:** JCMK **BFFB** with Marauder (Dev Board Pro) on UART @ **115200**.
+Bottom module switch = **ESP32** (not NRF24). Command: **`scanall`** (current
+Marauder CLI; legacy `scanap` is gone). The app can acquire the
 Flipper UART even when the board is absent, so actual scan result lines confirm the
 board is responding.
 
@@ -60,7 +62,9 @@ When Sound is ON: Geiger clicks speed up as you move toward access points.
 
 ### 3. BLE Tab — Bluetooth Device Scanner (BFFB Marauder `sniffbt`)
 
-**Requires:** BFFB ESP32 with Marauder connected via UART. Actual scan result lines
+**Requires:** Same BFFB/Marauder UART as WiFi. Command: **`sniffbt`** (JCMK
+`BT_SNIFF_CMD` / companion Sniff→bt). Lines look like `-60 Device: NameOrMac`.
+Already-seen BLE devices do not re-print on RSSI update. Actual scan result lines
 confirm that the board is responding.
 
 - **Primary display:** Strongest device RSSI + meter bar + device count + freshness
@@ -74,12 +78,13 @@ confirm that the board is responding.
 
 ### 4. GPS Tab — Position & Fix Status
 
-**Requires:** BFFB ESP32 (Just Call Me Koko Marauder) with GPS module.
+**Requires:** BFFB with GPS antenna + Marauder Dev Board Pro (`HAS_GPS`).
 
-On tab enter the app sends **`nmea`** so the BFFB streams NMEA over UART
-(115200 CLI). Passive listen alone never works — GPS lives on the ESP32, not on
-the Flipper's UART. **OK** re-requests the stream if waiting, or sets/clears a
-**mark** when a fix is present (distance shown via haversine).
+Per [BFFB wiki](https://github.com/justcallmekoko/ESP32Marauder/wiki/BFFB): GPS is
+wired to the **ESP32 only**, not Flipper GPIO — stock Flipper GPS apps will not
+work. On tab enter we send Marauder **`nmea`** (companion “NMEA Stream”) over
+USART @ 115200; silent retry uses **`gps -g nmea`**. Leave tab / exit sends
+**`stopscan`**. **OK** retries stream or sets/clears a **mark** (haversine distance).
 
 - Shows: fix state (3D FIX / NO FIX / STALE), UTC time, date, satellites, lat/lon
 - Fully passive — no buttons needed, just watches navigation NMEA data
@@ -205,9 +210,9 @@ strongest RSSI, GPS sat quality, TX arm/transmit state).
 | Feature | Hardware |
 |---------|----------|
 | RF Survey/Sweep/Peak | Flipper Zero (built-in CC1101) |
-| WiFi scanning | BFFB ESP32 with Marauder firmware, UART-connected |
-| BLE scanning | BFFB ESP32 with Marauder firmware, UART-connected |
-| GPS | BFFB ESP32 with GPS module, UART-connected |
+| WiFi scanning | BFFB + Marauder Dev Board Pro, switch=ESP32, `scanall` |
+| BLE scanning | BFFB + Marauder, switch=ESP32, `sniffbt` |
+| GPS | BFFB GPS module on ESP32; Flipper uses CLI `nmea` (not GPIO GPS) |
 | TX | Flipper Zero (built-in CC1101) |
 | Audio | Flipper Zero speaker |
 | Vibro | Flipper Zero vibration motor |
