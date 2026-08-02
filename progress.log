@@ -21,3 +21,11 @@
 - Host: test_scan_logic.c ALL PASS; NMEA 58/58; Back 4/4; ufbt Target 7 API 87.1.
 - Device: FAP 36592b uploaded; Room Sweep running; BLE/GPS smoke no crash.
 - FAP SHA-256: fca06a11e966ff0cfac29943e75be37d450657202d6ad14355c481eeb21d6550
+
+## Iteration: verify + stopscan hardening (autonomous)
+- Adversarial judge VERDICT: PASS on BLE timeout, GPS stream, per-tab feedback, harness.
+- Host ./init.sh ALL PASS after stopscan leave/exit fixes.
+- Device: v3.1 FAP (36592b) previously uploaded and smoke-passed (BLE alive 8s, GPS, TX arm).
+- Device re-verify blocked: Flipper CLI accepts USB connect banner but ignores command input
+  after repeated RPC upload timeouts (infra). Physical USB re-seat needed to restore CLI/RPC.
+- Code fix: always stopscan on GPS leave and app exit (judge minor notes).
