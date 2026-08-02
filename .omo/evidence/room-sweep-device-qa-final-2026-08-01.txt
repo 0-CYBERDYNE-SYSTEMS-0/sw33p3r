@@ -1,0 +1,54 @@
+Room Sweep final physical-device QA receipt
+Date: 2026-08-01
+Worktree: /Users/scrimwiggins/sw33p3r
+HEAD: d6182a155b1d4a198e916847ebe62da3a9e8cb4e
+Artifact: dist/room_sweep.fap
+SHA-256: 7994ddea5961dc2889a0f767831fc3428b32ae6d1df9f048ec2f0a2fe91e853c
+Device: flip_Rug1k0, Momentum mntm-012, target 7, API 87.1
+Port: /dev/cu.usbmodemflip_Rug1k01
+Install target: /ext/apps/Tools/room_sweep.fap
+Device storage stat: 28136 bytes, matching the local artifact.
+
+Deployment
+- ufbt launch: exit 0; APPCHK Target 7/API 87.1; exact FAP sent in four chunks;
+  app launched from /ext/apps/Tools/room_sweep.fap.
+
+Valid input contract
+- Every gesture used Press -> Short/Long -> Release. Standalone Short/Long
+  events were not used.
+
+Settings / exit
+- Settings opened from RF Survey: loader info -> Application "Room Sweep" is running.
+- Sound toggled: application remained running.
+- Vibro toggled: application remained running.
+- Auto-Rescan toggled: application remained running.
+- TX Duration toggled: application remained running.
+- Short Back closed Settings: application remained running.
+- Long Back from Settings: loader info -> No application is running.
+
+Fresh exact-artifact traversal
+- RF Survey -> RF Sweep -> start -> cancel -> long band change -> RF Peak:
+  application remained running at every checkpoint.
+- RF Peak no-signal path: application remained running.
+- WiFi -> scan -> 31-second silent-scan timeout: application remained running.
+- BLE -> scan: application remained running.
+- GPS -> Up/Down controls: application remained running.
+- TX -> short arm -> preset change -> short Back disarm: application remained
+  running; no long OK and no RF transmission were performed.
+- Info -> right wrap to RF Survey: application remained running.
+- Final long Back: loader info -> No application is running.
+- ufbt launch after the traversal: exit 0; final app left running on RF Survey.
+
+Visual inspection
+- Retained iPhone Mirroring captures are listed in
+  `.omo/evidence/room-sweep-flipper-visual-qa/MANIFEST.md`. All seven were
+  captured on the immediately preceding UI-identical deployment; the final
+  parser-only artifact traversed all of those tabs without a crash. Settings
+  row spacing and Info footer spacing were corrected after visual inspection
+  and rechecked.
+
+Unverified field boundaries
+- No BFFB result stream was attached; live result parsing and GPS freshness
+  rendering remain field checks. Host parser coverage includes semantically
+  invalid time/date/count rejection and passes 58/58 executable checks.
+- Audio/haptic perception and deliberate RF field behavior were not measured.

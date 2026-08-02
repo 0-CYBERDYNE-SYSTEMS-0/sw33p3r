@@ -1,0 +1,104 @@
+IDENTITY
+d6182a155b1d4a198e916847ebe62da3a9e8cb4e
+37e6a54053e336f4df262fcbf2f71c301d887b625a47e62332bc8f7766fae874  dist/room_sweep.fap
+size=28112 bytes mtime=2026-08-01 16:08:33 -0700
+dist/room_sweep.fap: ELF 32-bit LSB relocatable, ARM, EABI5 version 1 (SYSV), not stripped
+HOST NMEA
+Test 1: GGA with fix
+  PASS: one valid sentence accepted
+  PASS: time parsed (12:35:19)
+  PASS: fix quality = 1 (GPS)
+  PASS: satellites = 8
+  PASS: position present
+  PASS: latitude ~48.1173 N
+  PASS: longitude ~11.5167 E
+Test 2: RMC active, S/W hemispheres
+  PASS: RMC accepted
+  PASS: fix active (status A)
+  PASS: RMC position present
+  PASS: latitude negative (S)
+  PASS: longitude negative (W)
+  PASS: speed ~173.8 kts
+  PASS: course ~231.8
+Test 3: bad checksum rejected
+  PASS: bad checksum sentence dropped
+  PASS: no position from bad sentence
+Test 4: no-fix GGA
+  PASS: no-fix GGA accepted syntactically
+  PASS: no position when quality=0
+  PASS: no fix flag
+Test 5: garbage resilience
+  PASS: garbage produced no valid sentences
+Test 6: consecutive sentences
+  PASS: two valid sentences accepted
+  PASS: time advanced to :20
+Test 7: checksum helper
+  PASS: checksum helper matches 0x47
+Test 8: GLL no-fix (BFFB GN talker)
+  PASS: GLL accepted
+  PASS: GLL time parsed (10:48:32)
+  PASS: no fix from GLL status V
+  PASS: no position from GLL with empty fields
+Test 9: ZDA date/time (BFFB GN talker)
+  PASS: ZDA accepted
+  PASS: ZDA time parsed (10:48:40)
+  PASS: ZDA date parsed (2026-08-01)
+Test 10: GSV sats-in-view (BFFB BD talker)
+  PASS: GSV accepted
+  PASS: 1 satellite in view (BD PRN 32)
+Test 11: GGA with GN talker
+  PASS: GN GGA accepted
+  PASS: GN GGA fix quality = 1
+  PASS: GN GGA sats = 8
+Test 12: RMC no-fix with date (BFFB GN talker)
+  PASS: GN RMC accepted
+  PASS: RMC time parsed
+  PASS: RMC status V = no fix
+  PASS: RMC date parsed (2026-08-01)
+Test 13: realistic BFFB no-fix stream
+  PASS: all 4 stream sentences accepted
+  PASS: time available from GLL/ZDA
+  PASS: sats-in-view tracked from GSV
+  PASS: no fix (indoor)
+  PASS: date available from ZDA
+Test 14: truncated RMC boundary
+  PASS: RMC with empty date accepted
+  PASS: RMC keeps valid time without date
+Test 15: non-hex checksum rejected
+  PASS: non-hex checksum sentence dropped
+Test 16: semantic NMEA bounds rejected
+  PASS: invalid GGA time does not refresh navigation
+  PASS: invalid RMC date is rejected
+  PASS: non-numeric satellite count is rejected
+  PASS: invalid ZDA calendar date is rejected
+  PASS: out-of-range GSV count is rejected
+Test 17: navigation freshness excludes telemetry
+  PASS: navigation and telemetry sentences accepted
+  PASS: telemetry does not refresh navigation data
+Test 18: active RMC without coordinates clears position
+  PASS: active RMC accepted without coordinates
+  PASS: active RMC cannot retain stale position
+
+RESULT: ALL PASS (0 failures)
+HOST INPUT
+PASS: long Back exits even when Settings is open
+PASS: short Back closes Settings
+PASS: short Back disarms an armed TX tab
+PASS: short Back opens Settings outside TX
+RESULT: ALL PASS
+API SCAN
+App files scanned: ['nmea.c', 'nmea.h', 'room_sweep.c', 'room_sweep.h', 'room_sweep_input.h']
+Distinct call-like symbols: 56
+Present in export table (status '+'): 52
+
+RESULT: CLEAN — every function symbol resolves to status '+'.
+Safe to build; no expected ELF loader symbol faults.
+DIFF CHECK
+VISUAL FILE CHECKS
+.omo/evidence/room-sweep-flipper-visual-qa/ble.jpeg: JPEG image data, JFIF standard 1.01, aspect ratio, density 72x72, segment length 16, Exif Standard: [TIFF image data, big-endian, direntries=1], baseline, precision 8, 310x684, components 3
+.omo/evidence/room-sweep-flipper-visual-qa/gps.jpeg: JPEG image data, JFIF standard 1.01, aspect ratio, density 72x72, segment length 16, Exif Standard: [TIFF image data, big-endian, direntries=1], baseline, precision 8, 310x684, components 3
+.omo/evidence/room-sweep-flipper-visual-qa/info.jpeg: JPEG image data, JFIF standard 1.01, aspect ratio, density 72x72, segment length 16, Exif Standard: [TIFF image data, big-endian, direntries=1], baseline, precision 8, 310x684, components 3
+.omo/evidence/room-sweep-flipper-visual-qa/rf-survey.jpeg: JPEG image data, JFIF standard 1.01, aspect ratio, density 72x72, segment length 16, Exif Standard: [TIFF image data, big-endian, direntries=1], baseline, precision 8, 310x684, components 3
+.omo/evidence/room-sweep-flipper-visual-qa/settings.jpeg: JPEG image data, JFIF standard 1.01, aspect ratio, density 72x72, segment length 16, Exif Standard: [TIFF image data, big-endian, direntries=1], baseline, precision 8, 310x684, components 3
+.omo/evidence/room-sweep-flipper-visual-qa/tx.jpeg: JPEG image data, JFIF standard 1.01, aspect ratio, density 72x72, segment length 16, Exif Standard: [TIFF image data, big-endian, direntries=1], baseline, precision 8, 310x684, components 3
+.omo/evidence/room-sweep-flipper-visual-qa/wifi.jpeg: JPEG image data, JFIF standard 1.01, aspect ratio, density 72x72, segment length 16, Exif Standard: [TIFF image data, big-endian, direntries=1], baseline, precision 8, 310x684, components 3

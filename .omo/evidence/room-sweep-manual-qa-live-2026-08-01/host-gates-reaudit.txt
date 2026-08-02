@@ -1,0 +1,27 @@
+Room Sweep manual QA re-audit fresh host-gate transcript
+Date: 2026-08-01
+Worktree: /Users/scrimwiggins/sw33p3r
+HEAD: d6182a155b1d4a198e916847ebe62da3a9e8cb4e
+
+Surface: host compiler/test executables and repository gates.
+
+Invocation 1:
+  cc -std=c11 -Wall -Wextra -Werror -I. tests/test_nmea.c nmea.c -o /tmp/room_sweep_test_nmea_reaudit_20260801 && /tmp/room_sweep_test_nmea_reaudit_20260801
+Result: RESULT: ALL PASS (0 failures)
+Observed: tests 1 through 17 passed, including BFFB GN/BD sentences,
+checksum rejection, truncated RMC, navigation freshness, and stale-position
+clearing.
+
+Invocation 2:
+  cc -std=c11 -Wall -Wextra -Werror -I. tests/test_input_state.c -o /tmp/room_sweep_test_input_state_reaudit_20260801 && /tmp/room_sweep_test_input_state_reaudit_20260801
+Result: RESULT: ALL PASS
+Observed: 4/4 Back/input cases passed: long Back exits Settings, short Back
+closes Settings, short Back disarms TX, and short Back opens Settings outside TX.
+
+Invocation 3:
+  python3 _verify_api.py
+Result: CLEAN — every function symbol resolves to status '+'.
+
+Invocation 4:
+  git diff --check
+Result: PASS

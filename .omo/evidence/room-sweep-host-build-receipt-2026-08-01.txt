@@ -1,0 +1,48 @@
+Historical Room Sweep QA receipt; superseded by the final artifact and device-QA receipt.
+The original scope was read-only and predates the deployed manual-QA run.
+
+Date: 2026-08-01
+Worktree: /Users/scrimwiggins/sw33p3r
+HEAD: d6182a155b1d4a198e916847ebe62da3a9e8cb4e
+Scope: read-only QA; no deploy, reboot, RF transmission, or device-state mutation.
+
+1. Host NMEA tests
+Invocation:
+  cc -std=c11 -Wall -Wextra -Werror -I. tests/test_nmea.c nmea.c -o /tmp/room_sweep_test_nmea && /tmp/room_sweep_test_nmea
+Exit: 0
+Observed result: RESULT: ALL PASS (0 failures)
+Coverage observed: Test 1 through Test 14, including checksum rejection, no-fix GGA/GLL/RMC, consecutive sentences, GN/BD talkers, realistic stream, and truncated RMC boundary.
+
+2. Host Back-state tests
+Invocation:
+  cc -std=c11 -Wall -Wextra -Werror -I. tests/test_input_state.c -o /tmp/room_sweep_test_input_state && /tmp/room_sweep_test_input_state
+Exit: 0
+Observed result: RESULT: ALL PASS
+Coverage observed: long Back exits with Settings open; short Back closes Settings; short Back disarms armed TX; short Back opens Settings outside TX.
+
+3. FAP build
+Invocation:
+  ufbt
+Exit: 0
+Observed result: APPCHK Target: 7, API: 87.1; installed dist/room_sweep.fap and dist/debug/room_sweep_d.elf.
+Artifact inspection: dist/room_sweep.fap is an ELF 32-bit ARM relocatable; strings contain Room Sweep v3.0.1 and room_sweep_app, but no test_nmea, test_input_state, or host RESULT strings. .vscode/compile_commands.json has no tests/test_ references.
+
+4. Diff/build hygiene
+Invocation:
+  git diff --check
+Exit: 0
+Observed worktree: only the caller-listed tracked changes plus room_sweep_input.h and tests/test_input_state.c; build outputs are ignored under dist/ and .vscode/.
+
+5. Captured physical-device evidence reconciliation
+Source artifacts inspected: .debug-journal.md lines 33-50, 63-72; handoff.md lines 127-177.
+Observed claim: valid device input used Back Press -> Long -> Release, and loader info reported Power after exit from Settings. The journal also records that standalone Short/Long injections were invalid because the GUI requires a matching Press. The source routes only Short/Long at room_sweep.c:1566-1586 and gives Long Back exit priority through room_sweep_input.h.
+Evidence boundary: this is captured summary evidence, not a fresh device run in this QA lane. The journal explicitly leaves current-build/device identity open and records visual mirroring as Timed Out.
+
+6. Post-side-effect recheck of the actual current worktree
+Invocation:
+  cc -std=c11 -Wall -Wextra -Werror -I. tests/test_nmea.c nmea.c -o /tmp/room_sweep_test_nmea_current && /tmp/room_sweep_test_nmea_current
+  cc -std=c11 -Wall -Wextra -Werror -I. tests/test_input_state.c -o /tmp/room_sweep_test_input_state_current && /tmp/room_sweep_test_input_state_current
+  ufbt
+Exit: 0 for all three commands.
+Observed result: current NMEA suite RESULT: ALL PASS (0 failures), now showing Test 1 through Test 16; current Back suite RESULT: ALL PASS; current FAP APPCHK Target: 7, API: 87.1.
+Scope discrepancy observed before this recheck: nmea.h is modified and nmea.c/tests/test_nmea.c contain additional nav_sentences and non-hex-checksum changes, outside the caller-listed intentional files. These were not authored by this QA lane and are reported as a blocker rather than silently accepted or reverted.

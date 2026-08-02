@@ -1,4 +1,8 @@
-# QA, build, deployment, and documentation audit
+# Historical QA, build, deployment, and documentation audit
+
+> Superseded by the final post-deployment artifact, host-gate, device-QA, and
+> review receipts. Its pre-fix findings and missing-toolchain observations do
+> not describe the current working tree.
 
 **Scope:** all 15 tracked files in `/Users/scrimwiggins/sw33p3r`; RF/UART implementation was consulted only to validate documentation and runtime claims. No device, browser, GUI, network-host, or live-service action was taken. The tracked working tree was clean before inspection; the only resulting untracked path is this required report artifact.
 

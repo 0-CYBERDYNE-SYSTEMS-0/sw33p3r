@@ -1,4 +1,7 @@
-# Room Sweep HTML audit final gate review
+# Historical Room Sweep HTML audit final gate review
+
+> Historical HTML-report review for an earlier audit artifact. It is not a
+> current Flipper-app or current HTML artifact readiness receipt.
 
 ## Decision
 

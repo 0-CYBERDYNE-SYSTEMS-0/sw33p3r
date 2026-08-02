@@ -1,0 +1,59 @@
+SOURCE INSPECTION RECEIPT
+HEAD: d6182a155b1d4a198e916847ebe62da3a9e8cb4e
+Relevant current source locations:
+nmea.c:51:static bool parse_uint_field(const char* value, uint16_t min, uint16_t max, uint16_t* out) {
+nmea.c:80:static bool parse_time(const char* value, uint8_t* hour, uint8_t* minute, uint8_t* second) {
+nmea.c:114:static bool parse_rmc_date(const char* value, uint16_t* year, uint8_t* month, uint8_t* day) {
+nmea.c:146:static bool parse_coordinate(const char* v, const char* hemi, bool longitude, float* out) {
+nmea.c:172:    return parse_coordinate(v, hemi, false, out);
+nmea.c:176:    return parse_coordinate(v, hemi, true, out);
+nmea.c:197:            if(!parse_uint_field(fields[6], 0, 8, &q) ||
+nmea.c:198:               !parse_uint_field(fields[7], 0, 99, &sats)) {
+nmea.c:204:            bool has_time = !fields[1][0] || parse_time(fields[1], &hour, &minute, &second);
+nmea.c:206:            fix->nav_sentences++;
+nmea.c:243:                if(!parse_rmc_date(fields[9], &date_year, &date_month, &date_day)) return;
+nmea.c:249:            bool has_time = !fields[1][0] || parse_time(fields[1], &hour, &minute, &second);
+nmea.c:251:            fix->nav_sentences++;
+nmea.c:291:            bool has_time = !fields[5][0] || parse_time(fields[5], &hour, &minute, &second);
+nmea.c:293:            fix->nav_sentences++;
+nmea.c:320:            bool has_time = !fields[1][0] || parse_time(fields[1], &hour, &minute, &second);
+nmea.c:334:                   !parse_uint_field(fields[2], 1, 31, &day) ||
+nmea.c:335:                   !parse_uint_field(fields[3], 1, 12, &month) ||
+nmea.c:336:                   !parse_uint_field(fields[4], 1, 9999, &year) ||
+nmea.c:349:        if(nf >= 4 && parse_uint_field(fields[2], 1, 99, &message) &&
+nmea.c:350:           parse_uint_field(fields[3], 0, 99, &sats) && message == 1) {
+room_sweep_input.h:6:    RoomSweepBackCloseSettings,
+room_sweep_input.h:7:    RoomSweepBackOpenSettings,
+room_sweep_input.h:17:    if(settings_active) return RoomSweepBackCloseSettings;
+room_sweep_input.h:18:    return tx_armed ? RoomSweepBackDisarm : RoomSweepBackOpenSettings;
+room_sweep.c:2: * Tabs: RF (survey/sweep/peak) | WiFi | BLE | GPS | TX | Info
+room_sweep.c:185:    /* Settings overlay */
+room_sweep.c:198:/* Settings menu items */
+room_sweep.c:600:            uint32_t nav_sentences = app->gps.nav_sentences;
+room_sweep.c:602:            if(app->gps.nav_sentences != nav_sentences) app->gps_last_valid_tick = furi_get_tick();
+room_sweep.c:1346:    canvas_draw_str(canvas, 1, 12, "TX Control");
+room_sweep.c:1419:/* Drawing: Info tab (live capability card)                            */
+room_sweep.c:1450:/* Drawing: Settings overlay                                           */
+room_sweep.c:1459:    canvas_draw_str(canvas, 8, 14, "Settings");
+room_sweep.c:1509:    case SweepModeInfo: draw_info_tab(canvas, app); break;
+room_sweep.c:1542:    /* Settings overlay (highest priority) */
+room_sweep.c:1640:        if(event.type != InputTypeShort && event.type != InputTypeLong) continue;
+room_sweep.c:1642:        if(event.key == InputKeyBack) {
+room_sweep.c:1646:                event.type == InputTypeLong);
+room_sweep.c:1651:            if(action == RoomSweepBackCloseSettings) {
+room_sweep.c:1663:        /* --- Settings overlay input --- */
+room_sweep.c:1692:                if(event.type == InputTypeShort && app->tx_state == TxDisarmed) {
+room_sweep.c:1695:                } else if(event.type == InputTypeLong && app->tx_state == TxArmed && !app->tx_active) {
+room_sweep.c:1739:                               !app->sweep_running && event.type == InputTypeLong;
+Application manifest:
+App(
+    appid="room_sweep",
+    name="Room Sweep",
+    apptype=FlipperAppType.EXTERNAL,
+    entry_point="room_sweep_app",
+    stack_size=4 * 1024,
+    fap_category="Tools",
+    fap_icon="icon.png",
+    fap_icon_assets="images",
+    sources=["*.c", "!tests"],
+)

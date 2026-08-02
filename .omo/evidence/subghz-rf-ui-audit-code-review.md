@@ -1,5 +1,7 @@
 # Code quality review — Sub-GHz/RF tab and shared controls
 
+> Historical report from an earlier implementation. Use the current final artifact and current review receipts for v3.0.1 behavior.
+
 **Status:** BLOCK
 
 **Recommendation:** REQUEST_CHANGES

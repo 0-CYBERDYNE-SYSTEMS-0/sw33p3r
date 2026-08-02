@@ -1,4 +1,7 @@
-# Room Sweep HTML strict manual-QA gate review
+# Historical Room Sweep HTML strict manual-QA gate review
+
+> Historical manual review of an earlier HTML artifact. It is not a current
+> Flipper-app visual-QA receipt.
 
 ## Decision
 

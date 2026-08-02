@@ -1,4 +1,7 @@
-# Room Sweep visual and accessibility gate review
+# Historical Room Sweep visual and accessibility gate review
+
+> Historical visual review of an earlier HTML artifact. It is not a current
+> Flipper-app visual-QA receipt.
 
 ## recommendation
 

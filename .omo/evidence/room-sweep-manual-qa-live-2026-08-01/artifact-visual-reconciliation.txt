@@ -1,0 +1,33 @@
+Room Sweep manual QA artifact/reconciliation transcript
+Worktree: /Users/scrimwiggins/sw33p3r
+HEAD: d6182a155b1d4a198e916847ebe62da3a9e8cb4e
+
+=== FAP IDENTITY ===
+shasum -a 256 dist/room_sweep.fap
+aaa8c8daa39c5f37b3b66b0f650a2bd8e3031c6248e8410d69f764ec96048b39  dist/room_sweep.fap
+file dist/room_sweep.fap
+dist/room_sweep.fap: ELF 32-bit LSB relocatable, ARM, EABI5 version 1 (SYSV), not stripped
+stat -f "%Sm %z %N" -t "%Y-%m-%d %H:%M:%S %z" dist/room_sweep.fap
+2026-08-01 15:37:51 -0700 27048 dist/room_sweep.fap
+strings dist/room_sweep.fap | rg "Room Sweep|room_sweep_app|test_nmea|test_input_state|RESULT"
+Room Sweep v3.0.1
+Room Sweep
+room_sweep_app
+
+=== DEVICE PATH/CURRENT STATE EVIDENCE ===
+ls -l /dev/cu.usbmodem*
+crw-rw-rw-  1 root  wheel  0x900000b Aug  1 15:45 /dev/cu.usbmodemflip_Rug1k01
+Installed path size from tmux Flipper CLI transcript: 27048b
+Current loader state from tmux Flipper CLI transcript: Application "Room Sweep" is running
+
+=== VISUAL CANDIDATE ===
+file /Users/scrimwiggins/Desktop/screenshots/Screenshot 2026-08-01 at 15.31.17.png
+/Users/scrimwiggins/Desktop/screenshots/Screenshot 2026-08-01 at 15.31.17.png: PNG image data, 712 x 1460, 8-bit/color RGBA, non-interlaced
+stat -f "%Sm %z %N" -t "%Y-%m-%d %H:%M:%S %z" <candidate>
+2026-08-01 15:31:23 -0700 366383 /Users/scrimwiggins/Desktop/screenshots/Screenshot 2026-08-01 at 15.31.17.png
+Observed surface: iPhone Mirroring frame showing RF Survey only; no Settings/WiFi/BLE/GPS/TX/Info frames found in repo evidence.
+Artifact timestamp comparison: candidate 15:31:23; final FAP 15:37:51; candidate is pre-final-artifact.
+
+=== MIRROR CONNECTOR ===
+Computer Use get_app_state({app: "iPhone Mirroring"})
+BLOCKED: kernel initialization failed with No space left on device.

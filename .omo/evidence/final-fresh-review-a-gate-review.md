@@ -1,4 +1,7 @@
-# Final Fresh Review A — Gate Review
+# Historical Final Fresh Review A — Gate Review
+
+> Historical review of an earlier HTML artifact. Current app readiness is
+> represented by the current source, FAP, and device-QA receipts.
 
 ## recommendation
 

@@ -1,0 +1,48 @@
+Room Sweep exact-artifact device QA receipt
+Date: 2026-08-01
+Worktree: /Users/scrimwiggins/sw33p3r
+HEAD: d6182a155b1d4a198e916847ebe62da3a9e8cb4e
+FAP: dist/room_sweep.fap
+SHA-256: 7994ddea5961dc2889a0f767831fc3428b32ae6d1df9f048ec2f0a2fe91e853c
+Local size: 28136 bytes
+Device: flip_Rug1k0, Momentum mntm-012, target 7, API 87.1
+Port: /dev/cu.usbmodemflip_Rug1k01
+Install target: /ext/apps/Tools/room_sweep.fap
+
+Build/deployment
+- `ufbt`: exit 0; Target 7/API 87.1; APPCHK passed with `-Werror`.
+- `ufbt launch`: installed the exact current FAP in four chunks and launched
+  `/ext/apps/Tools/room_sweep.fap` after the prior app was closed manually.
+- Device `storage stat /ext/apps/Tools/room_sweep.fap`: `File, size: 28136b`.
+- Device `loader info` after the final relaunch: `Application "Room Sweep" is
+  running`.
+
+Input contract
+- Every injected gesture used `Press -> Short/Long -> Release`.
+- No standalone Short/Long events were used.
+
+Exact current artifact checkpoints
+- Initial loader state: Room Sweep running.
+- Settings: all four rows (Sound, Vibro, Auto-Rescan, TX Duration) toggled;
+  short Back left the app running; reopening Settings and long Back produced
+  `No application is running`.
+- Exact relaunch: Room Sweep running.
+- RF Sweep: moved from RF Survey, started and cancelled the sweep, changed band
+  with long Right while stopped, entered RF Peak, and exercised the no-signal
+  path; loader remained running.
+- WiFi: entered scan path, waited 32 seconds for the silent-scan timeout
+  boundary, and loader remained running.
+- BLE: entered scan path and loader remained running.
+- GPS: exercised Up and Down controls and loader remained running.
+- TX: short-armed, changed preset, short-Back disarmed; loader remained running.
+  Long OK was never sent and no RF transmission was performed.
+- Info: entered Info and used Right to wrap to RF; loader remained running.
+- Final long Back: `No application is running`.
+- Final exact relaunch: `storage stat` remained `28136b`; loader reported Room
+  Sweep running, leaving the device ready for user testing.
+
+Unverified field boundaries
+- No BFFB result stream or GPS receiver was attached, so live WiFi/BLE result
+  parsing and live GPS rendering remain field checks.
+- Audio/haptic perception, known-signal RF behavior, and deliberate RF
+  transmission were not measured or performed.

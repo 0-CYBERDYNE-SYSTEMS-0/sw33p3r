@@ -1,0 +1,21 @@
+Room Sweep manual QA re-audit read-only live loader transcript
+Date: 2026-08-01
+Surface: Flipper CLI over /dev/cu.usbmodemflip_Rug1k01
+Invocation: tmux session running `ufbt cli`; entered `loader info`, then `storage stat /ext/apps/Tools/room_sweep.fap`
+Scope: read-only loader/file-state query; no launch, stop, configuration, RF transmission, or deployment.
+
+scons: Entering directory `/Users/scrimwiggins/.ufbt/current/scripts/ufbt'
+python3 /Users/scrimwiggins/.ufbt/current/scripts/serial_cli.py -p auto
+--- Miniterm on /dev/cu.usbmodemflip_Rug1k01  230400,8,N,1 ---
+--- Quit: Ctrl+] | Menu: Ctrl+T | Help: Ctrl+T followed by Ctrl+H ---
+
+Welcome to Flipper Zero Command Line Interface!
+Firmware version: mntm-012 mntm-012 (e1784e74 built on 31-12-2025)
+
+>: loader info
+Application "Room Sweep" is running
+
+>: storage stat /ext/apps/Tools/room_sweep.fap
+File, size: 27048b
+
+>:

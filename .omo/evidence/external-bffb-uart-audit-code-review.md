@@ -1,5 +1,7 @@
 # External BFFB UART / feedback audit
 
+> Historical report from an earlier implementation. Use the current final artifact and current review receipts for v3.0.1 behavior.
+
 **Review mode:** source-only, read-only audit requested by the user. No device, browser, GUI, network, live-service, build, or test execution was performed. The worktree was clean (`git status --porcelain` produced no output); this reviews current source rather than a pending diff.
 
 **Skill-perspective check:** ran. I read `omo:remove-ai-slops` and `omo:programming` before assessing tests and maintainability. The parser itself is appropriate boundary parsing, rather than needless validation. The current source does violate the perspectives through dead/unused state and configuration (MEDIUM below), and it lacks behavior coverage for the external UART paths. The existing NMEA tests are behavior-oriented, not deletion-only, tautological, brittle prompt, or implementation-mirroring tests.
