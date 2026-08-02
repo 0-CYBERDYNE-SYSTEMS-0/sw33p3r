@@ -4,3 +4,4 @@
 2026-08-02T15:22:04-07:00 SCOPE Reject jamming, deauthentication, arbitrary replay, continuous TX, and telemetry/absence claims. Retain bounded existing carrier test with stronger safety gates.
 2026-08-02T15:22:05-07:00 PLAN Graph initialized; implementation pending.
 2026-08-02T15:22:06-07:00 VERIFY Graph init smoke passed, including API 87.1, all baseline host suites, ufbt Target 7/API 87.1, and diff check.
+2026-08-02T15:31:00-07:00 F01 Added a Furi-free input classifier; repeats are Up/Down browse-only and long Left/Right are explicit alternate actions. Strict host matrix passed 28 cases; diff check passed. Runtime adapters remain F03.

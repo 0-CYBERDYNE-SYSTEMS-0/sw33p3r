@@ -7,7 +7,7 @@
       "Verify repeat is limited to list/page navigation",
       "Verify Back and long-OK safety transitions"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "rf_tx",
