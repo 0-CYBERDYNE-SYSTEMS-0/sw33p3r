@@ -1,0 +1,6 @@
+2026-08-02T15:22:01-07:00 INIT Restore branch and feature branch created at 2a6cde33972cafc9e0c0b71f263c2786f90b13d0.
+2026-08-02T15:22:02-07:00 BASELINE ./init.sh passed: host NMEA, Back routing, scan/GPS helpers, API/build APPCHK Target 7 API 87.1.
+2026-08-02T15:22:03-07:00 RECON Six Luna lanes completed read-only RF/TX, Wi-Fi/BLE, controls, recording, verification, and gap review.
+2026-08-02T15:22:04-07:00 SCOPE Reject jamming, deauthentication, arbitrary replay, continuous TX, and telemetry/absence claims. Retain bounded existing carrier test with stronger safety gates.
+2026-08-02T15:22:05-07:00 PLAN Graph initialized; implementation pending.
+2026-08-02T15:22:06-07:00 VERIFY Graph init smoke passed, including API 87.1, all baseline host suites, ufbt Target 7/API 87.1, and diff check.

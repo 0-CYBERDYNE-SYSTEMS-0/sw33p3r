@@ -1,0 +1,59 @@
+name: room-sweep-operator-overhaul
+description: Novice-friendly controls, truthful observations, safe RF handoff, and bounded evidence
+goal:
+  passes_all: true
+  max_iterations: 30
+state:
+  re_inject:
+    - PROMPT.md
+    - features.json
+    - specs/*.md
+  on_disk:
+    - progress.log
+    - init.sh
+  commit_each_iteration: true
+  commit_message_format: "iter {n}: {description}"
+nodes:
+  - id: get_bearings
+    type: bash
+    run: |
+      pwd
+      git log --oneline -5
+      tail -20 .codex/graphs/operator-overhaul/progress.log
+      .codex/graphs/operator-overhaul/init.sh
+    outputs: [working_dir, recent_commits, progress, smoke_result]
+  - id: pick_feature
+    type: bash
+    run: |
+      python3 -c "import json; fs=json.load(open('.codex/graphs/operator-overhaul/features.json')); print(next(f['description'] for f in fs if not f['passes']))"
+    outputs: [selected_feature]
+  - id: search_first
+    type: subagent_fanout
+    workers: 3
+    goal: "Search current source and tests for {selected_feature}; report exact existing behavior before implementation"
+    inputs:
+      item: pick_feature.outputs.selected_feature
+    outputs: [search_results]
+  - id: implement_one
+    type: subagent_exclusive
+    goal: "Implement exactly {selected_feature}, including focused tests, following the specs and safety boundary"
+    inputs:
+      item: pick_feature.outputs.selected_feature
+      search: search_first.outputs.search_results
+    outputs: [implementation_result]
+    next_when:
+      exit_zero: true
+  - id: verify_scoped
+    type: bash
+    run: |
+      .codex/graphs/operator-overhaul/init.sh
+    next_when:
+      exit_zero: true
+    on_failure:
+      route_to: implement_one
+  - id: commit_iteration
+    type: bash
+    run: |
+      git diff --check
+      git add -A
+      git commit -m "iter: verified {selected_feature}"

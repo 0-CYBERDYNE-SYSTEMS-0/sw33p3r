@@ -1,0 +1,92 @@
+[
+  {
+    "category": "controls",
+    "description": "Pure operator input contract rejects unsafe or ambiguous key combinations",
+    "steps": [
+      "Run the host input and event matrix tests",
+      "Verify repeat is limited to list/page navigation",
+      "Verify Back and long-OK safety transitions"
+    ],
+    "passes": false
+  },
+  {
+    "category": "rf_tx",
+    "description": "Qualified fresh RF candidate preloads a bounded frequency-only carrier test with TX interlocks",
+    "steps": [
+      "Run candidate validity, source, threshold, expiry, and cancellation tests",
+      "Run repeated TX lifecycle and refusal-state tests",
+      "Pass API scan and ufbt build"
+    ],
+    "passes": false
+  },
+  {
+    "category": "controls",
+    "description": "Every tab has useful browse or action controls and truthful visible prompts",
+    "steps": [
+      "Verify per-tab short, long, and repeat event matrix",
+      "Verify sound and vibration are Settings-only",
+      "Audit every on-screen footer against its handler"
+    ],
+    "passes": false
+  },
+  {
+    "category": "wireless",
+    "description": "Wi-Fi and BLE observations are browsable, identity-safe, and labeled without telemetry claims",
+    "steps": [
+      "Run upstream-format parser and identity fixtures",
+      "Verify row browsing, age, count, channel, and source display",
+      "Verify no-observation and telemetry limitation language"
+    ],
+    "passes": false
+  },
+  {
+    "category": "recording",
+    "description": "A single-owner bounded recorder creates unique sessions and dumps with privacy and failure visibility",
+    "steps": [
+      "Run codec, queue, unique-name, budget, privacy, and short-write fixtures",
+      "Verify worker and ISR paths enqueue without storage I/O",
+      "Pass API scan and ufbt build"
+    ],
+    "passes": false
+  },
+  {
+    "category": "gps",
+    "description": "GPS parsing has one owner per parser and exposes useful source and freshness pages",
+    "steps": [
+      "Run NMEA and GPS source-state tests",
+      "Review producer synchronization",
+      "Pass ufbt build"
+    ],
+    "passes": false
+  },
+  {
+    "category": "reporting",
+    "description": "Each recorded session can produce a plain-English summary of evidence and limitations",
+    "steps": [
+      "Run deterministic report fixtures",
+      "Verify complete, incomplete, drop, storage, GPS privacy, and TX result language",
+      "Audit for unsupported capability claims"
+    ],
+    "passes": false
+  },
+  {
+    "category": "documentation",
+    "description": "Info, Settings, and operator documentation agree with current source and upstream hardware behavior",
+    "steps": [
+      "Audit all settings and controls against source",
+      "Verify BFFB GPS and Marauder command descriptions against pinned upstream source",
+      "Pass source-document consistency review"
+    ],
+    "passes": false
+  },
+  {
+    "category": "verification",
+    "description": "All local gates pass and a fresh FAP receipt is bound to the final commit",
+    "steps": [
+      "Run every strict host test and API 87.1 scan",
+      "Run git diff check and fresh ufbt APPCHK",
+      "Record final commit, FAP SHA-256, size, and final read-only review"
+    ],
+    "passes": false
+  }
+]
