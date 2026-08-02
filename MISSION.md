@@ -1,7 +1,7 @@
-# MISSION CONTRACT — Room Sweep v3.0.1
+# MISSION CONTRACT — Room Sweep v3.1
 
 **Owner:** 0-CYBERDYNE-SYSTEMS-0 · **Date:** 2026-08-01
-**Status:** DEVICE-QA VERIFIED — READY FOR USER FIELD TEST
+**Status:** v3.1 DEPLOYED — BLE timeout + GPS stream + per-tab feedback
 
 ## What this app does
 
@@ -45,6 +45,14 @@ TX NEVER activates on tab entry. Multiple deliberate actions required.
 - Vibro: heartbeat pulse every 4s, detection edge pulse, sustained lock pulse every 800ms
 - Enabling sound/vibro produces an immediate test pulse (observable)
 - LED escalation: green → yellow → red → red blink (by peak RSSI)
+
+## v3.1 field fixes (BLE / GPS / feedback)
+
+- [x] BLE/WiFi instant ERR: timeout used last_data_tick==0 as expired
+- [x] BLE silence after first sightings no longer forces ERR
+- [x] GPS requests Marauder `nmea` stream (not passive-only)
+- [x] GPS UI: speed, course, sat bar, mark+distance
+- [x] Per-tab LED/sound/vibro (centralized feedback_tick)
 
 ## v3.0.1 fixes (post field-test 1)
 

@@ -1,6 +1,7 @@
-/* Room Sweep v3.0.1 — multi-tab wireless assessment tool
+/* Room Sweep v3.1 — multi-tab wireless assessment tool
  * Tabs: RF (survey/sweep/peak) | WiFi | BLE | GPS | TX | Info
- * TX is a dedicated safety-gated tab. Sound/vibro are functional.
+ * TX is a dedicated safety-gated tab. Sound/vibro/LED per-tab.
+ * BLE timeout fixed; GPS requests Marauder NMEA stream (BFFB).
  * All API calls verified against Momentum mntm-012 API 87.1.
  */
 #include <furi.h>
@@ -23,6 +24,7 @@
 
 #include "room_sweep.h"
 #include "room_sweep_input.h"
+#include "room_sweep_scan.h"
 #include "nmea.h"
 
 /* ================================================================== */
@@ -170,6 +172,11 @@ typedef struct {
     GpsFix gps;
     volatile bool gps_active;
     volatile uint32_t gps_last_valid_tick;
+    uint32_t gps_last_request_tick;
+    bool gps_mark_set;
+    float gps_mark_lat;
+    float gps_mark_lon;
+    bool gps_had_fix;
 
     /* TX (dedicated tab, safety-gated) */
     TxState tx_state;
@@ -323,11 +330,35 @@ static void marauder_start_scan(App* app, const char* command) {
     app->last_rescan_tick = furi_get_tick();
 }
 
+/* Request NMEA stream from Just Call Me Koko Marauder (BFFB).
+ * Passive listen never works: GPS is on ESP32 Serial2; CLI must emit NMEA. */
+static void gps_request_stream(App* app) {
+    if(!app->serial) return;
+    marauder_send(app, "nmea");
+    app->gps_last_request_tick = furi_get_tick();
+    if(app->marauder_state != MarauderNoDevice) {
+        app->marauder_state = MarauderScanning;
+    }
+}
+
+static void gps_request_poll(App* app) {
+    if(!app->serial) return;
+    marauder_send(app, "gps -g nmea");
+    app->gps_last_request_tick = furi_get_tick();
+}
+
 static void update_gps_mode(App* app) {
     bool active = app->mode == SweepModeGps && app->serial != NULL;
     if(active && !app->gps_active) {
         nmea_init(&app->gps);
         app->gps_last_valid_tick = 0;
+        app->gps_had_fix = false;
+        gps_request_stream(app);
+    } else if(!active && app->gps_active) {
+        if(app->marauder_state == MarauderScanning) {
+            marauder_send(app, "stopscan");
+            if(app->marauder_state != MarauderNoDevice) app->marauder_state = MarauderIdle;
+        }
     }
     app->gps_active = active;
 }
@@ -558,6 +589,14 @@ static bool parse_ble_line(App* app, const char* line) {
 
     char mac[18] = {0};
     parse_str_after(line, "MAC", mac, sizeof(mac));
+    /* Marauder prints MAC as the Device field when the peer has no name. */
+    if(mac[0] == '\0') copy_mac(line, mac);
+    if(mac[0] == '\0' && name[0] != '\0') {
+        char maybe[18] = {0};
+        if(copy_mac(name, maybe)) {
+            strncpy(mac, maybe, sizeof(mac) - 1);
+        }
+    }
 
     uint32_t now = furi_get_tick();
     for(uint8_t i = 0; i < MAX_BLE_DEVS; i++) {
@@ -701,20 +740,7 @@ static int32_t rf_sweep_thread(void* ctx) {
             if(peak > RF_ALERT_THRESHOLD) {
                 app->last_signal_freq = rf_channels[peak_idx];
             }
-
-            if(app->running && peak >= -55.0f) {
-                static bool blink = false;
-                blink = !blink;
-                notification_message(app->notif, blink ? &sequence_set_red_255 : &sequence_reset_rgb);
-            } else if(app->running && peak >= -65.0f) {
-                notification_message(app->notif, &sequence_set_red_255);
-            } else if(app->running && peak >= -75.0f) {
-                notification_message(app->notif, &sequence_solid_yellow);
-            } else if(app->running && peak >= -85.0f) {
-                notification_message(app->notif, &sequence_set_green_255);
-            } else if(app->running) {
-                notification_message(app->notif, &sequence_reset_rgb);
-            }
+            /* LED is driven by feedback_tick for the active tab — not here. */
 
         } else if(app->rf_sub == RfSubSweep && app->sweep_running) {
             /* --- Coarse band sweep --- */
@@ -766,7 +792,7 @@ static int32_t rf_sweep_thread(void* ctx) {
             if(best_rssi > RF_ALERT_THRESHOLD) {
                 app->last_signal_freq = best_freq;
             }
-            if(app->running) notification_message(app->notif, &sequence_reset_rgb);
+            app->peak_rssi = best_rssi;
 
         } else if(app->rf_sub == RfSubPeak && app->peak_running) {
             /* --- Fine peak refinement --- */
@@ -824,7 +850,8 @@ static int32_t rf_sweep_thread(void* ctx) {
 
             app->peak_running = false;
             app->last_signal_freq = best_freq;
-            if(app->running) notification_message(app->notif, &sequence_reset_rgb);
+            app->peak_rssi = best_rssi;
+            app->peak_fine_rssi = best_rssi;
         } else {
             /* Idle sub-mode — brief pause to avoid busy-wait */
             furi_mutex_acquire(app->radio_mutex, FuriWaitForever);
@@ -892,62 +919,161 @@ static void tx_thread_cleanup(App* app) {
 }
 
 /* ================================================================== */
-/* Feedback tick — continuous Geiger audio + vibro                     */
-/* When enabled: slow heartbeat always, faster/louder near signals     */
+/* Feedback tick — per-tab LED + continuous Geiger audio + vibro       */
+/* Each tab drives feedback from ITS signals (see specs/per-tab).      */
 /* ================================================================== */
-static void feedback_tick(App* app) {
-    float peak = app->peak_rssi;
+static void led_from_rssi(NotificationApp* notif, float peak, bool blink_phase) {
+    if(peak >= -55.0f) {
+        notification_message(notif, blink_phase ? &sequence_set_red_255 : &sequence_reset_rgb);
+    } else if(peak >= -65.0f) {
+        notification_message(notif, &sequence_set_red_255);
+    } else if(peak >= -75.0f) {
+        notification_message(notif, &sequence_solid_yellow);
+    } else if(peak >= -85.0f) {
+        notification_message(notif, &sequence_set_green_255);
+    } else {
+        notification_message(notif, &sequence_reset_rgb);
+    }
+}
 
-    /* WiFi/BLE RSSI can drive feedback too */
-    if(app->mode == SweepModeWifi && app->wifi_strongest > -127) {
-        peak = (float)app->wifi_strongest;
-    } else if(app->mode == SweepModeBle && app->ble_strongest > -127) {
-        peak = (float)app->ble_strongest;
+static void led_from_gps(NotificationApp* notif, App* app, bool fresh, bool blink_phase) {
+    if(!fresh || app->gps.sentences == 0) {
+        notification_message(notif, &sequence_reset_rgb);
+        return;
+    }
+    if(app->gps.has_fix && blink_phase && app->gps.sats >= 6) {
+        notification_message(notif, &sequence_set_green_255);
+        return;
+    }
+    if(app->gps.has_fix) {
+        if(app->gps.sats >= 6) notification_message(notif, &sequence_set_green_255);
+        else if(app->gps.sats >= 3) notification_message(notif, &sequence_solid_yellow);
+        else notification_message(notif, &sequence_set_red_255);
+    } else {
+        notification_message(notif, blink_phase ? &sequence_solid_yellow : &sequence_reset_rgb);
+    }
+}
+
+static void feedback_tick(App* app) {
+    uint32_t now = furi_get_tick();
+    static bool blink_phase = false;
+    if((now / 250) % 2 == 0) blink_phase = true;
+    else blink_phase = false;
+
+    float peak = -120.0f;
+    bool alerting = false;
+    bool use_rssi_geiger = false;
+    bool gps_mode = false;
+    bool tx_mode = false;
+
+    switch(app->mode) {
+    case SweepModeRF:
+        peak = app->peak_rssi;
+        alerting = (peak > RF_ALERT_THRESHOLD) || app->rf_alert;
+        use_rssi_geiger = true;
+        led_from_rssi(app->notif, peak, blink_phase);
+        break;
+    case SweepModeWifi:
+        peak = (app->wifi_strongest > -127) ? (float)app->wifi_strongest : -120.0f;
+        alerting = (peak > RF_ALERT_THRESHOLD);
+        use_rssi_geiger = true;
+        led_from_rssi(app->notif, peak, blink_phase);
+        break;
+    case SweepModeBle:
+        peak = (app->ble_strongest > -127) ? (float)app->ble_strongest : -120.0f;
+        alerting = (peak > RF_ALERT_THRESHOLD);
+        use_rssi_geiger = true;
+        led_from_rssi(app->notif, peak, blink_phase);
+        break;
+    case SweepModeGps: {
+        gps_mode = true;
+        bool fresh = app->gps_last_valid_tick > 0 &&
+                     now - app->gps_last_valid_tick < GPS_STALE_TIMEOUT_MS;
+        led_from_gps(app->notif, app, fresh, blink_phase);
+        alerting = fresh && app->gps.has_fix;
+        /* Fix-acquire edge for sound/vibro */
+        if(alerting && !app->gps_had_fix) {
+            if(app->sound_on) notification_message(app->notif, &seq_lock_tone);
+            if(app->vibro_on) notification_message(app->notif, &seq_vibro_pulse);
+        }
+        app->gps_had_fix = alerting;
+        peak = fresh ? (-100.0f + (float)app->gps.sats * 4.0f) : -120.0f;
+        use_rssi_geiger = true;
+        break;
+    }
+    case SweepModeTx:
+        tx_mode = true;
+        if(app->tx_state == TxTransmitting) {
+            notification_message(
+                app->notif, blink_phase ? &sequence_set_red_255 : &sequence_reset_rgb);
+            alerting = true;
+            peak = -40.0f;
+            use_rssi_geiger = app->sound_on;
+        } else if(app->tx_state == TxArmed) {
+            notification_message(app->notif, &sequence_solid_yellow);
+            alerting = true;
+            peak = -70.0f;
+            use_rssi_geiger = false;
+        } else {
+            notification_message(app->notif, &sequence_reset_rgb);
+        }
+        break;
+    case SweepModeInfo:
+    default:
+        notification_message(app->notif, &sequence_reset_rgb);
+        peak = -120.0f;
+        use_rssi_geiger = app->sound_on; /* idle heartbeat only */
+        break;
     }
 
-    bool alerting = (peak > RF_ALERT_THRESHOLD);
     app->lock_ticks = alerting ? (app->lock_ticks + 1) : 0;
 
-    uint32_t now = furi_get_tick();
-
-    if(app->sound_on) {
-        /* Geiger click rate: heartbeat at 2s idle → 60ms when very strong */
+    if(app->sound_on && use_rssi_geiger) {
         uint32_t interval;
-        if(peak > -50.0f) interval = 60;
-        else if(peak > -60.0f) interval = 100;
-        else if(peak > -70.0f) interval = 180;
-        else if(peak > -80.0f) interval = 350;
-        else if(peak > -90.0f) interval = 700;
-        else if(peak > -100.0f) interval = 1200;
-        else interval = 2000; /* heartbeat: slow tick confirming audio is live */
+        if(gps_mode) {
+            if(peak > -70.0f) interval = 200;
+            else if(peak > -90.0f) interval = 500;
+            else if(peak > -110.0f) interval = 1000;
+            else interval = 2000;
+        } else if(tx_mode && app->tx_state == TxTransmitting) {
+            interval = 120;
+        } else {
+            if(peak > -50.0f) interval = 60;
+            else if(peak > -60.0f) interval = 100;
+            else if(peak > -70.0f) interval = 180;
+            else if(peak > -80.0f) interval = 350;
+            else if(peak > -90.0f) interval = 700;
+            else if(peak > -100.0f) interval = 1200;
+            else interval = 2000;
+        }
 
         if(now - app->last_click_ms >= interval) {
             app->last_click_ms = now;
             notification_message(app->notif, &seq_geiger_click);
         }
 
-        /* Lock tone when sustained above threshold */
-        if(app->lock_ticks == 5) {
+        if(!gps_mode && app->lock_ticks == 5) {
             notification_message(app->notif, &seq_lock_tone);
         }
-        /* Stop tone when signal drops */
         if(!alerting && app->was_alerting) {
             notification_message(app->notif, &seq_sound_stop);
         }
     }
 
-    if(app->vibro_on) {
-        /* Vibro: pulse on rising edge */
+    if(app->vibro_on && !gps_mode) {
         if(alerting && !app->was_alerting) {
             notification_message(app->notif, &seq_vibro_pulse);
         }
-        /* Sustained: periodic pulse while locked */
         if(app->lock_ticks > 5 && now - app->last_vibro_ms >= 800) {
             app->last_vibro_ms = now;
             notification_message(app->notif, &seq_vibro_pulse);
         }
-        /* Heartbeat vibro: very slow pulse so user knows it's active */
         if(!alerting && now - app->last_vibro_ms >= 4000) {
+            app->last_vibro_ms = now;
+            notification_message(app->notif, &seq_vibro_pulse);
+        }
+    } else if(app->vibro_on && gps_mode && app->gps.has_fix) {
+        if(now - app->last_vibro_ms >= 4000) {
             app->last_vibro_ms = now;
             notification_message(app->notif, &seq_vibro_pulse);
         }
@@ -1291,51 +1417,84 @@ static void draw_gps_tab(Canvas* canvas, App* app) {
 
     bool gps_fresh = app->gps_last_valid_tick > 0 &&
                      furi_get_tick() - app->gps_last_valid_tick < GPS_STALE_TIMEOUT_MS;
+    canvas_set_font(canvas, FontKeyboard);
     if(app->gps.has_fix && gps_fresh) {
-        canvas_draw_str(canvas, 40, 12, "3D FIX");
+        canvas_draw_str(canvas, 36, 12, "FIX");
     } else if(app->gps.sentences > 0 && gps_fresh) {
-        canvas_draw_str(canvas, 40, 12, "NO FIX");
+        canvas_draw_str(canvas, 36, 12, "NOFIX");
     } else if(app->gps.sentences > 0) {
-        canvas_draw_str(canvas, 40, 12, "STALE");
+        canvas_draw_str(canvas, 36, 12, "STALE");
     } else {
-        canvas_draw_str(canvas, 8, 28, "Waiting for GPS...");
-        canvas_draw_str(canvas, 8, 40, "(passive NMEA @115200)");
+        canvas_draw_str(canvas, 36, 12, "WAIT");
+    }
+
+    char buf[40];
+    canvas_set_font(canvas, FontSecondary);
+
+    if(app->gps.sentences == 0) {
+        canvas_draw_str(canvas, 2, 26, "Requesting NMEA...");
+        canvas_draw_str(canvas, 2, 38, "BFFB: nmea / gps -g");
+        canvas_set_font(canvas, FontKeyboard);
+        canvas_draw_str(canvas, 2, 52, "OK=retry  needs GPS module");
         return;
     }
 
-    char buf[32];
     if(gps_fresh && app->gps.has_time) {
-        snprintf(buf, sizeof(buf), "UTC %02d:%02d:%02d",
+        snprintf(buf, sizeof(buf), "%02d:%02d:%02d",
                  app->gps.hour, app->gps.minute, app->gps.second);
         canvas_draw_str(canvas, 2, 24, buf);
-    }
-
-    if(gps_fresh && app->gps.has_date) {
-        snprintf(buf, sizeof(buf), "%04d-%02d-%02d",
-                 app->gps.year, app->gps.month, app->gps.day);
-        canvas_draw_str(canvas, 80, 24, buf);
-    }
-
-    if(gps_fresh) {
-        snprintf(buf, sizeof(buf), "Sats: %d view / %d used",
-                 app->gps.sats_in_view, app->gps.sats);
-        canvas_draw_str(canvas, 2, 35, buf);
     } else {
-        canvas_draw_str(canvas, 2, 35, "No recent GPS data");
+        canvas_draw_str(canvas, 2, 24, "--:--:--");
     }
 
-    if(gps_fresh && app->gps.has_pos) {
-        snprintf(buf, sizeof(buf), "Lat: %.5f", (double)app->gps.latitude);
-        canvas_draw_str(canvas, 2, 46, buf);
-        snprintf(buf, sizeof(buf), "Lon: %.5f", (double)app->gps.longitude);
-        canvas_draw_str(canvas, 2, 57, buf);
-    } else {
-        canvas_draw_str(canvas, 2, 46, "No position yet");
-    }
-
+    /* Sat quality bar (used sats, max 12) */
+    uint8_t sats = app->gps.sats;
+    if(sats > 12) sats = 12;
+    canvas_draw_frame(canvas, 56, 16, 50, 7);
+    if(sats > 0) canvas_draw_box(canvas, 57, 17, (uint8_t)(48 * sats / 12), 5);
+    snprintf(buf, sizeof(buf), "%d/%d", app->gps.sats, app->gps.sats_in_view);
     canvas_set_font(canvas, FontKeyboard);
-    snprintf(buf, sizeof(buf), "%lu snt", (unsigned long)app->gps.sentences);
-    canvas_draw_str(canvas, 100, 63, buf);
+    canvas_draw_str(canvas, 108, 23, buf);
+
+    canvas_set_font(canvas, FontSecondary);
+    if(gps_fresh && app->gps.has_pos) {
+        snprintf(buf, sizeof(buf), "%.5f %.5f",
+                 (double)app->gps.latitude, (double)app->gps.longitude);
+        canvas_draw_str(canvas, 2, 36, buf);
+    } else {
+        canvas_draw_str(canvas, 2, 36, "No position yet");
+    }
+
+    /* Speed (kts→km/h) and course — fields already parsed from RMC */
+    if(gps_fresh && app->gps.has_fix) {
+        float kmh = app->gps.speed_kts * 1.852f;
+        snprintf(buf, sizeof(buf), "%.1fkm/h %03.0fdeg",
+                 (double)kmh, (double)app->gps.course);
+        canvas_draw_str(canvas, 2, 48, buf);
+    } else {
+        canvas_draw_str(canvas, 2, 48, "spd/crs --");
+    }
+
+    /* Mark distance */
+    canvas_set_font(canvas, FontKeyboard);
+    if(app->gps_mark_set && gps_fresh && app->gps.has_pos) {
+        float dist = geo_distance_m(
+            app->gps_mark_lat, app->gps_mark_lon,
+            app->gps.latitude, app->gps.longitude);
+        if(dist >= 1000.0f) {
+            snprintf(buf, sizeof(buf), "mark %.2fkm", (double)(dist / 1000.0f));
+        } else {
+            snprintf(buf, sizeof(buf), "mark %.0fm", (double)dist);
+        }
+        canvas_draw_str(canvas, 2, 60, buf);
+    } else if(app->gps_mark_set) {
+        canvas_draw_str(canvas, 2, 60, "mark set (no pos)");
+    } else {
+        canvas_draw_str(canvas, 2, 60, "OK=mark");
+    }
+
+    snprintf(buf, sizeof(buf), "%lu", (unsigned long)app->gps.sentences);
+    canvas_draw_str(canvas, 110, 60, buf);
 }
 
 /* ================================================================== */
@@ -1420,7 +1579,7 @@ static void draw_tx_tab(Canvas* canvas, App* app) {
 /* ================================================================== */
 static void draw_info_tab(Canvas* canvas, App* app) {
     canvas_set_font(canvas, FontSecondary);
-    canvas_draw_str(canvas, 2, 12, "Room Sweep v3.0.1");
+    canvas_draw_str(canvas, 2, 12, "Room Sweep v3.1");
 
     canvas_set_font(canvas, FontKeyboard);
     char buf[40];
@@ -1587,6 +1746,9 @@ int32_t room_sweep_app(void* p) {
     nmea_init(&app->gps);
     app->gps_active = false;
     app->gps_last_valid_tick = 0;
+    app->gps_last_request_tick = 0;
+    app->gps_mark_set = false;
+    app->gps_had_fix = false;
 
     /* Notification service */
     app->notif = furi_record_open(RECORD_NOTIFICATION);
@@ -1617,10 +1779,16 @@ int32_t room_sweep_app(void* p) {
 
             if(app->serial && (app->mode == SweepModeWifi || app->mode == SweepModeBle)) {
                 uint32_t now = furi_get_tick();
-                uint32_t last_data_tick = app->mode == SweepModeWifi ?
-                    app->wifi_last_scan_tick : app->ble_last_scan_tick;
-                if(app->marauder_state == MarauderScanning &&
-                   (last_data_tick == 0 || now - last_data_tick >= MARAUDER_SCAN_TIMEOUT_MS)) {
+                uint8_t result_count = app->mode == SweepModeWifi ?
+                    app->wifi_count : app->ble_count;
+                /* Timeout from scan start only; zero results required for ERR.
+                 * BLE dedup silence after first sightings is NOT an error. */
+                if(marauder_scan_should_error(
+                       app->marauder_state == MarauderScanning,
+                       now,
+                       app->last_rescan_tick,
+                       MARAUDER_SCAN_TIMEOUT_MS,
+                       result_count)) {
                     marauder_stop_scan(app);
                     app->marauder_state = MarauderError;
                     app->last_rescan_tick = now;
@@ -1630,6 +1798,20 @@ int32_t room_sweep_app(void* p) {
                         marauder_start_scan(app, "scanap");
                     } else if(app->mode == SweepModeBle) {
                         marauder_start_scan(app, "sniffbt");
+                    }
+                }
+            }
+
+            /* GPS: re-request stream if no nav data after a few seconds */
+            if(app->serial && app->mode == SweepModeGps && app->gps_active) {
+                uint32_t now = furi_get_tick();
+                bool fresh = app->gps_last_valid_tick > 0 &&
+                             now - app->gps_last_valid_tick < GPS_STALE_TIMEOUT_MS;
+                if(!fresh && now - app->gps_last_request_tick >= 5000) {
+                    if(app->gps.sentences == 0) {
+                        gps_request_stream(app);
+                    } else {
+                        gps_request_poll(app);
                     }
                 }
             }
@@ -1802,6 +1984,25 @@ int32_t room_sweep_app(void* p) {
         }
         if(event.key == InputKeyOk && app->mode == SweepModeBle && app->serial) {
             marauder_start_scan(app, "sniffbt");
+        }
+
+        /* --- GPS: OK sets/clears mark, or re-requests NMEA if waiting --- */
+        if(event.key == InputKeyOk && app->mode == SweepModeGps && app->serial) {
+            bool gps_fresh = app->gps_last_valid_tick > 0 &&
+                             furi_get_tick() - app->gps_last_valid_tick < GPS_STALE_TIMEOUT_MS;
+            if(app->gps.sentences == 0 || !gps_fresh) {
+                gps_request_stream(app);
+            } else if(gps_fresh && app->gps.has_pos) {
+                if(app->gps_mark_set) {
+                    app->gps_mark_set = false;
+                } else {
+                    app->gps_mark_set = true;
+                    app->gps_mark_lat = app->gps.latitude;
+                    app->gps_mark_lon = app->gps.longitude;
+                    if(app->sound_on) notification_message(app->notif, &seq_test_beep);
+                    if(app->vibro_on) notification_message(app->notif, &seq_test_vibro);
+                }
+            }
         }
 
         /* --- Up/Down toggles sound/vibro (non-RF, non-TX) --- */
