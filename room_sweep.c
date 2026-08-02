@@ -9,6 +9,7 @@
 #include <gui/view_port.h>
 #include <input/input.h>
 #include <furi_hal_power.h>
+#include <furi_hal_region.h>
 #include <furi_hal_serial.h>
 #include <furi_hal_serial_types.h>
 #include <furi_hal_serial_control.h>
@@ -138,8 +139,9 @@ typedef struct {
     volatile float peak_fine_rssi;
     volatile uint32_t peak_fine_freq;
 
-    /* Last detected signal (for TX pre-load) */
-    uint32_t last_signal_freq;
+    /* Qualified, time-bounded RF observation used for refine/lock/TX handoff. */
+    RoomSweepSignalCandidate signal_candidate;
+    volatile uint32_t rf_config_generation;
 
     /* SubGHz radio: prefer BFFB external SPI CC1101, else internal */
     const SubGhzDevice* radio;
@@ -225,7 +227,12 @@ typedef struct {
     TxState tx_state;
     volatile bool tx_active;
     FuriThread* tx_thread;
+    volatile RoomSweepTxWorkerState tx_worker_state;
+    volatile RoomSweepTxRefusal tx_refusal;
     volatile uint32_t tx_freq_hz;
+    volatile uint32_t tx_tuned_freq_hz;
+    bool tx_from_candidate;
+    RoomSweepSignalCandidate tx_candidate;
     volatile bool tx_level;
     volatile bool tx_started;
     uint8_t tx_freq_idx;
@@ -313,9 +320,103 @@ static void log_hit_throttled(
 }
 
 static void tx_preload_detected_frequency(App* app) {
-    if(app->mode == SweepModeTx && app->last_signal_freq > 0) {
-        app->tx_freq_hz = app->last_signal_freq;
+    if(app->mode != SweepModeTx) return;
+
+    furi_mutex_acquire(app->mutex, FuriWaitForever);
+    app->tx_freq_hz = room_sweep_candidate_handoff_frequency(
+        &app->signal_candidate,
+        furi_get_tick(),
+        tx_freq_presets[app->tx_freq_idx],
+        &app->tx_from_candidate);
+    if(app->tx_from_candidate) {
+        app->tx_candidate = app->signal_candidate;
+    } else {
+        room_sweep_candidate_invalidate(&app->tx_candidate);
     }
+    furi_mutex_release(app->mutex);
+}
+
+static void tx_restore_current_preset(App* app) {
+    app->tx_from_candidate = false;
+    room_sweep_candidate_invalidate(&app->tx_candidate);
+    app->tx_freq_hz = tx_freq_presets[app->tx_freq_idx];
+}
+
+static RoomSweepTxInputState tx_input_state(TxState state) {
+    switch(state) {
+    case TxArmed:
+        return RoomSweepTxInputArmed;
+    case TxStarting:
+        return RoomSweepTxInputStarting;
+    case TxTransmitting:
+        return RoomSweepTxInputTransmitting;
+    case TxDisarmed:
+    default:
+        return RoomSweepTxInputDisarmed;
+    }
+}
+
+static void tx_recover_from_candidate_refusal(App* app) {
+    if(!app->tx_from_candidate) return;
+    RoomSweepTxRefusal refusal = app->tx_refusal;
+    tx_restore_current_preset(app);
+    app->tx_refusal = refusal;
+}
+
+static void publish_signal_candidate(
+    App* app,
+    uint32_t requested_hz,
+    uint32_t tuned_hz,
+    float rssi,
+    bool completed,
+    RoomSweepCandidateSource source) {
+    furi_mutex_acquire(app->mutex, FuriWaitForever);
+    room_sweep_candidate_publish(
+        &app->signal_candidate,
+        requested_hz,
+        tuned_hz,
+        rssi,
+        furi_get_tick(),
+        completed,
+        source);
+    furi_mutex_release(app->mutex);
+}
+
+static bool tx_frequency_preflight(App* app) {
+    app->tx_refusal = RoomSweepTxRefusalNone;
+    if(app->tx_from_candidate) {
+        bool candidate_fresh = room_sweep_candidate_is_fresh(
+            &app->tx_candidate, furi_get_tick());
+        bool candidate_matches = app->tx_candidate.tuned_hz == app->tx_freq_hz;
+        if(!candidate_fresh || !candidate_matches) {
+            app->tx_refusal = RoomSweepTxRefusalExpiredCandidate;
+            return false;
+        }
+    }
+    if(!app->radio) {
+        app->tx_refusal = RoomSweepTxRefusalNoRadio;
+        return false;
+    }
+    if(!subghz_devices_is_frequency_valid(app->radio, app->tx_freq_hz)) {
+        app->tx_refusal = RoomSweepTxRefusalInvalidFrequency;
+        return false;
+    }
+    if(app->radio_path == RadioPathExternal) {
+        if(app->ext_band == ExtBandAuto) {
+            app->tx_refusal = RoomSweepTxRefusalExtBandUnknown;
+            return false;
+        }
+        if(!room_sweep_external_band_allows((uint8_t)app->ext_band, app->tx_freq_hz)) {
+            app->tx_refusal = RoomSweepTxRefusalInvalidFrequency;
+            return false;
+        }
+    }
+    if(!furi_hal_region_is_provisioned() ||
+       !furi_hal_region_is_frequency_allowed(app->tx_freq_hz)) {
+        app->tx_refusal = RoomSweepTxRefusalPolicy;
+        return false;
+    }
+    return true;
 }
 
 /* ================================================================== */
@@ -963,12 +1064,13 @@ static void radio_close(App* app) {
     app->radio_path = RadioPathNone;
 }
 
-static void radio_rx_at(App* app, uint32_t hz) {
-    if(!app->radio) return;
+static uint32_t radio_rx_at(App* app, uint32_t hz) {
+    if(!app->radio) return 0;
     subghz_devices_idle(app->radio);
-    subghz_devices_set_frequency(app->radio, hz);
+    uint32_t tuned_hz = subghz_devices_set_frequency(app->radio, hz);
     subghz_devices_flush_rx(app->radio);
     subghz_devices_set_rx(app->radio);
+    return tuned_hz;
 }
 
 static float radio_rssi(App* app) {
@@ -1001,12 +1103,19 @@ static int32_t rf_sweep_thread(void* ctx) {
         }
 
         if(app->rf_sub == RfSubSurvey) {
+            uint32_t config_generation = app->rf_config_generation;
             bool any_alert = false;
             float peak = -120.0f;
             uint8_t peak_idx = 0;
+            uint32_t peak_requested_hz = 0;
+            uint32_t peak_tuned_hz = 0;
+            bool complete = true;
 
             for(uint8_t ch = 0; ch < RF_NUM_CHANNELS && app->running; ch++) {
-                if(app->tx_active) break;
+                if(app->tx_active) {
+                    complete = false;
+                    break;
+                }
                 if(!rf_channel_allowed(app, ch)) {
                     furi_mutex_acquire(app->mutex, FuriWaitForever);
                     app->rssi[ch] = -120.0f;
@@ -1016,9 +1125,10 @@ static int32_t rf_sweep_thread(void* ctx) {
                 furi_mutex_acquire(app->radio_mutex, FuriWaitForever);
                 if(!app->running || app->tx_active || !app->radio) {
                     furi_mutex_release(app->radio_mutex);
+                    complete = false;
                     break;
                 }
-                radio_rx_at(app, rf_channels[ch]);
+                uint32_t tuned_hz = radio_rx_at(app, rf_channels[ch]);
 
                 float sum = 0;
                 for(uint8_t s = 0; s < RF_SAMPLES_PER_CH && app->running && !app->tx_active; s++) {
@@ -1029,7 +1139,10 @@ static int32_t rf_sweep_thread(void* ctx) {
                 float avg = sum / RF_SAMPLES_PER_CH;
                 radio_idle(app);
                 furi_mutex_release(app->radio_mutex);
-                if(!sample_valid) break;
+                if(!sample_valid) {
+                    complete = false;
+                    break;
+                }
 
                 furi_mutex_acquire(app->mutex, FuriWaitForever);
                 app->rssi[ch] = avg;
@@ -1040,17 +1153,26 @@ static int32_t rf_sweep_thread(void* ctx) {
                 if(avg > peak) {
                     peak = avg;
                     peak_idx = ch;
+                    peak_requested_hz = rf_channels[ch];
+                    peak_tuned_hz = tuned_hz;
                 }
             }
 
             app->peak_rssi = peak;
             app->peak_ch = peak_idx;
             app->rf_alert = any_alert;
-            if(peak > RF_ALERT_THRESHOLD) {
-                app->last_signal_freq = rf_channels[peak_idx];
+            if(complete && config_generation == app->rf_config_generation &&
+               peak > RF_ALERT_THRESHOLD && peak_requested_hz > 0) {
+                publish_signal_candidate(
+                    app,
+                    peak_requested_hz,
+                    peak_tuned_hz,
+                    peak,
+                    true,
+                    RoomSweepCandidateSurvey);
                 char id[12];
                 snprintf(id, sizeof(id), "%s", rf_labels[peak_idx]);
-                log_hit_throttled(app, "RF", id, (int)peak, rf_channels[peak_idx]);
+                log_hit_throttled(app, "RF", id, (int)peak, peak_tuned_hz);
             }
             if(app->target_kind == TargetRF && app->target_freq_hz > 0) {
                 /* Use peak if it matches locked channel band, else keep last */
@@ -1063,6 +1185,7 @@ static int32_t rf_sweep_thread(void* ctx) {
             }
 
         } else if(app->rf_sub == RfSubSweep && app->sweep_running) {
+            uint32_t config_generation = app->rf_config_generation;
             if(app->radio_path == RadioPathExternal && app->ext_band != ExtBandAuto) {
                 app->sweep_band_idx = rf_default_sweep_band(app);
             }
@@ -1074,18 +1197,24 @@ static int32_t rf_sweep_thread(void* ctx) {
 
             float best_rssi = -120.0f;
             uint32_t best_freq = band->start_hz;
+            uint32_t best_tuned_freq = 0;
+            bool complete = true;
 
             for(uint32_t step = 0; step < total_steps && app->running && app->sweep_running; step++) {
-                if(app->tx_active) break;
+                if(app->tx_active) {
+                    complete = false;
+                    break;
+                }
                 uint32_t freq = band->start_hz + step * SWEEP_STEP_COARSE;
                 app->sweep_freq = freq;
 
                 furi_mutex_acquire(app->radio_mutex, FuriWaitForever);
                 if(!app->running || app->tx_active || !app->sweep_running || !app->radio) {
                     furi_mutex_release(app->radio_mutex);
+                    complete = false;
                     break;
                 }
-                radio_rx_at(app, freq);
+                uint32_t tuned_hz = radio_rx_at(app, freq);
 
                 float sum = 0;
                 for(uint8_t s = 0; s < SWEEP_SAMPLES && app->running && !app->tx_active && app->sweep_running; s++) {
@@ -1096,11 +1225,15 @@ static int32_t rf_sweep_thread(void* ctx) {
                 float avg = sum / SWEEP_SAMPLES;
                 radio_idle(app);
                 furi_mutex_release(app->radio_mutex);
-                if(!sample_valid) break;
+                if(!sample_valid) {
+                    complete = false;
+                    break;
+                }
 
                 if(avg > best_rssi) {
                     best_rssi = avg;
                     best_freq = freq;
+                    best_tuned_freq = tuned_hz;
                 }
 
                 app->sweep_peak_rssi = best_rssi;
@@ -1109,14 +1242,28 @@ static int32_t rf_sweep_thread(void* ctx) {
                 app->sweep_progress = (uint8_t)((step + 1) * 100 / total_steps);
             }
 
+            bool finished = complete && app->running && app->sweep_running;
             app->sweep_running = false;
-            if(best_rssi > RF_ALERT_THRESHOLD) {
-                app->last_signal_freq = best_freq;
+            if(finished && config_generation == app->rf_config_generation &&
+               best_rssi > RF_ALERT_THRESHOLD && best_tuned_freq > 0) {
+                publish_signal_candidate(
+                    app,
+                    best_freq,
+                    best_tuned_freq,
+                    best_rssi,
+                    finished,
+                    RoomSweepCandidateSweep);
             }
             app->peak_rssi = best_rssi;
 
         } else if(app->rf_sub == RfSubPeak && app->peak_running) {
-            uint32_t center = app->last_signal_freq;
+            uint32_t config_generation = app->rf_config_generation;
+            uint32_t center = 0;
+            furi_mutex_acquire(app->mutex, FuriWaitForever);
+            if(room_sweep_candidate_is_fresh(&app->signal_candidate, furi_get_tick())) {
+                center = app->signal_candidate.tuned_hz;
+            }
+            furi_mutex_release(app->mutex);
             const RfBand* band = NULL;
             for(uint8_t i = 0; i < RF_BAND_COUNT; i++) {
                 if(center >= rf_bands[i].start_hz && center <= rf_bands[i].stop_hz) {
@@ -1136,16 +1283,22 @@ static int32_t rf_sweep_thread(void* ctx) {
 
             float best_rssi = -120.0f;
             uint32_t best_freq = center;
+            uint32_t best_tuned_freq = 0;
+            bool complete = true;
 
             for(uint32_t step = 0; step < total_steps && app->running && app->peak_running; step++) {
-                if(app->tx_active) break;
+                if(app->tx_active) {
+                    complete = false;
+                    break;
+                }
                 uint32_t freq = start + step * SWEEP_STEP_FINE;
                 furi_mutex_acquire(app->radio_mutex, FuriWaitForever);
                 if(!app->running || app->tx_active || !app->peak_running || !app->radio) {
                     furi_mutex_release(app->radio_mutex);
+                    complete = false;
                     break;
                 }
-                radio_rx_at(app, freq);
+                uint32_t tuned_hz = radio_rx_at(app, freq);
 
                 float sum = 0;
                 for(uint8_t s = 0; s < SWEEP_SAMPLES && app->running && !app->tx_active && app->peak_running; s++) {
@@ -1156,19 +1309,33 @@ static int32_t rf_sweep_thread(void* ctx) {
                 float avg = sum / SWEEP_SAMPLES;
                 radio_idle(app);
                 furi_mutex_release(app->radio_mutex);
-                if(!sample_valid) break;
+                if(!sample_valid) {
+                    complete = false;
+                    break;
+                }
 
                 if(avg > best_rssi) {
                     best_rssi = avg;
                     best_freq = freq;
+                    best_tuned_freq = tuned_hz;
                 }
                 app->peak_fine_rssi = best_rssi;
                 app->peak_fine_freq = best_freq;
                 app->sweep_progress = (uint8_t)((step + 1) * 100 / total_steps);
             }
 
+            bool finished = complete && app->running && app->peak_running;
             app->peak_running = false;
-            app->last_signal_freq = best_freq;
+            if(finished && config_generation == app->rf_config_generation &&
+               best_rssi > RF_ALERT_THRESHOLD && best_tuned_freq > 0) {
+                publish_signal_candidate(
+                    app,
+                    best_freq,
+                    best_tuned_freq,
+                    best_rssi,
+                    finished,
+                    RoomSweepCandidatePeak);
+            }
             app->peak_rssi = best_rssi;
             app->peak_fine_rssi = best_rssi;
         } else {
@@ -1205,13 +1372,44 @@ static int32_t tx_thread(void* ctx) {
     app->tx_remaining_ms = duration_ms;
 
     furi_mutex_acquire(app->radio_mutex, FuriWaitForever);
-    if(app->running && app->tx_active && app->radio) {
+    if(!app->radio) {
+        app->tx_refusal = RoomSweepTxRefusalNoRadio;
+    } else if(app->running && app->tx_active &&
+              app->tx_worker_state == RoomSweepTxWorkerRunning) {
         app->tx_level = false;
         app->tx_started = false;
         subghz_devices_idle(app->radio);
         subghz_devices_load_preset(app->radio, FuriHalSubGhzPresetOok650Async, NULL);
-        subghz_devices_set_frequency(app->radio, app->tx_freq_hz);
-        if(subghz_devices_start_async_tx(app->radio, tx_carrier_cb, app)) {
+        app->tx_tuned_freq_hz = subghz_devices_set_frequency(app->radio, app->tx_freq_hz);
+        bool tuned_allowed = app->tx_tuned_freq_hz > 0 &&
+                             subghz_devices_is_frequency_valid(
+                                 app->radio, app->tx_tuned_freq_hz) &&
+                             furi_hal_region_is_provisioned() &&
+                             furi_hal_region_is_frequency_allowed(app->tx_tuned_freq_hz) &&
+                             (app->radio_path != RadioPathExternal ||
+                              room_sweep_external_band_allows(
+                                  (uint8_t)app->ext_band, app->tx_tuned_freq_hz));
+        bool start_ok = false;
+        furi_mutex_acquire(app->mutex, FuriWaitForever);
+        bool candidate_ready =
+            !app->tx_from_candidate ||
+            (room_sweep_candidate_is_fresh(&app->tx_candidate, furi_get_tick()) &&
+             app->tx_candidate.tuned_hz == app->tx_freq_hz);
+        if(!candidate_ready) {
+            app->tx_refusal = RoomSweepTxRefusalExpiredCandidate;
+        } else if(!tuned_allowed) {
+            app->tx_refusal = RoomSweepTxRefusalInvalidFrequency;
+        } else if(!app->running || !app->tx_active ||
+                  app->tx_worker_state != RoomSweepTxWorkerRunning) {
+            app->tx_refusal = RoomSweepTxRefusalCanceled;
+        } else if(subghz_devices_start_async_tx(app->radio, tx_carrier_cb, app)) {
+            start_ok = true;
+            app->tx_state = TxTransmitting;
+        } else {
+            app->tx_refusal = RoomSweepTxRefusalStartFailed;
+        }
+        furi_mutex_release(app->mutex);
+        if(start_ok) {
             uint32_t elapsed = 0;
             while(app->running && app->tx_active && elapsed < duration_ms) {
                 furi_delay_ms(50);
@@ -1221,21 +1419,42 @@ static int32_t tx_thread(void* ctx) {
             subghz_devices_stop_async_tx(app->radio);
         }
         subghz_devices_idle(app->radio);
+    } else if(app->tx_refusal == RoomSweepTxRefusalNone) {
+        app->tx_refusal = RoomSweepTxRefusalCanceled;
     }
     furi_mutex_release(app->radio_mutex);
 
     app->tx_active = false;
     app->tx_state = TxDisarmed;
     app->tx_remaining_ms = 0;
+    app->tx_worker_state = RoomSweepTxWorkerIdle;
     return 0;
 }
 
 static void tx_thread_cleanup(App* app) {
-    if(app->tx_thread && !app->tx_active) {
+    if(app->tx_thread && app->tx_worker_state == RoomSweepTxWorkerIdle) {
         furi_thread_join(app->tx_thread);
         furi_thread_free(app->tx_thread);
         app->tx_thread = NULL;
     }
+}
+
+/* Stop and join outside radio_mutex; the worker owns that lock during TX. */
+static void tx_stop_and_join(App* app) {
+    if(!app->tx_thread) return;
+    furi_mutex_acquire(app->mutex, FuriWaitForever);
+    bool was_in_progress = app->tx_active ||
+                           app->tx_worker_state != RoomSweepTxWorkerIdle;
+    app->tx_active = false;
+    app->tx_worker_state = RoomSweepTxWorkerStopping;
+    if(was_in_progress && app->tx_refusal == RoomSweepTxRefusalNone) {
+        app->tx_refusal = RoomSweepTxRefusalCanceled;
+    }
+    furi_mutex_release(app->mutex);
+    furi_thread_join(app->tx_thread);
+    furi_thread_free(app->tx_thread);
+    app->tx_thread = NULL;
+    app->tx_worker_state = RoomSweepTxWorkerIdle;
 }
 
 /* ================================================================== */
@@ -1285,6 +1504,21 @@ static void feedback_tick(App* app) {
     bool use_rssi_geiger = false;
     bool gps_mode = false;
     bool tx_mode = false;
+
+    /* An RF lock is valid only while its exact source candidate is fresh. */
+    if(app->target_kind == TargetRF) {
+        RoomSweepSignalCandidate candidate;
+        furi_mutex_acquire(app->mutex, FuriWaitForever);
+        candidate = app->signal_candidate;
+        furi_mutex_release(app->mutex);
+        if(!room_sweep_candidate_matches_request(
+               &candidate, app->target_freq_hz, now)) {
+            app->target_kind = TargetNone;
+            app->target_freq_hz = 0;
+            app->target_id[0] = '\0';
+            app->target_rssi = -127;
+        }
+    }
 
     /* Target lock overrides ambient peak for Geiger */
     if(app->target_kind != TargetNone && app->target_rssi > -127) {
@@ -1579,29 +1813,41 @@ static void draw_rf_peak(Canvas* canvas, App* app) {
         canvas_draw_frame(canvas, 2, 52, 124, 8);
         uint8_t fill = (uint8_t)(122 * app->sweep_progress / 100);
         if(fill > 0) canvas_draw_box(canvas, 3, 53, fill, 6);
-    } else if(app->last_signal_freq > 0) {
-        canvas_set_font(canvas, FontSecondary);
-        char buf[32];
-        snprintf(buf, sizeof(buf), "Center: %lu.%03lu MHz",
-                 (unsigned long)(app->last_signal_freq / 1000000),
-                 (unsigned long)((app->last_signal_freq % 1000000) / 1000));
-        canvas_draw_str(canvas, 2, 28, buf);
-
-        if(app->peak_fine_rssi > -120.0f) {
-            snprintf(buf, sizeof(buf), "Refined: %.0f dBm", (double)app->peak_fine_rssi);
-            canvas_draw_str(canvas, 2, 40, buf);
-            snprintf(buf, sizeof(buf), "@ %lu.%03lu MHz",
-                     (unsigned long)(app->peak_fine_freq / 1000000),
-                     (unsigned long)((app->peak_fine_freq % 1000000) / 1000));
-            canvas_draw_str(canvas, 2, 52, buf);
-        }
-        canvas_set_font(canvas, FontKeyboard);
-        canvas_draw_str(canvas, 2, 63, "OK=refine B=settings");
     } else {
-        canvas_set_font(canvas, FontSecondary);
-        canvas_draw_str(canvas, 2, 30, "No peak detected.");
-        canvas_draw_str(canvas, 2, 42, "Run Survey or Sweep");
-        canvas_draw_str(canvas, 2, 53, "to find a signal first.");
+        RoomSweepSignalCandidate candidate;
+        furi_mutex_acquire(app->mutex, FuriWaitForever);
+        candidate = app->signal_candidate;
+        furi_mutex_release(app->mutex);
+        bool candidate_fresh = room_sweep_candidate_is_fresh(&candidate, furi_get_tick());
+
+        if(candidate_fresh) {
+            canvas_set_font(canvas, FontSecondary);
+            char buf[32];
+            snprintf(buf, sizeof(buf), "Center: %lu.%03lu MHz",
+                     (unsigned long)(candidate.tuned_hz / 1000000),
+                     (unsigned long)((candidate.tuned_hz % 1000000) / 1000));
+            canvas_draw_str(canvas, 2, 28, buf);
+
+            if(app->peak_fine_rssi > -120.0f) {
+                snprintf(buf, sizeof(buf), "Refined: %.0f dBm", (double)app->peak_fine_rssi);
+                canvas_draw_str(canvas, 2, 40, buf);
+                snprintf(buf, sizeof(buf), "@ %lu.%03lu MHz",
+                         (unsigned long)(app->peak_fine_freq / 1000000),
+                         (unsigned long)((app->peak_fine_freq % 1000000) / 1000));
+                canvas_draw_str(canvas, 2, 52, buf);
+            }
+            canvas_set_font(canvas, FontKeyboard);
+            canvas_draw_str(canvas, 2, 63, "OK=refine B=settings");
+        } else {
+            canvas_set_font(canvas, FontSecondary);
+            canvas_draw_str(
+                canvas,
+                2,
+                30,
+                candidate.valid ? "RF candidate expired." : "No RF candidate.");
+            canvas_draw_str(canvas, 2, 42, "Run Survey or Sweep");
+            canvas_draw_str(canvas, 2, 53, "to find a signal first.");
+        }
     }
 }
 
@@ -1879,8 +2125,17 @@ static void draw_tx_tab(Canvas* canvas, App* app) {
         canvas_draw_str(canvas, 2, 28, "DISARMED");
 
         canvas_set_font(canvas, FontKeyboard);
-        canvas_draw_str(canvas, 2, 38, "Own property / licensed only.");
-        canvas_draw_str(canvas, 2, 47, "Radiates RF energy.");
+        canvas_draw_str(canvas, 2, 38, "Carrier only; no replay.");
+        const char* refusal = room_sweep_tx_refusal_text(app->tx_refusal);
+        bool candidate_ready = app->tx_from_candidate &&
+                               room_sweep_candidate_is_fresh(
+                                   &app->tx_candidate, furi_get_tick());
+        canvas_draw_str(
+            canvas,
+            2,
+            47,
+            refusal[0] ? refusal :
+            candidate_ready ? "Detected RX candidate" : "Own/licensed use only.");
 
         snprintf(buf, sizeof(buf), "Freq: %lu.%03lu MHz Dur:%ds",
                  (unsigned long)(app->tx_freq_hz / 1000000),
@@ -1901,35 +2156,58 @@ static void draw_tx_tab(Canvas* canvas, App* app) {
         canvas_draw_str(canvas, 8, 27, "!! ARMED !!");
         canvas_set_color(canvas, ColorBlack);
 
+        canvas_set_font(canvas, FontKeyboard);
+        RoomSweepSignalCandidate candidate = app->tx_candidate;
+        bool candidate_fresh = app->tx_from_candidate &&
+                               room_sweep_candidate_is_fresh(
+                                   &candidate, furi_get_tick());
+        canvas_draw_str(
+            canvas,
+            2,
+            37,
+            candidate_fresh ? "Detected RX candidate" : "Preset carrier only");
+
         canvas_set_font(canvas, FontSecondary);
         snprintf(buf, sizeof(buf), "%lu.%03lu MHz %ds max",
                  (unsigned long)(app->tx_freq_hz / 1000000),
                  (unsigned long)((app->tx_freq_hz % 1000000) / 1000),
                  app->tx_duration_s);
-        canvas_draw_str(canvas, 2, 44, buf);
+        canvas_draw_str(canvas, 2, 47, buf);
 
-        if(app->last_signal_freq > 0) {
-            snprintf(buf, sizeof(buf), "Signal: %lu.%02lu MHz",
-                     (unsigned long)(app->last_signal_freq / 1000000),
-                     (unsigned long)((app->last_signal_freq % 1000000) / 10000));
+        if(candidate_fresh) {
+            uint32_t age_s = (furi_get_tick() - candidate.tick) / 1000U;
+            snprintf(
+                buf,
+                sizeof(buf),
+                "RX %s %.0fdBm %lus",
+                room_sweep_candidate_source_text(candidate.source),
+                (double)candidate.rssi,
+                (unsigned long)age_s);
             canvas_draw_str(canvas, 2, 55, buf);
+        } else {
+            canvas_draw_str(canvas, 2, 55, "No captured signal/replay");
         }
 
         canvas_set_font(canvas, FontKeyboard);
         canvas_draw_str(canvas, 2, 63, "LongOK=TX Up/Dn=freq B=disarm");
 
+    } else if(app->tx_state == TxStarting) {
+        canvas_set_font(canvas, FontPrimary);
+        canvas_draw_str(canvas, 2, 28, "STARTING...");
+        canvas_set_font(canvas, FontKeyboard);
+        canvas_draw_str(canvas, 2, 42, "Back=stop");
     } else if(app->tx_state == TxTransmitting) {
-        /* TRANSMITTING — countdown, inverse video */
+        /* The radio API accepted the carrier request; antenna output is not measured. */
         canvas_set_color(canvas, ColorBlack);
         canvas_draw_box(canvas, 0, 0, 128, 64);
         canvas_set_color(canvas, ColorWhite);
         canvas_set_font(canvas, FontPrimary);
-        canvas_draw_str(canvas, 12, 20, "TRANSMITTING");
+        canvas_draw_str(canvas, 12, 20, "TX API ACTIVE");
 
         char fbuf[32];
         snprintf(fbuf, sizeof(fbuf), "%lu.%03lu MHz",
-                 (unsigned long)(app->tx_freq_hz / 1000000),
-                 (unsigned long)((app->tx_freq_hz % 1000000) / 1000));
+                 (unsigned long)(app->tx_tuned_freq_hz / 1000000),
+                 (unsigned long)((app->tx_tuned_freq_hz % 1000000) / 1000));
         canvas_set_font(canvas, FontSecondary);
         canvas_draw_str(canvas, 30, 38, fbuf);
 
@@ -1937,6 +2215,8 @@ static void draw_tx_tab(Canvas* canvas, App* app) {
                  (unsigned long)(app->tx_remaining_ms / 1000),
                  (unsigned long)((app->tx_remaining_ms % 1000) / 100));
         canvas_draw_str(canvas, 24, 52, fbuf);
+        canvas_set_font(canvas, FontKeyboard);
+        canvas_draw_str(canvas, 2, 62, "Back=stop");
         canvas_set_color(canvas, ColorBlack);
     }
 }
@@ -2136,6 +2416,7 @@ int32_t room_sweep_app(void* p) {
     app->target_kind = TargetNone;
     app->target_rssi = -127;
     app->ext_band = ExtBandAuto;
+    app->rf_config_generation = 0;
     app->dump_head = 0;
     app->dump_count = 0;
     for(uint8_t i = 0; i < RF_NUM_CHANNELS; i++) app->baseline_rssi[i] = -120.0f;
@@ -2143,10 +2424,15 @@ int32_t room_sweep_app(void* p) {
     /* TX defaults */
     app->tx_state = TxDisarmed;
     app->tx_freq_hz = 433920000;
+    app->tx_tuned_freq_hz = 433920000;
+    app->tx_from_candidate = false;
+    room_sweep_candidate_invalidate(&app->tx_candidate);
     app->tx_freq_idx = 0;
     app->tx_duration_s = TX_DEFAULT_DURATION;
     app->tx_active = false;
     app->tx_thread = NULL;
+    app->tx_worker_state = RoomSweepTxWorkerIdle;
+    app->tx_refusal = RoomSweepTxRefusalNone;
 
     /* GPS init */
     nmea_init(&app->gps);
@@ -2253,7 +2539,7 @@ int32_t room_sweep_app(void* p) {
             if(action == RoomSweepBackCloseSettings) {
                 app->settings_active = false;
             } else if(action == RoomSweepBackDisarm) {
-                app->tx_active = false;
+                tx_stop_and_join(app);
                 app->tx_state = TxDisarmed;
             } else {
                 app->settings_active = true;
@@ -2291,6 +2577,27 @@ int32_t room_sweep_app(void* p) {
                     }
                 } else if(app->settings_sel == SET_EXTBAND) {
                     app->ext_band = (ExtBandPref)((app->ext_band + 1) % 3);
+                    app->rf_config_generation++;
+                    app->sweep_running = false;
+                    app->peak_running = false;
+                    furi_mutex_acquire(app->mutex, FuriWaitForever);
+                    room_sweep_candidate_invalidate(&app->signal_candidate);
+                    furi_mutex_release(app->mutex);
+                    app->tx_from_candidate = false;
+                    room_sweep_candidate_invalidate(&app->tx_candidate);
+                    if(app->target_kind == TargetRF) {
+                        app->target_kind = TargetNone;
+                        app->target_freq_hz = 0;
+                        app->target_id[0] = '\0';
+                        app->target_rssi = -127;
+                    }
+                    if(app->ext_band == ExtBand400) {
+                        app->tx_freq_idx = 0;
+                        app->tx_freq_hz = tx_freq_presets[app->tx_freq_idx];
+                    } else if(app->ext_band == ExtBand900) {
+                        app->tx_freq_idx = 2;
+                        app->tx_freq_hz = tx_freq_presets[app->tx_freq_idx];
+                    }
                     if(app->radio_path == RadioPathExternal && app->ext_band != ExtBandAuto) {
                         app->sweep_band_idx = rf_default_sweep_band(app);
                     }
@@ -2325,30 +2632,64 @@ int32_t room_sweep_app(void* p) {
         /* --- TX tab: safety-critical input handling --- */
         if(app->mode == SweepModeTx) {
             if(event.key == InputKeyOk) {
-                if(event.type == InputTypeShort && app->tx_state == TxDisarmed) {
+                bool long_press = event.type == InputTypeLong;
+                RoomSweepTxInputState input_state = tx_input_state(app->tx_state);
+                bool needs_preflight =
+                    (!long_press && input_state == RoomSweepTxInputDisarmed) ||
+                    (long_press && input_state == RoomSweepTxInputArmed);
+                bool frequency_valid = needs_preflight && tx_frequency_preflight(app);
+                RoomSweepTxDecision decision = room_sweep_tx_ok_decision(
+                    input_state,
+                    app->tx_worker_state,
+                    frequency_valid,
+                    long_press);
+
+                if(needs_preflight && !frequency_valid) {
+                    tx_recover_from_candidate_refusal(app);
+                    app->tx_state = TxDisarmed;
+                    continue;
+                }
+
+                if(decision == RoomSweepTxDecisionArm) {
                     app->tx_state = TxArmed;
                     notification_message(app->notif, &seq_tx_alert);
-                } else if(event.type == InputTypeLong && app->tx_state == TxArmed && !app->tx_active) {
+                } else if(decision == RoomSweepTxDecisionStart) {
                     /* LONG OK while armed: TRANSMIT */
-                    app->tx_state = TxTransmitting;
-                    app->tx_active = true;
+                    /* Reap a completed worker before allocating the next run. */
                     tx_thread_cleanup(app);
-                    if(app->tx_thread == NULL) {
-                        app->tx_thread = furi_thread_alloc_ex("RoomSweepTX", 2048, tx_thread, app);
+                    if(app->tx_thread != NULL) {
+                        app->tx_refusal = RoomSweepTxRefusalStartFailed;
+                        app->tx_state = TxDisarmed;
+                        continue;
                     }
+                    app->tx_thread = furi_thread_alloc_ex("RoomSweepTX", 2048, tx_thread, app);
+                    if(!app->tx_thread) {
+                        app->tx_refusal = RoomSweepTxRefusalStartFailed;
+                        app->tx_state = TxDisarmed;
+                        continue;
+                    }
+                    app->tx_state = TxStarting;
+                    app->tx_active = true;
+                    app->tx_worker_state = RoomSweepTxWorkerRunning;
                     furi_thread_start(app->tx_thread);
                 }
             }
             if(event.key == InputKeyUp && app->tx_state == TxArmed) {
                 app->tx_freq_idx = (app->tx_freq_idx + TX_FREQ_PRESET_COUNT - 1) % TX_FREQ_PRESET_COUNT;
                 app->tx_freq_hz = tx_freq_presets[app->tx_freq_idx];
+                app->tx_from_candidate = false;
+                room_sweep_candidate_invalidate(&app->tx_candidate);
+                app->tx_refusal = RoomSweepTxRefusalNone;
             }
             if(event.key == InputKeyDown && app->tx_state == TxArmed) {
                 app->tx_freq_idx = (app->tx_freq_idx + 1) % TX_FREQ_PRESET_COUNT;
                 app->tx_freq_hz = tx_freq_presets[app->tx_freq_idx];
+                app->tx_from_candidate = false;
+                room_sweep_candidate_invalidate(&app->tx_candidate);
+                app->tx_refusal = RoomSweepTxRefusalNone;
             }
             if(event.key == InputKeyLeft || event.key == InputKeyRight) {
-                app->tx_active = false;
+                tx_stop_and_join(app);
                 app->tx_state = TxDisarmed;
                 if(app->serial) {
                     marauder_stop_scan(app);
@@ -2428,7 +2769,11 @@ int32_t room_sweep_app(void* p) {
                     app->sweep_running = false;
                 } else if(app->rf_sub == RfSubPeak && !app->peak_running) {
                     /* Start peak refinement */
-                    if(app->last_signal_freq > 0) {
+                    furi_mutex_acquire(app->mutex, FuriWaitForever);
+                    bool candidate_fresh = room_sweep_candidate_is_fresh(
+                        &app->signal_candidate, furi_get_tick());
+                    furi_mutex_release(app->mutex);
+                    if(candidate_fresh) {
                         app->peak_running = true;
                         app->peak_fine_rssi = -120.0f;
                         app->sweep_progress = 0;
@@ -2494,13 +2839,23 @@ int32_t room_sweep_app(void* p) {
             if(app->target_kind == TargetRF) {
                 app->target_kind = TargetNone;
                 app->target_freq_hz = 0;
-            } else if(app->last_signal_freq > 0 || app->peak_rssi > RF_ALERT_THRESHOLD) {
+            } else {
+                uint32_t candidate_freq = 0;
+                float candidate_rssi = -120.0f;
+                furi_mutex_acquire(app->mutex, FuriWaitForever);
+                bool candidate_fresh = room_sweep_candidate_is_fresh(
+                    &app->signal_candidate, furi_get_tick());
+                if(candidate_fresh) {
+                    candidate_freq = app->signal_candidate.requested_hz;
+                    candidate_rssi = app->signal_candidate.rssi;
+                }
+                furi_mutex_release(app->mutex);
+                if(!candidate_fresh) continue;
                 app->target_kind = TargetRF;
-                app->target_freq_hz = app->last_signal_freq ? app->last_signal_freq :
-                                                             rf_channels[app->peak_ch];
+                app->target_freq_hz = candidate_freq;
                 snprintf(app->target_id, sizeof(app->target_id), "%lu",
                          (unsigned long)(app->target_freq_hz / 1000000));
-                app->target_rssi = (int8_t)app->peak_rssi;
+                app->target_rssi = (int8_t)candidate_rssi;
                 if(app->sound_on) notification_message(app->notif, &seq_lock_tone);
             }
         }
@@ -2561,7 +2916,7 @@ int32_t room_sweep_app(void* p) {
     gps_gpio_close(app);
     marauder_close(app);
 
-    tx_thread_cleanup(app);
+    tx_stop_and_join(app);
 
     furi_thread_join(app->rf_thread);
     furi_thread_free(app->rf_thread);

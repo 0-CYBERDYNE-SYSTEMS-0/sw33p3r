@@ -30,6 +30,7 @@ for r in rows[1:]:
 TYPE_LIKE = {
     "furi_hal", "furi_hal_serial", "furi_hal_serial_control", "furi_hal_serial_types",
     "furi_hal_subghz", "furi_hal_gpio", "furi_hal_usb", "furi_hal_power",
+    "furi_hal_region",
 }
 
 # Symbols that are plausibly real functions the app calls
