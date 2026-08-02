@@ -87,14 +87,12 @@ static const RfBand rf_bands[RF_BAND_COUNT] = {
 /* ---------------------------------------------------------------------------
  * JCMK BFFB / Marauder UART (matches 0xchocolate companion + Momentum FAP)
  *
- * BFFB wiki: ESP32 runs Dev Board Pro Marauder; GPS is on the ESP32 only
- * (not Flipper GPIO). Flipper talks Marauder CLI over USART @ 115200 after
- * expansion_disable() — same path as wifi_marauder_uart.c (BAUDRATE 115200,
- * FuriHalSerialIdUsart).
+ * USART (pins 13/14): Marauder CLI @ 115200 after expansion_disable().
+ * LPUART (pins 15/16): GPIO NMEA GPS @ 9600 (Momentum "NMEA GPS UART" Extra
+ * 15,16 — used by BFFB and many combo boards so GPS + WiFi can coexist).
+ * Marauder `nmea` remains a fallback if GPIO is silent.
  *
- * BFFB front switch: bottom switch must be ESP32 (not NRF24) for Marauder.
- * Dual on-board CC1101s are SPI to Flipper for Momentum SubGHz — separate
- * from this UART path; Room Sweep RF tab uses the Flipper internal CC1101.
+ * Bottom switch ESP32 for Marauder + CC1101 access; top switch 400/900 MHz.
  * --------------------------------------------------------------------------- */
 #define MARAUDER_BAUD        115200UL
 #define MARAUDER_RX_BUF_SIZE 1024
@@ -102,14 +100,15 @@ static const RfBand rf_bands[RF_BAND_COUNT] = {
 #define MARAUDER_MAX_LINES   24 /* deeper ring — AP/BLE bursts drop less */
 
 /* JCMK CLI: sniffbeacon prints "-RSSI Ch: n MAC ESSID:" (WIFI_SCAN_AP).
- * scanall (WIFI_SCAN_AP_STA) also prints APs; sniffbeacon is the reliable
- * companion-era path for AP meters. sniffbt = BT_SNIFF_CMD. */
+ * sniffbt = BT_SNIFF_CMD. */
 #define MARAUDER_CMD_WIFI    "sniffbeacon"
 #define MARAUDER_CMD_BLE     "sniffbt"
 #define MARAUDER_CMD_STOP    "stopscan"
 
-/* NMEA sentence cap for host-testable parser (not a second UART baud). */
-#define GPS_SENTENCE_MAX     96
+/* GPIO GPS (LPUART). Stock modules default 9600; some boards use 115200. */
+#define GPS_GPIO_BAUD_PRIMARY   9600UL
+#define GPS_GPIO_BAUD_ALT      115200UL
+#define GPS_SENTENCE_MAX         96
 
 /* ---------------------------------------------------------------------------
  * Marauder scan state
