@@ -19,6 +19,12 @@ static void feed_str(GpsFix* f, const char* s) {
     for(const char* p = s; *p; p++) nmea_feed(f, *p);
 }
 
+static void feed_body(GpsFix* f, const char* body) {
+    char sentence[160];
+    snprintf(sentence, sizeof(sentence), "$%s*%02X\r\n", body, nmea_checksum(body));
+    feed_str(f, sentence);
+}
+
 static int approx(double a, double b, double eps) {
     return fabs(a - b) < eps;
 }
@@ -144,6 +150,58 @@ int main(void) {
     CHECK(f.sats_in_view == 1, "sats-in-view tracked from GSV");
     CHECK(!f.has_fix, "no fix (indoor)");
     CHECK(f.has_date && f.year == 2026, "date available from ZDA");
+
+    printf("Test 14: truncated RMC boundary\n");
+    nmea_init(&f);
+    feed_body(&f, "GPRMC,123519,V,,,,,,," );
+    CHECK(f.sentences == 1 && f.nav_sentences == 1, "RMC with empty date accepted");
+    CHECK(f.has_time && !f.has_date, "RMC keeps valid time without date");
+
+    printf("Test 15: non-hex checksum rejected\n");
+    nmea_init(&f);
+    feed_str(&f, "$GPGGA,123519,,,,,,*0Z\r\n");
+    CHECK(f.sentences == 0, "non-hex checksum sentence dropped");
+
+    printf("Test 16: semantic NMEA bounds rejected\n");
+    nmea_init(&f);
+    feed_body(&f, "GPGGA,256161,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,");
+    CHECK(f.sentences == 1 && f.nav_sentences == 0, "invalid GGA time does not refresh navigation");
+    nmea_init(&f);
+    feed_body(&f, "GPRMC,123519,V,,,,,,321399");
+    CHECK(f.nav_sentences == 0 && !f.has_date, "invalid RMC date is rejected");
+    nmea_init(&f);
+    feed_body(&f, "GPRMC,256161,V,,,,,,,010826");
+    CHECK(f.sentences == 1 && f.nav_sentences == 0 && !f.has_time,
+          "invalid RMC time does not refresh navigation");
+    nmea_init(&f);
+    feed_body(&f, "GNGLL,,,,,256161,V,N");
+    CHECK(f.sentences == 1 && f.nav_sentences == 0 && !f.has_time,
+          "invalid GLL time does not refresh navigation");
+    nmea_init(&f);
+    feed_body(&f, "GPGGA,123519,4807.038,N,01131.000,E,1,xx,0.9,545.4,M,46.9,M,,");
+    CHECK(f.nav_sentences == 0 && !f.has_pos, "non-numeric satellite count is rejected");
+    nmea_init(&f);
+    feed_body(&f, "GNZDA,104840.000,31,02,2025,00,00");
+    CHECK(!f.has_date, "invalid ZDA calendar date is rejected");
+    nmea_init(&f);
+    feed_body(&f, "BDGSV,1,1,256");
+    CHECK(f.sats_in_view == 0, "out-of-range GSV count is rejected");
+
+    printf("Test 17: navigation freshness excludes telemetry\n");
+    nmea_init(&f);
+    feed_str(&f, "$GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,*47\r\n");
+    feed_str(&f, "$GNVTG,,,,,,,,,N*2E\r\n");
+    feed_str(&f, "$BDGSV,1,1,01,32,,,21*6B\r\n");
+    feed_str(&f, "$GNZDA,104840.000,01,08,2026,00,00*4E\r\n");
+    CHECK(f.sentences == 4, "navigation and telemetry sentences accepted");
+    CHECK(f.nav_sentences == 1, "telemetry does not refresh navigation data");
+
+    printf("Test 18: active RMC without coordinates clears position\n");
+    nmea_init(&f);
+    feed_str(&f, "$GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,*47\r\n");
+    feed_str(&f, "$GPRMC,123519,A,,,,,,,010826,,,*0A\r\n");
+    CHECK(f.sentences == 2, "active RMC accepted without coordinates");
+    CHECK(f.has_fix && !f.has_pos, "active RMC cannot retain stale position");
 
     printf("\n%s (%d failure%s)\n", failures ? "RESULT: FAIL" : "RESULT: ALL PASS",
            failures, failures == 1 ? "" : "s");

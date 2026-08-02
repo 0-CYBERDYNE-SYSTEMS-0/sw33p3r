@@ -1,5 +1,8 @@
 # progress.log — append-only session log (graph-engineering)
 
+> Historical session note. The deferred-device statement below was superseded by
+> the current final build and manual-QA receipts in `.omo/evidence/`.
+
 ## Iteration: v3.1 sound/vibro root-cause fix
 - Phase 1 root-cause investigation complete (systematic-debugging).
 - Verified message_force_speaker_volume_setting_1f and message_force_vibro_setting_on

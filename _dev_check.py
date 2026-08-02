@@ -1,6 +1,7 @@
+import os
 import serial, time, sys
 
-PORT = "/dev/cu.usbmodemflip_XXXX01"
+PORT = os.environ.get("FLIPPER_PORT", "/dev/cu.usbmodemflip_XXXX01")
 
 
 def cmd(ser, c, wait=0.5):

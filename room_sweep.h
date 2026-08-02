@@ -81,7 +81,7 @@ static const RfBand rf_bands[RF_BAND_COUNT] = {
 #define SWEEP_STEP_FINE     25000UL
 #define SWEEP_DWELL_MS          8    /* ms per frequency step */
 #define SWEEP_SAMPLES           4    /* RSSI samples per step */
-#define SWEEP_MAX_POINTS      200    /* max display points for sweep */
+#define SWEEP_MAX_POINTS      600
 #define PEAK_REFINE_SPAN  1000000UL  /* +/- 1 MHz around peak for refinement */
 
 /* ---------------------------------------------------------------------------
