@@ -27,7 +27,9 @@
 #include "room_sweep.h"
 #include "room_sweep_input.h"
 #include "room_sweep_scan.h"
+#include "session_log.h"
 #include "nmea.h"
+#include <storage/storage.h>
 
 typedef enum {
     RadioPathNone = 0,
@@ -173,6 +175,27 @@ typedef struct {
     /* Rescan timer */
     uint32_t last_rescan_tick;
     bool auto_rescan;
+    bool session_log_on;
+    Storage* storage;
+    uint32_t last_log_hit_ms;
+
+    /* Baseline RSSI map (survey channels) */
+    float baseline_rssi[RF_NUM_CHANNELS];
+    bool baseline_set;
+
+    /* Target lock — Geiger follows one source only */
+    TargetKind target_kind;
+    uint32_t target_freq_hz;
+    char target_id[33];
+    int8_t target_rssi;
+
+    /* EXT dual-CC1101 band preference (BFFB top switch analogue) */
+    ExtBandPref ext_band;
+
+    /* UART dump ring for BFFB capture */
+    char dump_lines[16][64];
+    uint8_t dump_head;
+    uint8_t dump_count;
 
     /* Notification / feedback */
     NotificationApp* notif;
@@ -227,6 +250,10 @@ enum {
     SET_SOUND = 0,
     SET_VIBRO,
     SET_RESCAN,
+    SET_LOG,
+    SET_EXTBAND,
+    SET_BASELINE,
+    SET_DUMP,
     SET_TXDUR,
     SET_COUNT,
 };
@@ -236,6 +263,54 @@ enum {
 #define GPS_STALE_TIMEOUT_MS 5000
 #define TX_MAX_DURATION_S  10
 #define TX_DEFAULT_DURATION 3
+#define LOG_HIT_MIN_MS 1500
+
+static bool rf_channel_allowed(App* app, uint8_t ch) {
+    if(app->radio_path != RadioPathExternal || app->ext_band == ExtBandAuto) return true;
+    uint8_t b = rf_channel_band[ch];
+    if(app->ext_band == ExtBand400) return b == 1;
+    if(app->ext_band == ExtBand900) return b == 2;
+    return true;
+}
+
+static uint8_t rf_default_sweep_band(App* app) {
+    if(app->radio_path == RadioPathExternal) {
+        if(app->ext_band == ExtBand400) return 1;
+        if(app->ext_band == ExtBand900) return 2;
+    }
+    return app->sweep_band_idx;
+}
+
+static void dump_push_line(App* app, const char* line) {
+    if(!line || !line[0]) return;
+    strncpy(app->dump_lines[app->dump_head], line, 63);
+    app->dump_lines[app->dump_head][63] = '\0';
+    app->dump_head = (app->dump_head + 1) % 16;
+    if(app->dump_count < 16) app->dump_count++;
+}
+
+static void log_hit_throttled(
+    App* app,
+    const char* kind,
+    const char* id,
+    int rssi,
+    uint32_t freq_hz) {
+    if(!app->session_log_on || !app->storage) return;
+    uint32_t now = furi_get_tick();
+    if(now - app->last_log_hit_ms < LOG_HIT_MIN_MS) return;
+    app->last_log_hit_ms = now;
+    bool has_pos = app->gps.has_pos && app->gps.has_fix &&
+                   app->gps_last_valid_tick > 0 &&
+                   now - app->gps_last_valid_tick < GPS_STALE_TIMEOUT_MS;
+    session_log_hit(
+        kind,
+        id,
+        rssi,
+        freq_hz,
+        app->gps.latitude,
+        app->gps.longitude,
+        has_pos);
+}
 
 static void tx_preload_detected_frequency(App* app) {
     if(app->mode == SweepModeTx && app->last_signal_freq > 0) {
@@ -743,6 +818,7 @@ static void process_uart_lines(App* app) {
             app->uart_line_count++;
             strncpy(app->last_uart_line, latest, sizeof(app->last_uart_line) - 1);
             app->last_uart_line[sizeof(app->last_uart_line) - 1] = '\0';
+            dump_push_line(app, latest);
         }
 
         if(latest[0] == '#' || latest[0] == '>') continue;
@@ -755,9 +831,11 @@ static void process_uart_lines(App* app) {
         if(app->mode == SweepModeWifi) {
             if(parse_wifi_line(app, latest)) {
                 app->wifi_strongest = -127;
+                int best_i = -1;
                 for(uint8_t i = 0; i < MAX_WIFI_APS; i++) {
                     if(app->wifi_aps[i].valid && app->wifi_aps[i].rssi > app->wifi_strongest) {
                         app->wifi_strongest = app->wifi_aps[i].rssi;
+                        best_i = (int)i;
                     }
                 }
                 app->wifi_last_scan_tick = furi_get_tick();
@@ -765,19 +843,49 @@ static void process_uart_lines(App* app) {
                    app->marauder_state == MarauderError) {
                     app->marauder_state = MarauderScanning;
                 }
+                if(best_i >= 0 && app->wifi_aps[best_i].rssi > RF_ALERT_THRESHOLD) {
+                    log_hit_throttled(
+                        app,
+                        "WIFI",
+                        app->wifi_aps[best_i].ssid,
+                        app->wifi_aps[best_i].rssi,
+                        0);
+                }
+                if(app->target_kind == TargetWifi && best_i >= 0 &&
+                   (strcmp(app->target_id, app->wifi_aps[best_i].ssid) == 0 ||
+                    (app->wifi_aps[best_i].bssid[0] &&
+                     strcmp(app->target_id, app->wifi_aps[best_i].bssid) == 0))) {
+                    app->target_rssi = app->wifi_aps[best_i].rssi;
+                }
             }
         } else if(app->mode == SweepModeBle) {
             if(parse_ble_line(app, latest)) {
                 app->ble_strongest = -127;
+                int best_i = -1;
                 for(uint8_t i = 0; i < MAX_BLE_DEVS; i++) {
                     if(app->ble_devs[i].valid && app->ble_devs[i].rssi > app->ble_strongest) {
                         app->ble_strongest = app->ble_devs[i].rssi;
+                        best_i = (int)i;
                     }
                 }
                 app->ble_last_scan_tick = furi_get_tick();
                 if(app->marauder_state == MarauderIdle ||
                    app->marauder_state == MarauderError) {
                     app->marauder_state = MarauderScanning;
+                }
+                if(best_i >= 0 && app->ble_devs[best_i].rssi > RF_ALERT_THRESHOLD) {
+                    log_hit_throttled(
+                        app,
+                        "BLE",
+                        app->ble_devs[best_i].name,
+                        app->ble_devs[best_i].rssi,
+                        0);
+                }
+                if(app->target_kind == TargetBle && best_i >= 0 &&
+                   (strcmp(app->target_id, app->ble_devs[best_i].name) == 0 ||
+                    (app->ble_devs[best_i].mac[0] &&
+                     strcmp(app->target_id, app->ble_devs[best_i].mac) == 0))) {
+                    app->target_rssi = app->ble_devs[best_i].rssi;
                 }
             }
         }
@@ -899,6 +1007,12 @@ static int32_t rf_sweep_thread(void* ctx) {
 
             for(uint8_t ch = 0; ch < RF_NUM_CHANNELS && app->running; ch++) {
                 if(app->tx_active) break;
+                if(!rf_channel_allowed(app, ch)) {
+                    furi_mutex_acquire(app->mutex, FuriWaitForever);
+                    app->rssi[ch] = -120.0f;
+                    furi_mutex_release(app->mutex);
+                    continue;
+                }
                 furi_mutex_acquire(app->radio_mutex, FuriWaitForever);
                 if(!app->running || app->tx_active || !app->radio) {
                     furi_mutex_release(app->radio_mutex);
@@ -934,9 +1048,24 @@ static int32_t rf_sweep_thread(void* ctx) {
             app->rf_alert = any_alert;
             if(peak > RF_ALERT_THRESHOLD) {
                 app->last_signal_freq = rf_channels[peak_idx];
+                char id[12];
+                snprintf(id, sizeof(id), "%s", rf_labels[peak_idx]);
+                log_hit_throttled(app, "RF", id, (int)peak, rf_channels[peak_idx]);
+            }
+            if(app->target_kind == TargetRF && app->target_freq_hz > 0) {
+                /* Use peak if it matches locked channel band, else keep last */
+                for(uint8_t ch = 0; ch < RF_NUM_CHANNELS; ch++) {
+                    if(rf_channels[ch] == app->target_freq_hz) {
+                        app->target_rssi = (int8_t)app->rssi[ch];
+                        break;
+                    }
+                }
             }
 
         } else if(app->rf_sub == RfSubSweep && app->sweep_running) {
+            if(app->radio_path == RadioPathExternal && app->ext_band != ExtBandAuto) {
+                app->sweep_band_idx = rf_default_sweep_band(app);
+            }
             const RfBand* band = &rf_bands[app->sweep_band_idx];
             uint32_t total_steps = (band->stop_hz - band->start_hz) / SWEEP_STEP_COARSE;
             if(total_steps > SWEEP_MAX_POINTS) total_steps = SWEEP_MAX_POINTS;
@@ -1157,6 +1286,16 @@ static void feedback_tick(App* app) {
     bool gps_mode = false;
     bool tx_mode = false;
 
+    /* Target lock overrides ambient peak for Geiger */
+    if(app->target_kind != TargetNone && app->target_rssi > -127) {
+        peak = (float)app->target_rssi;
+        alerting = (peak > RF_ALERT_THRESHOLD);
+        use_rssi_geiger = true;
+        led_from_rssi(app->notif, peak, blink_phase);
+        /* fall through to sound/vibro with locked peak */
+        goto feedback_sound;
+    }
+
     switch(app->mode) {
     case SweepModeRF:
         peak = app->peak_rssi;
@@ -1217,6 +1356,7 @@ static void feedback_tick(App* app) {
         break;
     }
 
+feedback_sound:
     app->lock_ticks = alerting ? (app->lock_ticks + 1) : 0;
 
     if(app->sound_on && use_rssi_geiger) {
@@ -1313,12 +1453,22 @@ static void draw_rf_survey(Canvas* canvas, App* app) {
         if(h > area_h) h = area_h;
         uint8_t x = i * (bar_w + bar_gap);
 
-        if(r > RF_ALERT_THRESHOLD) {
+        /* Baseline delta: filled if above baseline, frame if below */
+        float base = app->baseline_set ? app->baseline_rssi[i] : -120.0f;
+        bool above_base = app->baseline_set && (r > base + 3.0f);
+        if(r > RF_ALERT_THRESHOLD || above_base) {
             canvas_draw_box(canvas, x, base_y - (h > 0 ? h : 1), bar_w, h > 0 ? (uint8_t)h : 1);
         } else if(h >= 3) {
             canvas_draw_frame(canvas, x, base_y - h, bar_w, h);
         } else if(h >= 1) {
             canvas_draw_box(canvas, x, base_y - 1, bar_w, 1);
+        }
+        /* baseline tick mark */
+        if(app->baseline_set) {
+            int bh = (int)((base + 100.0f) * area_h / 70.0f);
+            if(bh < 0) bh = 0;
+            if(bh > area_h) bh = area_h;
+            canvas_draw_dot(canvas, x + bar_w / 2, base_y - bh);
         }
     }
     furi_mutex_release(app->mutex);
@@ -1331,7 +1481,13 @@ static void draw_rf_survey(Canvas* canvas, App* app) {
         canvas_draw_str(canvas, i * (bar_w + bar_gap), 63, rf_labels[i]);
     }
 
-    /* SIGNAL alert */
+    /* SIGNAL / lock / baseline markers */
+    canvas_set_font(canvas, FontKeyboard);
+    if(app->target_kind == TargetRF) {
+        canvas_draw_str(canvas, 1, 22, "LOCK");
+    } else if(app->baseline_set) {
+        canvas_draw_str(canvas, 1, 22, "BASE");
+    }
     if(app->rf_alert) {
         canvas_set_font(canvas, FontSecondary);
         const char* sig = "SIGNAL!";
@@ -1789,33 +1945,50 @@ static void draw_tx_tab(Canvas* canvas, App* app) {
 /* Drawing: Info tab (live capability card)                            */
 /* ================================================================== */
 static void draw_info_tab(Canvas* canvas, App* app) {
-    canvas_set_font(canvas, FontSecondary);
-    canvas_draw_str(canvas, 2, 12, "Room Sweep v3.2");
-
     canvas_set_font(canvas, FontKeyboard);
-    char buf[40];
+    char buf[48];
 
-    snprintf(buf, sizeof(buf), "RF: %s",
-             app->radio_path == RadioPathExternal ? "BFFB EXT CC1101" :
-             app->radio_path == RadioPathInternal ? "internal CC1101" : "no radio");
-    canvas_draw_str(canvas, 2, 23, buf);
+    snprintf(buf, sizeof(buf), "RF:%s band:%s",
+             app->radio_path == RadioPathExternal ? "EXT" :
+             app->radio_path == RadioPathInternal ? "INT" : "?",
+             app->ext_band == ExtBand400 ? "400" :
+             app->ext_band == ExtBand900 ? "900" : "AUTO");
+    canvas_draw_str(canvas, 2, 10, buf);
 
-    snprintf(buf, sizeof(buf), "UART: %s",
-             app->serial ? "acquired" : "no device");
-    canvas_draw_str(canvas, 2, 32, buf);
+    snprintf(buf, sizeof(buf), "UART:%s GPS:%s@%lu",
+             app->serial ? "ok" : "no",
+             app->gps_from_gpio ? "G" : (app->gps.sentences ? "M" : "-"),
+             (unsigned long)(app->gps_gpio_baud ? app->gps_gpio_baud : 9600));
+    canvas_draw_str(canvas, 2, 19, buf);
 
-    snprintf(buf, sizeof(buf), "Sound: %s  Vibro: %s",
-             app->sound_on ? "ON" : "off",
-             app->vibro_on ? "ON" : "off");
-    canvas_draw_str(canvas, 2, 41, buf);
+    snprintf(buf, sizeof(buf), "Log:%s Base:%s Lock:%s",
+             app->session_log_on ? "ON" : "off",
+             app->baseline_set ? "Y" : "n",
+             app->target_kind == TargetNone ? "-" :
+             app->target_kind == TargetRF ? "RF" :
+             app->target_kind == TargetWifi ? "Wi" : "BT");
+    canvas_draw_str(canvas, 2, 28, buf);
 
-    snprintf(buf, sizeof(buf), "TX: %s",
-             app->tx_state == TxDisarmed ? "disarmed" :
-             app->tx_state == TxArmed ? "ARMED" : "ACTIVE");
-    canvas_draw_str(canvas, 2, 48, buf);
+    if(app->target_kind != TargetNone) {
+        char tid[12];
+        strncpy(tid, app->target_id, 11);
+        tid[11] = '\0';
+        snprintf(buf, sizeof(buf), "T:%s %ddBm", tid, (int)app->target_rssi);
+        canvas_draw_str(canvas, 2, 37, buf);
+    } else {
+        canvas_draw_str(canvas, 2, 37, "LongOK=lock peak/AP");
+    }
 
-    canvas_draw_str(canvas, 2, 56, "BFFB SW: ESP32+400/900");
-    canvas_draw_str(canvas, 2, 63, "API 87.1 / Momentum");
+    snprintf(buf, sizeof(buf), "dump:%u lines", app->dump_count);
+    canvas_draw_str(canvas, 2, 46, buf);
+
+    if(app->last_uart_line[0]) {
+        canvas_draw_str(canvas, 2, 55, app->last_uart_line);
+    } else {
+        canvas_draw_str(canvas, 2, 55, "UART: (no lines yet)");
+    }
+
+    canvas_draw_str(canvas, 2, 63, "SW: bot=ESP32 top=400/900");
 }
 
 /* ================================================================== */
@@ -1827,38 +2000,50 @@ static void draw_settings(Canvas* canvas, App* app) {
     canvas_set_color(canvas, ColorBlack);
     canvas_draw_frame(canvas, 1, 1, 126, 62);
 
-    canvas_set_font(canvas, FontPrimary);
-    canvas_draw_str(canvas, 8, 14, "Settings");
-    canvas_draw_line(canvas, 8, 17, 120, 17);
+    canvas_set_font(canvas, FontKeyboard);
+    canvas_draw_str(canvas, 4, 9, "Settings");
 
-    canvas_set_font(canvas, FontSecondary);
     const char* labels[SET_COUNT] = {
-        "Sound", "Vibro", "Auto-Rescan", "TX Duration",
+        "Sound", "Vibro", "Rescan", "Log", "ExtBand", "Baseline", "Dump", "TXDur",
     };
 
-    for(int i = 0; i < SET_COUNT; i++) {
-        uint8_t y = 26 + i * 8;
+    /* Show 5 rows, scroll with selection */
+    int start = 0;
+    if(app->settings_sel > 3) start = (int)app->settings_sel - 3;
+    if(start > SET_COUNT - 5) start = SET_COUNT - 5;
+    if(start < 0) start = 0;
+
+    for(int row = 0; row < 5 && start + row < SET_COUNT; row++) {
+        int i = start + row;
+        uint8_t y = (uint8_t)(18 + row * 9);
         if(i == (int)app->settings_sel) {
-            canvas_draw_box(canvas, 4, y - 8, 120, 10);
+            canvas_draw_box(canvas, 2, y - 7, 124, 9);
             canvas_set_color(canvas, ColorWhite);
-            canvas_draw_str(canvas, 8, y, labels[i]);
-            canvas_set_color(canvas, ColorBlack);
-        } else {
-            canvas_draw_str(canvas, 8, y, labels[i]);
         }
+        canvas_draw_str(canvas, 4, y, labels[i]);
 
         char val[16];
-        if(i == SET_SOUND) snprintf(val, sizeof(val), "%s", app->sound_on ? "ON" : "OFF");
-        else if(i == SET_VIBRO) snprintf(val, sizeof(val), "%s", app->vibro_on ? "ON" : "OFF");
-        else if(i == SET_RESCAN) snprintf(val, sizeof(val), "%s", app->auto_rescan ? "ON" : "OFF");
+        if(i == SET_SOUND) snprintf(val, sizeof(val), "%s", app->sound_on ? "ON" : "off");
+        else if(i == SET_VIBRO) snprintf(val, sizeof(val), "%s", app->vibro_on ? "ON" : "off");
+        else if(i == SET_RESCAN) snprintf(val, sizeof(val), "%s", app->auto_rescan ? "ON" : "off");
+        else if(i == SET_LOG) snprintf(val, sizeof(val), "%s", app->session_log_on ? "ON" : "off");
+        else if(i == SET_EXTBAND)
+            snprintf(
+                val,
+                sizeof(val),
+                "%s",
+                app->ext_band == ExtBand400 ? "400" :
+                app->ext_band == ExtBand900 ? "900" : "AUTO");
+        else if(i == SET_BASELINE)
+            snprintf(val, sizeof(val), "%s", app->baseline_set ? "set" : "OK=");
+        else if(i == SET_DUMP) snprintf(val, sizeof(val), "%u", app->dump_count);
         else if(i == SET_TXDUR) snprintf(val, sizeof(val), "%ds", app->tx_duration_s);
+        else val[0] = '\0';
 
         uint16_t w = canvas_string_width(canvas, val);
-        canvas_draw_str(canvas, 118 - w, y, val);
+        canvas_draw_str(canvas, 124 - w, y, val);
+        if(i == (int)app->settings_sel) canvas_set_color(canvas, ColorBlack);
     }
-
-    canvas_set_font(canvas, FontKeyboard);
-    canvas_draw_str(canvas, 8, 62, "OK=change B=back");
 }
 
 /* ================================================================== */
@@ -1946,6 +2131,14 @@ int32_t room_sweep_app(void* p) {
     app->wifi_strongest = -127;
     app->ble_strongest = -127;
     app->auto_rescan = true;
+    app->session_log_on = false;
+    app->baseline_set = false;
+    app->target_kind = TargetNone;
+    app->target_rssi = -127;
+    app->ext_band = ExtBandAuto;
+    app->dump_head = 0;
+    app->dump_count = 0;
+    for(uint8_t i = 0; i < RF_NUM_CHANNELS; i++) app->baseline_rssi[i] = -120.0f;
 
     /* TX defaults */
     app->tx_state = TxDisarmed;
@@ -1965,6 +2158,7 @@ int32_t room_sweep_app(void* p) {
 
     /* Notification service */
     app->notif = furi_record_open(RECORD_NOTIFICATION);
+    app->storage = furi_record_open(RECORD_STORAGE);
 
     /* SubGHz: BFFB external CC1101 if present, else internal */
     radio_open(app);
@@ -2077,16 +2271,50 @@ int32_t room_sweep_app(void* p) {
             } else if(event.key == InputKeyOk) {
                 if(app->settings_sel == SET_SOUND) {
                     app->sound_on = !app->sound_on;
-                    if(app->sound_on) {
-                        notification_message(app->notif, &seq_test_beep);
-                    }
+                    if(app->sound_on) notification_message(app->notif, &seq_test_beep);
                 } else if(app->settings_sel == SET_VIBRO) {
                     app->vibro_on = !app->vibro_on;
-                    if(app->vibro_on) {
-                        notification_message(app->notif, &seq_test_vibro);
-                    }
+                    if(app->vibro_on) notification_message(app->notif, &seq_test_vibro);
                 } else if(app->settings_sel == SET_RESCAN) {
                     app->auto_rescan = !app->auto_rescan;
+                } else if(app->settings_sel == SET_LOG) {
+                    app->session_log_on = !app->session_log_on;
+                    if(app->session_log_on) {
+                        if(!app->storage) app->storage = furi_record_open(RECORD_STORAGE);
+                        if(session_log_begin(app->storage)) {
+                            notification_message(app->notif, &seq_test_beep);
+                        } else {
+                            app->session_log_on = false;
+                        }
+                    } else {
+                        session_log_end(app->storage);
+                    }
+                } else if(app->settings_sel == SET_EXTBAND) {
+                    app->ext_band = (ExtBandPref)((app->ext_band + 1) % 3);
+                    if(app->radio_path == RadioPathExternal && app->ext_band != ExtBandAuto) {
+                        app->sweep_band_idx = rf_default_sweep_band(app);
+                    }
+                } else if(app->settings_sel == SET_BASELINE) {
+                    furi_mutex_acquire(app->mutex, FuriWaitForever);
+                    for(uint8_t i = 0; i < RF_NUM_CHANNELS; i++) {
+                        app->baseline_rssi[i] = app->rssi[i];
+                    }
+                    furi_mutex_release(app->mutex);
+                    app->baseline_set = true;
+                    notification_message(app->notif, &seq_test_beep);
+                } else if(app->settings_sel == SET_DUMP) {
+                    if(!app->storage) app->storage = furi_record_open(RECORD_STORAGE);
+                    const char* lines[16];
+                    uint8_t n = app->dump_count;
+                    if(n > 16) n = 16;
+                    /* oldest first */
+                    uint8_t start = (app->dump_head + 16 - n) % 16;
+                    for(uint8_t i = 0; i < n; i++) {
+                        lines[i] = app->dump_lines[(start + i) % 16];
+                    }
+                    if(session_log_write_dump(app->storage, lines, n)) {
+                        notification_message(app->notif, &seq_test_beep);
+                    }
                 } else if(app->settings_sel == SET_TXDUR) {
                     app->tx_duration_s = (app->tx_duration_s % TX_MAX_DURATION_S) + 1;
                 }
@@ -2209,10 +2437,72 @@ int32_t room_sweep_app(void* p) {
             }
         }
 
-        /* --- WiFi/BLE: OK restarts scan (sniffbeacon / sniffbt) --- */
-        if(event.key == InputKeyOk &&
-           (app->mode == SweepModeWifi || app->mode == SweepModeBle) && app->serial) {
-            marauder_start_for_mode(app);
+        /* --- WiFi/BLE: short OK restarts scan; long OK locks strongest --- */
+        if(app->mode == SweepModeWifi && app->serial) {
+            if(event.key == InputKeyOk && event.type == InputTypeShort) {
+                marauder_start_for_mode(app);
+            } else if(event.key == InputKeyOk && event.type == InputTypeLong) {
+                if(app->target_kind == TargetWifi) {
+                    app->target_kind = TargetNone;
+                    app->target_id[0] = '\0';
+                } else if(app->wifi_count > 0) {
+                    int best = -1;
+                    for(uint8_t i = 0; i < MAX_WIFI_APS; i++) {
+                        if(app->wifi_aps[i].valid &&
+                           (best < 0 || app->wifi_aps[i].rssi > app->wifi_aps[best].rssi))
+                            best = (int)i;
+                    }
+                    if(best >= 0) {
+                        app->target_kind = TargetWifi;
+                        strncpy(app->target_id, app->wifi_aps[best].ssid, 32);
+                        app->target_id[32] = '\0';
+                        app->target_rssi = app->wifi_aps[best].rssi;
+                        app->target_freq_hz = 0;
+                        if(app->sound_on) notification_message(app->notif, &seq_lock_tone);
+                    }
+                }
+            }
+        }
+        if(app->mode == SweepModeBle && app->serial) {
+            if(event.key == InputKeyOk && event.type == InputTypeShort) {
+                marauder_start_for_mode(app);
+            } else if(event.key == InputKeyOk && event.type == InputTypeLong) {
+                if(app->target_kind == TargetBle) {
+                    app->target_kind = TargetNone;
+                    app->target_id[0] = '\0';
+                } else if(app->ble_count > 0) {
+                    int best = -1;
+                    for(uint8_t i = 0; i < MAX_BLE_DEVS; i++) {
+                        if(app->ble_devs[i].valid &&
+                           (best < 0 || app->ble_devs[i].rssi > app->ble_devs[best].rssi))
+                            best = (int)i;
+                    }
+                    if(best >= 0) {
+                        app->target_kind = TargetBle;
+                        strncpy(app->target_id, app->ble_devs[best].name, 32);
+                        app->target_id[32] = '\0';
+                        app->target_rssi = app->ble_devs[best].rssi;
+                        app->target_freq_hz = 0;
+                        if(app->sound_on) notification_message(app->notif, &seq_lock_tone);
+                    }
+                }
+            }
+        }
+
+        /* RF long-OK: lock peak frequency for Geiger */
+        if(app->mode == SweepModeRF && event.key == InputKeyOk && event.type == InputTypeLong) {
+            if(app->target_kind == TargetRF) {
+                app->target_kind = TargetNone;
+                app->target_freq_hz = 0;
+            } else if(app->last_signal_freq > 0 || app->peak_rssi > RF_ALERT_THRESHOLD) {
+                app->target_kind = TargetRF;
+                app->target_freq_hz = app->last_signal_freq ? app->last_signal_freq :
+                                                             rf_channels[app->peak_ch];
+                snprintf(app->target_id, sizeof(app->target_id), "%lu",
+                         (unsigned long)(app->target_freq_hz / 1000000));
+                app->target_rssi = (int8_t)app->peak_rssi;
+                if(app->sound_on) notification_message(app->notif, &seq_lock_tone);
+            }
         }
 
         /* --- GPS: OK sets/clears mark, or re-opens GPIO / Marauder --- */
@@ -2277,6 +2567,9 @@ int32_t room_sweep_app(void* p) {
     furi_thread_free(app->rf_thread);
 
     radio_close(app);
+
+    if(app->session_log_on) session_log_end(app->storage);
+    if(app->storage) furi_record_close(RECORD_STORAGE);
 
     notification_message(app->notif, &sequence_reset_rgb);
     notification_message(app->notif, &sequence_reset_sound);

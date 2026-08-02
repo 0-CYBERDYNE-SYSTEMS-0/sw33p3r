@@ -57,6 +57,24 @@ static const char* rf_labels[RF_NUM_CHANNELS] = {
     "450", "868", "915", "925",
 };
 
+/* 0=low300, 1=mid400, 2=high900 — for EXT dual-CC1101 band filter */
+static const uint8_t rf_channel_band[RF_NUM_CHANNELS] = {
+    0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2,
+};
+
+typedef enum {
+    ExtBandAuto = 0,
+    ExtBand400,
+    ExtBand900,
+} ExtBandPref;
+
+typedef enum {
+    TargetNone = 0,
+    TargetRF,
+    TargetWifi,
+    TargetBle,
+} TargetKind;
+
 /* RSSI threshold for a "signal" alert (dBm) */
 #define RF_ALERT_THRESHOLD (-75.0f)
 
