@@ -10,3 +10,14 @@
 - Verified furi_hal_subghz_start/stop/is_complete_async_tx in export table (for P3 TX).
 - Device NOT connected this session -> on-device verify deferred to user plug-in.
 - Fix: force volume/vibro in custom sequences + heartbeat + lower Geiger floor.
+
+## Iteration: v3.1 BLE timeout + GPS stream + per-tab feedback (2026-08-01)
+- Root cause BLE ERR: `(last_data_tick == 0 || ...)` true immediately after clear_results.
+  Fixed via marauder_scan_should_error() in room_sweep_scan.h (timeout from scan start;
+  ERR only when result_count==0). BLE dedup silence is not error.
+- GPS: passive listen was wrong for BFFB — send Marauder `nmea` on tab enter; poll
+  `gps -g nmea` if silent; UI shows speed/course/sat bar/mark distance.
+- Feedback: LED removed from RF thread; feedback_tick drives LED/sound/vibro per mode.
+- Host: test_scan_logic.c ALL PASS; NMEA 58/58; Back 4/4; ufbt Target 7 API 87.1.
+- Device: FAP 36592b uploaded; Room Sweep running; BLE/GPS smoke no crash.
+- FAP SHA-256: fca06a11e966ff0cfac29943e75be37d450657202d6ad14355c481eeb21d6550

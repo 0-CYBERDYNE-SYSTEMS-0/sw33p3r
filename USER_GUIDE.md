@@ -58,7 +58,7 @@ When Sound is ON: Geiger clicks speed up as you move toward access points.
 
 ---
 
-### 3. BLE Tab — Bluetooth Device Scanner
+### 3. BLE Tab — Bluetooth Device Scanner (BFFB Marauder `sniffbt`)
 
 **Requires:** BFFB ESP32 with Marauder connected via UART. Actual scan result lines
 confirm that the board is responding.
@@ -74,7 +74,12 @@ confirm that the board is responding.
 
 ### 4. GPS Tab — Position & Fix Status
 
-**Requires:** BFFB ESP32 with GPS module.
+**Requires:** BFFB ESP32 (Just Call Me Koko Marauder) with GPS module.
+
+On tab enter the app sends **`nmea`** so the BFFB streams NMEA over UART
+(115200 CLI). Passive listen alone never works — GPS lives on the ESP32, not on
+the Flipper's UART. **OK** re-requests the stream if waiting, or sets/clears a
+**mark** when a fix is present (distance shown via haversine).
 
 - Shows: fix state (3D FIX / NO FIX / STALE), UTC time, date, satellites, lat/lon
 - Fully passive — no buttons needed, just watches navigation NMEA data
@@ -165,7 +170,10 @@ Shows (always current, never stale):
 
 ---
 
-## LED Behavior (always active, no setting)
+## LED Behavior (always active, no setting — **per active tab**)
+
+LED / sound / vibro follow the **current tab's** signal (RF peak, WiFi/BLE
+strongest RSSI, GPS sat quality, TX arm/transmit state).
 
 | Peak RSSI | LED |
 |-----------|-----|
