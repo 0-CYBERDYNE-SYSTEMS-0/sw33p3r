@@ -3,12 +3,14 @@
 ## Problem
 GPS tab stuck on `Waiting for GPS...`. App never requests NMEA from the BFFB; it only passively listens.
 
-## Hardware / firmware facts
-- Flipper ↔ BFFB UART is **115200** Marauder CLI, not raw GPS baud.
-- GPS module sits on ESP32 Serial2 (Marauder probes 9600→115200 internally).
-- Continuous NMEA over CLI: command **`nmea`** (starts `WIFI_SCAN_GPS_NMEA`, stop with `stopscan`).
+## Hardware / firmware facts (BFFB wiki + Marauder source)
+- [BFFB wiki](https://github.com/justcallmekoko/ESP32Marauder/wiki/BFFB): GPS connected to **ESP32 only** — Flipper GPIO GPS apps will not work.
+- BFFB firmware target: Marauder **Dev Board Pro**.
+- Flipper ↔ ESP32 UART is **115200** Marauder CLI (companion `BAUDRATE 115200`), not raw GPS baud.
+- GPS module is ESP32 Serial2 (Marauder probes 9600→115200 internally).
+- Continuous NMEA: CLI **`nmea`** → `WIFI_SCAN_GPS_NMEA` / `RunGPSNmea()` (companion “NMEA Stream”).
 - One-shot: `gps -g nmea` emits synthetic GGA+RMC.
-- Status poll: `gps -g fix|sat|lat|lon|...`
+- Status: `gps -g fix|sat|lat|lon|...` (human text; optional).
 
 ## Contract
 1. On GPS tab enter: send `nmea` to start streaming; clear/reinit fix state.

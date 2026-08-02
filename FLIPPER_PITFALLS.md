@@ -10,6 +10,23 @@ Before using ANY Flipper API call in new code, verify it exists in this log's
 "Verified API Symbols" section or in the SDK's `api_symbols.csv`. If you
 discover a new pitfall, add it here immediately with the date and context.
 
+**BFFB / Marauder:** see `docs/BFFB_MOMENTUM.md` (JCMK wiki + companion + CommandLine.h).
+
+## Pitfall #15: BFFB GPS is not on Flipper USART
+
+**Date:** 2026-08-01  
+**Source:** https://github.com/justcallmekoko/ESP32Marauder/wiki/BFFB  
+
+GPS is wired to the ESP32. Passive Flipper NMEA @ 9600 on GPIO will never work.
+Must send Marauder CLI `nmea` / `gps -g nmea` at **115200** after `expansion_disable`.
+
+## Pitfall #16: Modern Marauder has no `scanap`
+
+**Date:** 2026-08-01  
+**Source:** `esp32_marauder/CommandLine.h` (main), companion Scan menu  
+
+Use **`scanall`** (or `sniffbeacon` for AP beacons). Companion TX terminator is **`\\n`**, not CRLF.
+
 ---
 
 ## Pitfall #1: NotificationSequence is an array typedef, NOT a struct

@@ -122,14 +122,15 @@ DISARMED --[Short OK]--> ARMED --[Long OK]--> TRANSMITTING --[timer expires]--> 
 ```
 TX NEVER fires on tab entry. Multiple deliberate actions required.
 
-### Marauder Protocol (BFFB ESP32)
-- WiFi scan: send `scanap\r\n`, stream results until `stopscan\r\n`
-- BLE sniff: send `sniffbt\r\n`, stream results until `stopscan\r\n`
-- WiFi line format: `-45 Ch: 6 AA:BB:CC:DD:EE:FF ESSID: NetworkName 00 00`
-- BLE line format: `-60 Device: DeviceName`
-- Lines starting with `#` are command echoes — skip them
-- No "done" marker — scans stream indefinitely until stopscan
-- RSSI is the bare negative integer at the START of the line
+### Marauder Protocol (JCMK BFFB = Dev Board Pro)
+See `docs/BFFB_MOMENTUM.md` for wiki + source citations.
+- UART: USART1 @ **115200**, `expansion_disable`, TX ends with **`\\n`** (companion style)
+- WiFi: **`scanall`** (not legacy `scanap` — removed from current CommandLine.h)
+- BLE: **`sniffbt`** → `-60 Device: NameOrMac`
+- GPS: **`nmea`** stream; GPS is on ESP32 only (BFFB wiki — not Flipper GPIO)
+- Stop: **`stopscan`** (companion also uses `stopscan -f`)
+- WiFi line: `-45 Ch: 6 AA:BB:CC:DD:EE:FF ESSID: NetworkName 00 00`
+- No "done" marker; BLE RSSI updates for known devices are silent
 
 ---
 
