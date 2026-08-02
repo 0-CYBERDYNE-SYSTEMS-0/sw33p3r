@@ -4,6 +4,8 @@
 #include <gui/gui.h>
 #include <input/input.h>
 
+#include "room_sweep_state.h"
+
 /* ---------------------------------------------------------------------------
  * App modes (tabs)
  * --------------------------------------------------------------------------- */
@@ -33,6 +35,7 @@ typedef enum {
 typedef enum {
     TxDisarmed,      // Default. No TX possible without arming.
     TxArmed,         // User confirmed safety. Long-OK to transmit.
+    TxStarting,      // Worker is preparing; TX has not started.
     TxTransmitting,  // Active carrier (bounded). Auto-disarms on finish.
 } TxState;
 
@@ -76,7 +79,7 @@ typedef enum {
 } TargetKind;
 
 /* RSSI threshold for a "signal" alert (dBm) */
-#define RF_ALERT_THRESHOLD (-75.0f)
+#define RF_ALERT_THRESHOLD ROOM_SWEEP_SIGNAL_THRESHOLD_DBM
 
 /* ---------------------------------------------------------------------------
  * Band sweep configuration (CC1101 three operating bands)

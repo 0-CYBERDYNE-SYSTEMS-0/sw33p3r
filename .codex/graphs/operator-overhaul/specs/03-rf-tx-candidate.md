@@ -12,10 +12,13 @@ The TX screen must say `Detected RX candidate` and show source, RSSI, and age.
 Copying it to TX changes only the generated carrier setpoint. It is not a captured
 signal and does not preserve protocol, modulation, data, keys, or waveform.
 
-Before arming and again before transmission, require a radio, a valid candidate or
-explicit preset, `subghz_devices_is_frequency_valid`, and
-`subghz_devices_check_tx`. Show a plain refusal reason. Capture the actual tuned
-frequency returned by `subghz_devices_set_frequency`.
+Before arming and again before transmission, require a radio, a fresh candidate or
+explicit preset, `subghz_devices_is_frequency_valid`, a provisioned region, and
+`furi_hal_region_is_frequency_allowed`. Show a plain refusal reason and treat a
+failed asynchronous start as not transmitted. Current Momentum `dev` also exposes
+`subghz_devices_check_tx`, but the installed API 87.1 SDK does not; do not add an
+unavailable symbol or claim equivalent detailed refusal reasons. Capture the actual
+tuned frequency returned by `subghz_devices_set_frequency`.
 
 Always join/free a finished TX thread before allocating/starting another. Never
 reuse a completed thread object. Leaving TX, Back, Settings entry, or shutdown

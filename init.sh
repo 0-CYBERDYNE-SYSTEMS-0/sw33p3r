@@ -11,6 +11,10 @@ echo "== host Back routing =="
 cc -std=c11 -Wall -Wextra -Werror -I. tests/test_input_state.c -o /tmp/room_sweep_input_test
 /tmp/room_sweep_input_test
 
+echo "== host RF/TX state helpers =="
+cc -std=c11 -Wall -Wextra -Werror -I. tests/test_rf_tx_state.c -o /tmp/room_sweep_rf_tx_state_test
+/tmp/room_sweep_rf_tx_state_test
+
 if [[ -f tests/test_scan_logic.c ]]; then
   echo "== host scan/GPS helpers =="
   cc -std=c11 -Wall -Wextra -Werror -I. tests/test_scan_logic.c -o /tmp/test_scan_logic

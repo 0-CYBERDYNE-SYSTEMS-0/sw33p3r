@@ -17,7 +17,7 @@
       "Run repeated TX lifecycle and refusal-state tests",
       "Pass API scan and ufbt build"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "controls",
