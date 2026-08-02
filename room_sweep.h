@@ -99,7 +99,14 @@ static const RfBand rf_bands[RF_BAND_COUNT] = {
 #define MARAUDER_BAUD        115200UL
 #define MARAUDER_RX_BUF_SIZE 1024
 #define MARAUDER_LINE_MAX    128
-#define MARAUDER_MAX_LINES   8
+#define MARAUDER_MAX_LINES   24 /* deeper ring — AP/BLE bursts drop less */
+
+/* JCMK CLI: sniffbeacon prints "-RSSI Ch: n MAC ESSID:" (WIFI_SCAN_AP).
+ * scanall (WIFI_SCAN_AP_STA) also prints APs; sniffbeacon is the reliable
+ * companion-era path for AP meters. sniffbt = BT_SNIFF_CMD. */
+#define MARAUDER_CMD_WIFI    "sniffbeacon"
+#define MARAUDER_CMD_BLE     "sniffbt"
+#define MARAUDER_CMD_STOP    "stopscan"
 
 /* NMEA sentence cap for host-testable parser (not a second UART baud). */
 #define GPS_SENTENCE_MAX     96

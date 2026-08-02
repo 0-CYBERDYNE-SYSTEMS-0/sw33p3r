@@ -139,6 +139,9 @@ typedef struct {
     volatile uint8_t uart_line_tail;
     char line_buf[MARAUDER_LINE_MAX];
     uint8_t line_pos;
+    char last_uart_line[40]; /* debug: last non-empty RX line (UI) */
+    uint32_t uart_rx_tick;   /* any Marauder line received */
+    uint16_t uart_line_count;
 
     /* WiFi parsed results */
     WifiAp wifi_aps[MAX_WIFI_APS];
@@ -295,6 +298,7 @@ static void marauder_send(App* app, const char* cmd) {
     if(!app->serial) return;
     furi_hal_serial_tx(app->serial, (const uint8_t*)cmd, strlen(cmd));
     furi_hal_serial_tx(app->serial, (const uint8_t*)"\n", 1);
+    furi_hal_serial_tx_wait_complete(app->serial);
 }
 
 static void clear_wifi_results(App* app) {
@@ -318,19 +322,40 @@ static void marauder_reset_results(App* app) {
     clear_ble_results(app);
 }
 
+static void clear_uart_lines(App* app) {
+    app->uart_line_tail = app->uart_line_head;
+}
+
 static void marauder_stop_scan(App* app) {
-    /* Companion uses "stopscan" on Back; menu "Shutdown" uses "stopscan -f". */
-    if(app->marauder_state == MarauderScanning) marauder_send(app, "stopscan");
+    /* Always poke stopscan when UART is up — leaves nmea/sniff cleanly. */
+    if(app->serial && app->marauder_state != MarauderNoDevice) {
+        marauder_send(app, MARAUDER_CMD_STOP);
+        furi_delay_ms(80);
+    }
     if(app->marauder_state != MarauderNoDevice) app->marauder_state = MarauderIdle;
 }
 
-static void marauder_start_scan(App* app, const char* command) {
+/* clear_results: true on manual OK / tab enter; false keeps table on soft restart */
+static void marauder_start_scan(App* app, const char* command, bool clear_results) {
+    if(!app->serial) return;
     marauder_stop_scan(app);
-    if(app->mode == SweepModeWifi) clear_wifi_results(app);
-    if(app->mode == SweepModeBle) clear_ble_results(app);
+    if(clear_results) {
+        if(app->mode == SweepModeWifi) clear_wifi_results(app);
+        if(app->mode == SweepModeBle) clear_ble_results(app);
+        clear_uart_lines(app);
+    }
     marauder_send(app, command);
     app->marauder_state = MarauderScanning;
     app->last_rescan_tick = furi_get_tick();
+}
+
+static void marauder_start_for_mode(App* app) {
+    if(!app->serial) return;
+    if(app->mode == SweepModeWifi) {
+        marauder_start_scan(app, MARAUDER_CMD_WIFI, true);
+    } else if(app->mode == SweepModeBle) {
+        marauder_start_scan(app, MARAUDER_CMD_BLE, true);
+    }
 }
 
 /* BFFB wiki: GPS is wired to the ESP32 only — not Flipper GPIO — so stock
@@ -366,10 +391,6 @@ static void update_gps_mode(App* app) {
         if(app->marauder_state != MarauderNoDevice) app->marauder_state = MarauderIdle;
     }
     app->gps_active = active;
-}
-
-static void clear_uart_lines(App* app) {
-    app->uart_line_tail = app->uart_line_head;
 }
 
 /* ================================================================== */
@@ -582,8 +603,11 @@ static bool parse_ble_line(App* app, const char* line) {
     }
     if(rssi_val > 0 || rssi_val < -120) return false;
 
-    /* Must have "Device:" or "Name:" to be a BLE line */
-    if(!strstr(line, "Device") && !strstr(line, "Name") && !strstr(line, "name")) {
+        /* Marauder: "Device:" / "Name:" — or bare MAC after RSSI */
+    char mac_early[18] = {0};
+    copy_mac(line, mac_early);
+    if(!strstr(line, "Device") && !strstr(line, "Name") && !strstr(line, "name") &&
+       mac_early[0] == '\0') {
         return false;
     }
 
@@ -591,6 +615,7 @@ static bool parse_ble_line(App* app, const char* line) {
     parse_device_name(line, name, sizeof(name));
     if(name[0] == '\0') parse_str_after(line, "Device", name, sizeof(name));
     if(name[0] == '\0') parse_str_after(line, "Name", name, sizeof(name));
+    if(name[0] == '\0' && mac_early[0]) strncpy(name, mac_early, sizeof(name) - 1);
     if(name[0] == '\0') snprintf(name, sizeof(name), "BLE_%d", app->ble_count);
 
     char mac[18] = {0};
@@ -647,6 +672,14 @@ static void process_uart_lines(App* app) {
             if(app->gps.nav_sentences != nav_sentences) app->gps_last_valid_tick = furi_get_tick();
         }
 
+        /* Any non-empty line proves BFFB UART is alive */
+        if(latest[0]) {
+            app->uart_rx_tick = furi_get_tick();
+            app->uart_line_count++;
+            strncpy(app->last_uart_line, latest, sizeof(app->last_uart_line) - 1);
+            app->last_uart_line[sizeof(app->last_uart_line) - 1] = '\0';
+        }
+
         if(latest[0] == '#' || latest[0] == '>') continue;
 
         if(strstr(latest, "not supported") || strstr(latest, "Index not in range")) {
@@ -663,7 +696,8 @@ static void process_uart_lines(App* app) {
                     }
                 }
                 app->wifi_last_scan_tick = furi_get_tick();
-                if(app->marauder_state == MarauderIdle) {
+                if(app->marauder_state == MarauderIdle ||
+                   app->marauder_state == MarauderError) {
                     app->marauder_state = MarauderScanning;
                 }
             }
@@ -676,7 +710,8 @@ static void process_uart_lines(App* app) {
                     }
                 }
                 app->ble_last_scan_tick = furi_get_tick();
-                if(app->marauder_state == MarauderIdle) {
+                if(app->marauder_state == MarauderIdle ||
+                   app->marauder_state == MarauderError) {
                     app->marauder_state = MarauderScanning;
                 }
             }
@@ -1302,6 +1337,13 @@ static void draw_wifi_tab(Canvas* canvas, App* app) {
     } else {
         canvas_set_font(canvas, FontSecondary);
         canvas_draw_str(canvas, 2, 26, "RSSI: --");
+        if(app->uart_rx_tick > 0) {
+            canvas_set_font(canvas, FontKeyboard);
+            canvas_draw_str(canvas, 2, 36, "UART ok, parse wait");
+        } else if(app->marauder_state == MarauderScanning) {
+            canvas_set_font(canvas, FontKeyboard);
+            canvas_draw_str(canvas, 2, 36, "sniffbeacon...");
+        }
     }
 
     /* Freshness */
@@ -1331,7 +1373,10 @@ static void draw_wifi_tab(Canvas* canvas, App* app) {
         shown++;
     }
 
-    /* Controls hint */
+    if(shown == 0 && app->last_uart_line[0]) {
+        canvas_draw_str(canvas, 2, 50, app->last_uart_line);
+    }
+
     if(app->marauder_state != MarauderScanning) {
         canvas_draw_str(canvas, 2, 63, "OK=scan");
     }
@@ -1375,6 +1420,13 @@ static void draw_ble_tab(Canvas* canvas, App* app) {
     } else {
         canvas_set_font(canvas, FontSecondary);
         canvas_draw_str(canvas, 2, 26, "RSSI: --");
+        if(app->uart_rx_tick > 0) {
+            canvas_set_font(canvas, FontKeyboard);
+            canvas_draw_str(canvas, 2, 36, "UART ok, parse wait");
+        } else if(app->marauder_state == MarauderScanning) {
+            canvas_set_font(canvas, FontKeyboard);
+            canvas_draw_str(canvas, 2, 36, "sniffbt...");
+        }
     }
 
     if(app->ble_last_scan_tick > 0) {
@@ -1401,6 +1453,10 @@ static void draw_ble_tab(Canvas* canvas, App* app) {
                  app->ble_devs[best].name, app->ble_devs[best].rssi);
         canvas_draw_str(canvas, 2, 43 + shown * 7, buf);
         shown++;
+    }
+
+    if(shown == 0 && app->last_uart_line[0]) {
+        canvas_draw_str(canvas, 2, 50, app->last_uart_line);
     }
 
     if(app->marauder_state != MarauderScanning) {
@@ -1800,15 +1856,13 @@ int32_t room_sweep_app(void* p) {
                     app->marauder_state = MarauderError;
                     app->last_rescan_tick = now;
                 }
-                if(app->auto_rescan && now - app->last_rescan_tick >= RESCAN_INTERVAL_MS) {
-                    if(app->mode == SweepModeWifi) {
-                        /* Current Marauder CLI: scanall (SCAN_ALL_CMD).
-                         * Legacy "scanap" was removed from CommandLine.h. */
-                        marauder_start_scan(app, "scanall");
-                    } else if(app->mode == SweepModeBle) {
-                        /* BT_SNIFF_CMD — companion Sniff → bt */
-                        marauder_start_scan(app, "sniffbt");
-                    }
+                /* Do NOT restart every 5s while Scanning — that wiped results.
+                 * Only auto-start when idle/error. */
+                if(app->auto_rescan &&
+                   (app->marauder_state == MarauderIdle ||
+                    app->marauder_state == MarauderError) &&
+                   now - app->last_rescan_tick >= RESCAN_INTERVAL_MS) {
+                    marauder_start_for_mode(app);
                 }
             }
 
@@ -1910,6 +1964,7 @@ int32_t room_sweep_app(void* p) {
                     marauder_stop_scan(app);
                     marauder_reset_results(app);
                     clear_uart_lines(app);
+                    app->last_uart_line[0] = '\0';
                     if(app->marauder_state != MarauderNoDevice)
                         app->marauder_state = MarauderIdle;
                 }
@@ -1920,6 +1975,7 @@ int32_t room_sweep_app(void* p) {
                 }
                 tx_preload_detected_frequency(app);
                 update_gps_mode(app);
+                marauder_start_for_mode(app);
             }
             continue;
         }
@@ -1947,11 +2003,14 @@ int32_t room_sweep_app(void* p) {
                     marauder_stop_scan(app);
                     marauder_reset_results(app);
                     clear_uart_lines(app);
+                    app->last_uart_line[0] = '\0';
                     if(app->marauder_state != MarauderNoDevice)
                         app->marauder_state = MarauderIdle;
                 }
                 tx_preload_detected_frequency(app);
                 update_gps_mode(app);
+                /* Entering WiFi/BLE starts Marauder immediately (no wait for OK). */
+                marauder_start_for_mode(app);
             }
         }
 
@@ -1988,12 +2047,10 @@ int32_t room_sweep_app(void* p) {
             }
         }
 
-        /* --- WiFi/BLE: OK starts Marauder scan (JCMK CLI names) --- */
-        if(event.key == InputKeyOk && app->mode == SweepModeWifi && app->serial) {
-            marauder_start_scan(app, "scanall");
-        }
-        if(event.key == InputKeyOk && app->mode == SweepModeBle && app->serial) {
-            marauder_start_scan(app, "sniffbt");
+        /* --- WiFi/BLE: OK restarts scan (sniffbeacon / sniffbt) --- */
+        if(event.key == InputKeyOk &&
+           (app->mode == SweepModeWifi || app->mode == SweepModeBle) && app->serial) {
+            marauder_start_for_mode(app);
         }
 
         /* --- GPS: OK sets/clears mark, or re-requests NMEA if waiting --- */

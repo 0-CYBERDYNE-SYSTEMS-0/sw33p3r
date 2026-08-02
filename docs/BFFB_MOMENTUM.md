@@ -35,7 +35,7 @@ From `esp32_marauder/CommandLine.h` + companion menu (current main):
 
 | App action | CLI | Notes |
 |------------|-----|--------|
-| WiFi scan | `scanall` | `SCAN_ALL_CMD` → `WIFI_SCAN_AP_STA`. **`scanap` is not in current CommandLine.h** (removed). Companion Scan menu: scanall / pingscan / arpscan |
+| WiFi AP meter | `sniffbeacon` | `SNIFF_BEACON_CMD` → `WIFI_SCAN_AP` — Serial prints `-RSSI Ch: n MAC ESSID:` (what Room Sweep parses). `scanall` is AP+STA; legacy `scanap` removed from CLI. |
 | BLE sniff | `sniffbt` | `BT_SNIFF_CMD` → `BT_SCAN_ALL`. Variants: `sniffbt -t airtag|flipper|flock|meta` |
 | Stop | `stopscan` | Companion Back. Force: `stopscan -f` |
 | GPS stream | `nmea` | Companion “NMEA Stream” → `WIFI_SCAN_GPS_NMEA` → `RunGPSNmea()` ~1 Hz |
