@@ -7,9 +7,13 @@ Scans every .c/.h in the app dir, extracts called furi_*/gui_*/canvas_*/etc.
 symbols, and reports any with status != '+'.
 """
 import csv, re, glob, os, sys
+from pathlib import Path
 
-CSV = "/Users/scrimwiggins/.ufbt/current/sdk_headers/f7_sdk/targets/f7/api_symbols.csv"
-APP_DIR = "/Users/scrimwiggins/flipper-room-sweep"
+APP_DIR = Path(__file__).resolve().parent
+CSV = Path(os.environ.get(
+    "UFBT_API_SYMBOLS",
+    Path.home() / ".ufbt/current/sdk_headers/f7_sdk/targets/f7/api_symbols.csv",
+))
 
 # Load export table: name -> status
 api = {}
@@ -42,7 +46,7 @@ CALL_RE = re.compile(
     r')\b'
 )
 
-files = sorted(glob.glob(os.path.join(APP_DIR, "*.c")) + glob.glob(os.path.join(APP_DIR, "*.h")))
+files = sorted(glob.glob(str(APP_DIR / "*.c")) + glob.glob(str(APP_DIR / "*.h")))
 files = [f for f in files if "test_nmea" not in f]
 
 all_called = {}

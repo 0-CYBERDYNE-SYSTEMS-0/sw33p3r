@@ -1,8 +1,11 @@
+import os
 import serial, time, subprocess, sys
+from pathlib import Path
 
-PORT = "/dev/cu.usbmodemflip_Rug1k01"
-APP_DIR = "/Users/scrimwiggins/flipper-room-sweep"
-UFBT = "/private/tmp/flipper-dev/bin/ufbt"
+PORT = os.environ.get("FLIPPER_PORT", "/dev/cu.usbmodemflip_Rug1k01")
+BAUD = int(os.environ.get("FLIPPER_BAUD", "230400"))
+APP_DIR = Path(__file__).resolve().parent
+UFBT = os.environ.get("UFBT_BIN", "ufbt")
 
 
 def safe_cmd(ser, cmd, timeout_s=3.0):
@@ -28,7 +31,7 @@ def open_with_retry(timeout=30):
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
-            s = serial.Serial(PORT, 115200, timeout=2)
+            s = serial.Serial(PORT, BAUD, timeout=2)
             time.sleep(0.4)
             s.reset_input_buffer()
             return s
@@ -39,7 +42,7 @@ def open_with_retry(timeout=30):
 
 # Launch the app (ufbt install + launch)
 print("=== ufbt launch room_sweep ===")
-r = subprocess.run([UFBT, "launch"], cwd=APP_DIR,
+r = subprocess.run([UFBT, "launch"], cwd=str(APP_DIR),
                    capture_output=True, text=True, timeout=120)
 print(r.stdout[-500:])
 if r.returncode != 0:

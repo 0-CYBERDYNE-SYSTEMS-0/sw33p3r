@@ -1,7 +1,7 @@
 # MISSION CONTRACT — Room Sweep v3.0.1
 
 **Owner:** scrimwiggins · **Date:** 2026-08-01
-**Status:** DEPLOYED — READY FOR FIELD TEST v2
+**Status:** DEVICE-QA VERIFIED — READY FOR USER FIELD TEST
 
 ## What this app does
 
@@ -54,6 +54,10 @@ TX NEVER activates on tab entry. Multiple deliberate actions required.
 - [x] Removed fake "done" markers — scans stream until stopscan
 - [x] User guide written (USER_GUIDE.md)
 - [x] QA audit: settings + input handler verified crash-safe
+- [x] Long Back exits from Settings; short Back closes Settings or disarms TX
+- [x] GPS freshness only follows navigation sentences, not telemetry-only traffic
+- [x] Invalid NMEA checksum characters are rejected
+- [x] WiFi/BLE scans show an error and recover when no result lines arrive for 30 seconds
 
 ## Control scheme
 
@@ -72,10 +76,13 @@ TX NEVER activates on tab entry. Multiple deliberate actions required.
 - [x] Dedicated TX tab with multi-step safety guardrails
 - [x] Sound/vibro feedback functional with force-volume messages
 - [x] WiFi/BLE RSSI parser and signal meters
-- [x] GPS stale-fix and GLL bounds bugs fixed (44/44 host tests pass)
+- [x] GPS stale-fix, navigation freshness, and GLL bounds bugs fixed (58/58 executable NMEA assertions pass)
 - [x] Info tab shows live state (no stale "passive RX only" text)
 - [x] Builds clean: API 87.1, target 7, zero warnings (-Werror)
 - [x] Deployed to device via USB
+- [x] Device traversal verified across all six tabs without a crash
+- [x] Settings short-close and long-exit paths verified with valid Press→Short/Long→Release input sequences
+- [x] Back-routing host checks pass (4/4 assertions)
 - [ ] Field test: audio audible near WiFi router / BLE devices
 - [ ] Field test: TX guardrails verified on device
 - [ ] Field test: band sweep detects known in-between signal

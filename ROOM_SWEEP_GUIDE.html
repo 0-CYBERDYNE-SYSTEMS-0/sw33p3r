@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ROOM SWEEP v1.0 — Field Manual</title>
+<title>ROOM SWEEP v3.0.1 — Field Manual</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -315,7 +315,7 @@
 
 <nav>
   <div class="wrap">
-    <div class="brand">ROOM<em>SWEEP</em> <span style="color:var(--dim)">v1.0</span></div>
+    <div class="brand">ROOM<em>SWEEP</em> <span style="color:var(--dim)">v3.0.1</span></div>
     <div class="links">
       <a href="#what">what it is</a>
       <a href="#arch">architecture</a>
@@ -335,25 +335,25 @@
   <div class="wrap">
     <div>
       <div class="kicker">Flipper Zero app · field manual</div>
-      <h1>ROOM SWEEP<br><span class="thin">wireless surveillance detector</span></h1>
+      <h1>ROOM SWEEP<br><span class="thin">wireless assessment tool</span></h1>
       <p class="tagline">
-        A passive, <b>receive-only</b> sweep tool that looks for hidden transmitters in a room
-        across <b>two independent sensing paths</b>: the Flipper's own sub-GHz radio, and an
+        A wireless assessment tool for your own property, with passive receive paths and a
+        separate, safety-gated transmit tab. It uses the Flipper's own sub-GHz radio and an
         external ESP32 running Marauder for WiFi &amp; Bluetooth.
       </p>
       <div class="chips">
         <div class="chip"><b>16</b> sub-GHz channels</div>
-        <div class="chip"><b>4</b> tabs</div>
+        <div class="chip"><b>6</b> tabs</div>
         <div class="chip"><b>304–925</b> MHz</div>
         <div class="chip"><b>115200</b> baud UART</div>
-        <div class="chip"><b>0</b> transmitters — RX only</div>
+        <div class="chip"><b>TX</b> safety-gated</div>
         <div class="chip">API <b>87.1</b></div>
       </div>
     </div>
     <div class="device rv">
       <div class="bezel">
         <div class="screen">
-          <div class="screen-tabbar"><span class="on"></span><span></span><span></span><span></span></div>
+          <div class="screen-tabbar"><span class="on"></span><span></span><span></span><span></span><span></span><span></span></div>
           <div class="screen-title">RF Sweep (Sub-GHz)</div>
           <div class="signal">SIGNAL!</div>
           <div class="rfbars" id="heroBars"></div>
@@ -379,9 +379,9 @@
       and trackers, and separately listens for WiFi access points and Bluetooth devices via an external radio.
     </p>
     <p class="lead">
-      It is <b>purely passive</b>. It never transmits on any radio. The CC1101 sub-GHz front-end is held in
-      receive, and the Marauder ESP32 is put in monitor/sniff mode. This matters legally and operationally —
-      a detector that transmits would itself be a bug.
+      RF Survey, Band Sweep, Peak Refine, WiFi, and BLE are receive/monitor paths. The dedicated TX tab is
+      separate, starts disarmed, and requires deliberate arm and transmit actions. Use it only on authorized
+      equipment and frequencies.
     </p>
 
     <div class="two" style="margin-top:26px">
@@ -395,7 +395,7 @@
         <h4><span class="dot" style="background:var(--wifi)"></span>Path B — Marauder over UART (external)</h4>
         <p>An ESP32 (the "BFFB" board) running Marauder firmware connects to the Flipper's USART at
         <b>115200 baud</b>. The app sends <code class="mono">scanap</code> (WiFi APs) or
-        <code class="mono">sniffbt</code> (BLE) and streams the last 5 result lines on screen.</p>
+        <code class="mono">sniffbt</code> (BLE) and parses the strongest three result entries on screen.</p>
       </div>
     </div>
 
@@ -417,14 +417,14 @@
 
     <h3>Hardware topology</h3>
     <div class="diagram rv">
-      <div class="dtitle">Physical layout · RX only, no transmit path</div>
+      <div class="dtitle">Physical layout · passive sensing paths + gated TX</div>
       <div class="topo">
         <div class="node flipper">
           <div class="nname">Flipper Zero</div>
           <div class="nsub">STM32WB55 · Momentum mntm-012</div>
           <ul>
             <li><b>CC1101</b> sub-GHz radio → Path A sweep</li>
-            <li><b>128×64</b> mono LCD · 4 tabs</li>
+            <li><b>128×64</b> mono LCD · 6 tabs</li>
             <li><b>D-pad + OK</b> → input queue</li>
             <li><b>USART1</b> (PC0&nbsp;TX / PC1&nbsp;RX) → ESP32</li>
             <li><b>Red LED</b> → signal alert</li>
@@ -467,7 +467,7 @@
           </div>
           <div class="layer thread">
             <div class="lname">UART ISR</div>
-            <div class="ldesc" style="font-size:12px">byte → line buffer → rolling 8 lines (no alloc in ISR)</div>
+            <div class="ldesc" style="font-size:12px">byte → bounded pending-line queue (no parsing in ISR)</div>
           </div>
           <div class="layer thread">
             <div class="lname">Main Loop</div>
@@ -476,7 +476,7 @@
         </div>
         <div class="layer render">
           <div class="lname">draw_cb()</div>
-          <div class="ldesc">dispatches to 4 tab renderers → 128×64 canvas · tab indicator strip</div>
+          <div class="ldesc">dispatches to 6 tab renderers → 128×64 canvas · tab indicator strip</div>
         </div>
       </div>
       <div class="legend">
@@ -489,8 +489,8 @@
 
     <div class="note">
       <b>Concurrency model:</b> three execution contexts share the <span class="mono">App</span> struct.
-      The RF thread writes <span class="mono">rssi[16]</span> under a mutex; the ISR appends UART lines;
-      the main loop only reads state to draw. Nothing blocks — the GUI tick is 100&nbsp;ms.
+      The RF thread writes <span class="mono">rssi[16]</span> under a mutex; the UART ISR only enqueues
+      bounded lines; the main loop parses UART data and drives redraw. Nothing blocks — the GUI tick is 100&nbsp;ms.
     </div>
   </div>
 </section>
@@ -530,12 +530,13 @@
       <div class="fstep"><div class="num">2</div><div class="body"><h4>Trigger a scan</h4>
         <p>Press <b>OK</b> on the WiFi tab → app sends <code>scanap\r\n</code>. On the BLE tab →
         <code>sniffbt\r\n</code>. State flips to <span style="color:var(--wifi)">Scanning…</span>.</p></div></div>
-      <div class="fstep"><div class="num">3</div><div class="body"><h4>ISR assembles lines</h4>
+      <div class="fstep"><div class="num">3</div><div class="body"><h4>ISR queues complete lines</h4>
         <p>Each byte is appended to a 128-char line buffer in the interrupt handler (no allocation).
-        On <code>\r</code>/<code>\n</code> the line is shifted into a rolling window of the <b>8 most recent</b>.</p></div></div>
-      <div class="fstep"><div class="num">4</div><div class="body"><h4>Screen shows last 5</h4>
-        <p>The WiFi/BLE renderer draws the newest 5 lines in a small keyboard font. Marauder output such as
-        <span class="mono" style="color:var(--wifi)">AP: SSID Ch -60 …</span> scrolls in from the top.</p></div></div>
+        Complete lines enter a bounded pending queue; parsing stays in the main loop.</p></div></div>
+      <div class="fstep"><div class="num">4</div><div class="body"><h4>Screen shows parsed results</h4>
+        <p>The WiFi/BLE renderer parses RSSI, identity, channel, and MAC data, then shows the three strongest
+        entries. Marauder output such as <span class="mono" style="color:var(--wifi)">AP: SSID Ch -60 …</span>
+        becomes structured state.</p></div></div>
       <div class="fstep"><div class="num">5</div><div class="body"><h4>Teardown restores the bus</h4>
         <p>On exit: async RX stopped, USART deinitialised and released, expansion module re-enabled — so other
         GPIO apps work again afterwards.</p></div></div>
@@ -558,7 +559,7 @@
           <h4>Power on &amp; launch</h4>
           <div class="act">From the Flipper home screen: <b>Apps → Tools → Room Sweep</b> (or deploy over USB
           with <code class="mono">ufbt launch</code>, which installs and opens it for you).</div>
-          <div class="see"><b>You'll see:</b> a fullscreen view. The <b>RF Sweep</b> tab is active by default
+          <div class="see"><b>You'll see:</b> a fullscreen view. The <b>RF Survey</b> tab is active by default
           and the bar chart is already moving — sweeping starts the instant the app opens, no button press needed.</div>
         </div>
       </div>
@@ -589,10 +590,10 @@
         <div class="jno"></div>
         <div>
           <h4>Switch tabs</h4>
-          <div class="act">Press <b>◀ / ▶</b> to cycle RF → WiFi → BLE → Info and wrap around. The little strip at
+          <div class="act">Press <b>◀ / ▶</b> to cycle RF → WiFi → BLE → GPS → TX → Info and wrap around. The little strip at
           the very top shows which tab is active (filled = current).</div>
           <div class="see"><b>You'll see:</b> the WiFi and BLE tabs. With no BFFB attached they show the
-          "BFFB not connected" message (see <a href="#expect">what to expect</a> for the exact condition).</div>
+          UART state as <span class="mono">Idle</span> when the Flipper owns the port (see <a href="#expect">what to expect</a>).</div>
         </div>
       </div>
 
@@ -600,10 +601,10 @@
         <div class="jno"></div>
         <div>
           <h4>Check the Info tab</h4>
-          <div class="act">The last tab is a static reference card: version, frequency range, the BFFB requirement,
-          and the legal reminder (own property only, passive RX).</div>
-          <div class="see"><b>You'll see:</b> <span class="mono">Room Sweep v1.0 · RF: 16ch ISM sweep 304-925M ·
-          No TX. Passive RX only.</span></div>
+          <div class="act">The last tab is a live status card: version, tab/mode count, UART state, feedback state,
+          TX state, API version, and the legal reminder.</div>
+          <div class="see"><b>You'll see:</b> <span class="mono">Room Sweep v3.0.1 · RF: 16ch ISM sweep 304-925M ·
+          TX: disarmed · API 87.1</span></div>
         </div>
       </div>
 
@@ -625,7 +626,7 @@
           <div class="act">On the WiFi tab press <b>OK</b>. The app sends <code class="mono">scanap</code> and
           the status changes to <span class="mono">Scanning…</span>.</div>
           <div class="see"><b>You'll see:</b> Marauder result lines scroll in from the top, e.g.
-          <span class="mono">AP: <b>YourNetwork</b> Ch:6 RSSI:-52 MAC:aa:bb:…</span>. Only the newest 5 are shown.</div>
+          <span class="mono">AP: <b>YourNetwork</b> Ch:6 RSSI:-52 MAC:aa:bb:…</span>. The three strongest parsed entries are shown.</div>
         </div>
       </div>
 
@@ -634,8 +635,8 @@
         <div>
           <h4>Run a BLE sniff, then exit</h4>
           <div class="act">Move to the BLE tab and press <b>OK</b> to send <code class="mono">sniffbt</code>.
-          When done, press <b>Back</b>. The app stops the RF thread, releases the UART, re-enables the expansion
-          module, and returns to the app list.</div>
+          When done, use <b>Short Back</b> for Settings or <b>Long Back</b> to exit. On exit the app stops the RF
+          thread, releases the UART, re-enables the expansion module, and returns to the app list.</div>
           <div class="see"><b>You'll see:</b> BLE advertisements (MACs / names) scrolling. After exit, the red LED
           is cleared and other GPIO apps work normally again.</div>
         </div>
@@ -651,14 +652,16 @@
     <h2>Controls reference</h2>
     <table>
       <tr><th>Input</th><th>Action</th><th>Scope / notes</th></tr>
-      <tr><td><b>◀ / ▶</b></td><td>Switch tab (wraps around)</td><td>RF → WiFi → BLE → Info. Clears the line buffer and resets scan state when switching.</td></tr>
-      <tr><td><b>OK</b></td><td>Start scan</td><td>Only on the <b>WiFi</b> (<code>scanap</code>) and <b>BLE</b> (<code>sniffbt</code>) tabs, and only when the UART is open. Does nothing on RF/Info tabs.</td></tr>
-      <tr><td><b>Back</b></td><td>Exit</td><td>Full teardown: RF thread joined, UART released, expansion re-enabled, LEDs reset.</td></tr>
-      <tr><td><b>▲ / ▼</b></td><td>—</td><td>Currently unused.</td></tr>
+      <tr><td><b>◀ / ▶</b></td><td>Switch tab</td><td>RF → WiFi → BLE → GPS → TX → Info. Long Left/Right in idle RF Sweep selects the band.</td></tr>
+      <tr><td><b>OK</b></td><td>Context action</td><td>Starts/cancels RF sweeps, starts WiFi/BLE scans, arms TX, or toggles a Settings item.</td></tr>
+      <tr><td><b>Long OK</b></td><td>Transmit</td><td>Only on the TX tab after the explicit ARMED state; duration is bounded by Settings.</td></tr>
+      <tr><td><b>Short Back</b></td><td>Settings / disarm / close</td><td>Opens Settings, disarms TX, or closes Settings.</td></tr>
+      <tr><td><b>Long Back</b></td><td>Exit</td><td>Exits from every tab and from Settings after full teardown.</td></tr>
+      <tr><td><b>▲ / ▼</b></td><td>Context action</td><td>RF sub-mode, Sound/Vibro toggle, TX frequency, or Settings selection.</td></tr>
     </table>
     <div class="note">
-      <b>RF sweep has no start/stop control</b> — it runs continuously from launch to exit. That is by design:
-      a bug detector should always be listening while it's open.
+      <b>RF Survey runs continuously.</b> Band Sweep and Peak Refine start and cancel with OK; the RF thread
+      remains serialized with the safety-gated TX path.
     </div>
   </div>
 </section>
@@ -689,7 +692,12 @@
       <tr>
         <td><b>UART acquisition fails</b> (another app/expansion holds it)</td>
         <td>Unchanged.</td>
-        <td><span class="mono">BFFB not connected</span> placeholder.</td>
+        <td><span class="mono">No UART</span> state; acquisition is unavailable.</td>
+      </tr>
+      <tr>
+        <td><b>Scan stays silent for 30 seconds</b></td>
+        <td>Unchanged.</td>
+        <td><span class="mono">ERR</span> appears and the scan is stopped. With Auto-Rescan enabled, the app retries after the rescan interval.</td>
       </tr>
     </table>
 
@@ -738,7 +746,7 @@
       <tr><td>Channel list is fixed</td><td>16 hard-coded ISM/surveillance frequencies (304–925&nbsp;MHz). You can't add channels from the UI — edit <code>room_sweep.h</code> and rebuild.</td></tr>
       <tr><td>CC1101 band gaps</td><td>The chip only covers <b>300–348 / 387–464 / 779–928&nbsp;MHz</b>. Two original channels (350&nbsp;&amp;&nbsp;470&nbsp;MHz) sat in dead gaps and were removed — every channel on the chart is physically receivable.</td></tr>
       <tr><td>No BFFB presence detection</td><td>App can't tell if the ESP32 is physically there — only whether it owns the UART. Watch for actual result lines.</td></tr>
-      <tr><td>Only last 5 lines shown</td><td>Marauder output scrolls fast; the screen keeps 8, shows 5. Long sessions are better monitored over USB serial on the host.</td></tr>
+      <tr><td>Only top 3 entries shown</td><td>Marauder output is parsed into bounded WiFi/BLE tables; the screen shows the three strongest entries.</td></tr>
       <tr><td>No demodulation</td><td>The RF chart measures <i>energy</i>, not content. It won't decode what a bug is saying.</td></tr>
       <tr><td>WiFi/BLE scan needs OK each time</td><td>Switching tabs resets scan state; re-press OK to resume after tabbing away.</td></tr>
     </table>
@@ -772,8 +780,9 @@
       This tool is a detector for <b>your</b> rooms, <b>your</b> lab.
     </div>
     <ul style="color:var(--muted);padding-left:20px;max-width:72ch">
-      <li style="margin-bottom:8px"><b style="color:var(--text)">It never transmits.</b> Both radios stay in receive.
-        This keeps you clear of FCC Part 15 transmit rules and means the detector can't reveal itself.</li>
+      <li style="margin-bottom:8px"><b style="color:var(--text)">TX is separate and gated.</b> It starts disarmed,
+        requires OK to arm and Long-OK to transmit, is time-bounded, and can be disarmed with Back. Use only on
+        your own equipment and within applicable rules.</li>
       <li style="margin-bottom:8px"><b style="color:var(--text)">It captures metadata, not content.</b> Marauder in
         this configuration reports SSIDs, MACs, channels, and RSSI — it does not crack handshakes or read traffic.</li>
       <li><b style="color:var(--text)">Findings stay private.</b> If you sweep a shared/rented space, you may learn
@@ -787,19 +796,18 @@
   <div class="wrap">
     <div class="secnum">09</div>
     <h2>Build &amp; deploy</h2>
-    <p class="lead">Uses <span class="mono">ufbt</span> (micro Flipper Build Tool) against the Momentum SDK.
-    The toolchain venv lives at <span class="mono">/tmp/flipper-dev</span>.</p>
+    <p class="lead">Uses the installed <span class="mono">ufbt</span> (micro Flipper Build Tool) against the Momentum SDK.</p>
 <pre><code><span class="cap">shell</span><span class="c"># from the project root</span>
-cd /Users/scrimwiggins/flipper-room-sweep
-source /tmp/flipper-dev/bin/activate
+cd /Users/scrimwiggins/sw33p3r
 
 <span class="g">ufbt</span>          <span class="c"># build  → dist/room_sweep.fap  (API 87.1, zero warnings)</span>
 <span class="g">ufbt launch</span>   <span class="c"># install to /ext/apps/Tools/ + open on device</span></code></pre>
     <div class="note">
       <b>Deploy gotcha:</b> Room Sweep is a <b>fullscreen</b> app, so while it's running the CLI can't close it
       with <span class="mono">loader close</span> and <span class="mono">ufbt launch</span> fails with
-      "has to be closed manually." To redeploy while it's open, send a Back button press first:
-      <span class="mono">input send back short</span>, then <span class="mono">ufbt launch</span>.
+      "has to be closed manually." To redeploy while it's open, send the complete
+      <span class="mono">input send back press</span> → <span class="mono">long</span> →
+      <span class="mono">release</span> sequence, then rerun <span class="mono">ufbt launch</span>.
     </div>
     <p class="lead">To change the swept channels or the alert threshold, edit
     <code>room_sweep.h</code> (<span class="mono">rf_channels[]</span> and
@@ -823,7 +831,7 @@ source /tmp/flipper-dev/bin/activate
       <tr><td>Alert threshold</td><td>−75 dBm (average)</td></tr>
       <tr><td>RSSI display map</td><td>−100 → −30 dBm mapped to 0 → 48 px bar height</td></tr>
       <tr><td>UART</td><td>USART1 · PC0 TX / PC1 RX · 115200 baud · \r\n framing</td></tr>
-      <tr><td>UART buffer</td><td>8 lines × 128 chars rolling window · 5 shown</td></tr>
+      <tr><td>UART buffer</td><td>8 pending lines × 128 chars · top 3 parsed entries shown</td></tr>
       <tr><td>Marauder commands</td><td><code>scanap</code> (WiFi APs) · <code>sniffbt</code> (BLE)</td></tr>
       <tr><td>GUI</td><td>Fullscreen ViewPort · 128×64 · 100 ms redraw tick · input queue 4</td></tr>
     </table>
@@ -832,7 +840,7 @@ source /tmp/flipper-dev/bin/activate
 
 <footer>
   <div class="wrap">
-    <span class="mono">ROOM SWEEP v1.0</span> · passive receive-only surveillance detector ·
+    <span class="mono">ROOM SWEEP v3.0.1</span> · wireless assessment tool with safety-gated TX ·
     Flipper Zero + BFFB ESP32 (Marauder) · built with ufbt against Momentum API 87.1.<br>
     Guide generated from the deployed source (<span class="mono">room_sweep.c</span> / <span class="mono">room_sweep.h</span>).
     Verify on hardware before trusting any screen state.

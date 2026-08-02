@@ -1,4 +1,4 @@
-# Room Sweep v3.0 — Complete User Guide
+# Room Sweep v3.0.1 — Complete User Guide
 
 ## Quick Start
 
@@ -24,8 +24,8 @@ The RF tab has **3 sub-modes** (cycle with **Up ▲ / Down ▼**):
 - **No button action needed** — runs automatically
 
 #### [SWEEP] — Coarse Band Sweep
-- **Up/Down** (when idle): select band (300-348 / 387-464 / 779-928 MHz)
-- **Left/Right** (when idle): also selects band
+- **Long Left/Right** (when idle): select band (300-348 / 387-464 / 779-928 MHz)
+- **Short Left/Right**: switch tabs
 - **OK**: starts sweep (progress bar + current frequency + peak hold)
 - **OK** (while running): cancels sweep
 - After sweep: shows peak frequency and RSSI
@@ -42,12 +42,15 @@ The RF tab has **3 sub-modes** (cycle with **Up ▲ / Down ▼**):
 
 ### 2. WiFi Tab — Access Point Scanner
 
-**Requires:** BFFB ESP32 connected via UART. Without it: "No BFFB device."
+**Requires:** BFFB ESP32 with Marauder connected via UART. The app can acquire the
+Flipper UART even when the board is absent, so actual scan result lines confirm the
+board is responding.
 
 - **Primary display:** Strongest AP RSSI (dBm) + meter bar + AP count + freshness
 - **Secondary:** Top 3 APs sorted by signal (SSID + RSSI)
 - **OK**: manually trigger scan
 - **Auto-rescan:** every 5 seconds (configurable in Settings)
+- **No response:** shows `ERR` after 30 seconds without Marauder result lines
 - **Up ▲**: toggle Sound ON/OFF (test beep confirms)
 - **Down ▼**: toggle Vibro ON/OFF (test buzz confirms)
 
@@ -57,12 +60,14 @@ When Sound is ON: Geiger clicks speed up as you move toward access points.
 
 ### 3. BLE Tab — Bluetooth Device Scanner
 
-**Requires:** BFFB ESP32 connected via UART.
+**Requires:** BFFB ESP32 with Marauder connected via UART. Actual scan result lines
+confirm that the board is responding.
 
 - **Primary display:** Strongest device RSSI + meter bar + device count + freshness
 - **Secondary:** Top 3 BLE devices (name + RSSI)
 - **OK**: manually trigger sniff
 - **Auto-rescan:** every 5 seconds
+- **No response:** shows `ERR` after 30 seconds without Marauder result lines
 - **Up ▲ / Down ▼**: Sound / Vibro toggle (same as WiFi)
 
 ---
@@ -71,8 +76,8 @@ When Sound is ON: Geiger clicks speed up as you move toward access points.
 
 **Requires:** BFFB ESP32 with GPS module.
 
-- Shows: fix state (3D FIX / NO FIX), UTC time, date, satellites, lat/lon
-- Fully passive — no buttons needed, just watches NMEA data
+- Shows: fix state (3D FIX / NO FIX / STALE), UTC time, date, satellites, lat/lon
+- Fully passive — no buttons needed, just watches navigation NMEA data
 - Sentence counter (bottom-right) confirms data is flowing
 - **Up ▲ / Down ▼**: Sound / Vibro toggle
 
@@ -104,16 +109,16 @@ When Sound is ON: Geiger clicks speed up as you move toward access points.
 - **Auto-disarms** when timer expires
 - No user input can extend transmission
 
-**Signal → TX flow:** When RF Survey/Sweep detects a signal above threshold, that frequency is stored. Switching to TX tab shows it as "Signal: XXX.XX MHz" — the TX frequency presets include common bands so you can match it.
+**Signal → TX flow:** When RF Survey/Sweep detects a signal above threshold, that exact frequency is stored and pre-loaded when you enter TX. Up/Down while armed selects one of the six presets; the stored signal remains shown separately.
 
 ---
 
 ### 6. Info Tab — Live Status Card
 
 Shows (always current, never stale):
-- App version (v3.0)
+- App version (v3.0.1)
 - Tab count and RF sub-modes
-- UART connection state (connected / no device)
+- UART connection state (acquired / no device)
 - Sound and Vibro actual state (ON/off)
 - TX state (disarmed / ARMED / ACTIVE)
 - Legal notice
@@ -133,7 +138,8 @@ Shows (always current, never stale):
 **Navigation:**
 - **Up ▲ / Down ▼**: Move selection
 - **OK**: Toggle/change selected item
-- **Back**: Close settings
+- **Short Back**: Close settings
+- **Long Back**: Exit the app
 
 ---
 
@@ -182,7 +188,7 @@ Shows (always current, never stale):
 | **OK** | Start sweep | Start scan | Arm TX | Toggle item |
 | **Long OK** | — | — | TRANSMIT | — |
 | **Short Back** | Settings | Settings | Disarm/Settings | Close |
-| **Long Back** | EXIT APP | EXIT APP | EXIT APP | — |
+| **Long Back** | EXIT APP | EXIT APP | EXIT APP | EXIT APP |
 
 ---
 
@@ -205,7 +211,7 @@ Shows (always current, never stale):
 | Symptom | Cause | Fix |
 |---------|-------|-----|
 | No sound after enabling | Global Flipper volume at 0 | App forces volume — should work. Check speaker isn't physically blocked. |
-| WiFi shows "No BFFB device" | ESP32 not connected | Plug in BFFB via UART (PC0/PC1) |
+| WiFi shows "No UART" | USART unavailable | Release the UART from another app, then plug in BFFB via UART (PC0/PC1) |
 | WiFi shows data but no RSSI | Parser format mismatch | Capture serial output, report for parser update |
 | TX won't transmit | Still DISARMED | Press OK to arm first, then Long-OK |
 | Settings "crashes" | Was InputTypePress bug | Fixed in v3.0.1 — update |

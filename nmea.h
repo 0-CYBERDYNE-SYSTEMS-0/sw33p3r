@@ -39,6 +39,7 @@ typedef struct {
 
     /* bookkeeping */
     uint32_t sentences;  // valid checksummed sentences seen
+    uint32_t nav_sentences;
     uint32_t rx_bytes;   // total bytes fed in
 } GpsFix;
 

@@ -12,11 +12,11 @@ static char s_buf[SENT_BUF_MAX];
 static uint8_t s_pos;
 static bool s_in_sentence;
 
-static uint8_t hex2nib(char c) {
-    if(c >= '0' && c <= '9') return (uint8_t)(c - '0');
-    if(c >= 'A' && c <= 'F') return (uint8_t)(c - 'A' + 10);
-    if(c >= 'a' && c <= 'f') return (uint8_t)(c - 'a' + 10);
-    return 0;
+static int hex2nib(char c) {
+    if(c >= '0' && c <= '9') return c - '0';
+    if(c >= 'A' && c <= 'F') return c - 'A' + 10;
+    if(c >= 'a' && c <= 'f') return c - 'a' + 10;
+    return -1;
 }
 
 uint8_t nmea_checksum(const char* body) {
@@ -48,26 +48,132 @@ static int split_fields(char* s, char** fields, int max_fields) {
     return n;
 }
 
-/* Parse NMEA latitude "ddmm.mmmm" + hemisphere into decimal degrees. */
-static float parse_lat(const char* v, const char* hemi) {
-    if(!v[0]) return 0.0f;
-    float raw = strtof(v, NULL);
-    int deg = (int)(raw / 100.0f);
-    float min = raw - deg * 100.0f;
-    float dd = deg + min / 60.0f;
-    if(hemi[0] == 'S' || hemi[0] == 's') dd = -dd;
-    return dd;
+static bool parse_uint_field(const char* value, uint16_t min, uint16_t max, uint16_t* out) {
+    if(!value[0]) return false;
+    uint32_t parsed = 0;
+    for(const char* p = value; *p; p++) {
+        if(*p < '0' || *p > '9') return false;
+        parsed = parsed * 10U + (uint32_t)(*p - '0');
+        if(parsed > max) return false;
+    }
+    if(parsed < min) return false;
+    *out = (uint16_t)parsed;
+    return true;
 }
 
-/* Parse NMEA longitude "dddmm.mmmm" + hemisphere into decimal degrees. */
-static float parse_lon(const char* v, const char* hemi) {
-    if(!v[0]) return 0.0f;
-    float raw = strtof(v, NULL);
+static bool parse_fixed_uint(
+    const char* value,
+    size_t length,
+    uint16_t min,
+    uint16_t max,
+    uint16_t* out) {
+    uint32_t parsed = 0;
+    for(size_t i = 0; i < length; i++) {
+        if(value[i] < '0' || value[i] > '9') return false;
+        parsed = parsed * 10U + (uint32_t)(value[i] - '0');
+    }
+    if(parsed < min || parsed > max) return false;
+    *out = (uint16_t)parsed;
+    return true;
+}
+
+static bool parse_time(const char* value, uint8_t* hour, uint8_t* minute, uint8_t* second) {
+    size_t length = strlen(value);
+    if(length < 6) return false;
+    if(length > 6) {
+        if(value[6] != '.' || length == 7) return false;
+        for(size_t i = 7; i < length; i++) {
+            if(value[i] < '0' || value[i] > '9') return false;
+        }
+    }
+    uint16_t h;
+    uint16_t m;
+    uint16_t s;
+    if(!parse_fixed_uint(value, 2, 0, 23, &h) ||
+       !parse_fixed_uint(value + 2, 2, 0, 59, &m) ||
+       !parse_fixed_uint(value + 4, 2, 0, 60, &s)) {
+        return false;
+    }
+    *hour = (uint8_t)h;
+    *minute = (uint8_t)m;
+    *second = (uint8_t)s;
+    return true;
+}
+
+static bool valid_date(uint16_t year, uint16_t month, uint16_t day) {
+    if(month < 1 || month > 12) return false;
+    uint16_t days = 31;
+    if(month == 4 || month == 6 || month == 9 || month == 11) days = 30;
+    if(month == 2) {
+        bool leap = (year % 4 == 0) && ((year % 100 != 0) || (year % 400 == 0));
+        days = leap ? 29 : 28;
+    }
+    return day >= 1 && day <= days;
+}
+
+static bool parse_rmc_date(const char* value, uint16_t* year, uint8_t* month, uint8_t* day) {
+    if(strlen(value) != 6) return false;
+    uint16_t yy;
+    uint16_t mm;
+    uint16_t dd;
+    if(!parse_fixed_uint(value, 2, 1, 31, &dd) ||
+       !parse_fixed_uint(value + 2, 2, 1, 12, &mm) ||
+       !parse_fixed_uint(value + 4, 2, 0, 99, &yy)) {
+        return false;
+    }
+    uint16_t full_year = (uint16_t)(2000 + yy);
+    if(!valid_date(full_year, mm, dd)) return false;
+    *year = full_year;
+    *month = (uint8_t)mm;
+    *day = (uint8_t)dd;
+    return true;
+}
+
+static bool parse_float_field(const char* value, float min, float max, float* out) {
+    if(!value[0]) {
+        *out = 0.0f;
+        return true;
+    }
+    char* end;
+    float parsed = strtof(value, &end);
+    if(end == value || *end != '\0' || parsed != parsed || parsed < min || parsed > max) {
+        return false;
+    }
+    *out = parsed;
+    return true;
+}
+
+static bool parse_coordinate(const char* v, const char* hemi, bool longitude, float* out) {
+    if(!v[0] || !hemi[0]) return false;
+    char* end;
+    float raw = strtof(v, &end);
+    float max_raw = longitude ? 18000.0f : 9000.0f;
+    if(end == v || *end != '\0' || raw != raw || raw < 0.0f || raw > max_raw) return false;
+
     int deg = (int)(raw / 100.0f);
     float min = raw - deg * 100.0f;
-    float dd = deg + min / 60.0f;
-    if(hemi[0] == 'W' || hemi[0] == 'w') dd = -dd;
-    return dd;
+    int max_deg = longitude ? 180 : 90;
+    if(min >= 60.0f || (deg == max_deg && min > 0.0f)) return false;
+    if(longitude) {
+        if(hemi[0] != 'E' && hemi[0] != 'e' && hemi[0] != 'W' && hemi[0] != 'w') return false;
+    } else if(hemi[0] != 'N' && hemi[0] != 'n' && hemi[0] != 'S' && hemi[0] != 's') {
+        return false;
+    }
+
+    *out = deg + min / 60.0f;
+    if((longitude && (hemi[0] == 'W' || hemi[0] == 'w')) ||
+       (!longitude && (hemi[0] == 'S' || hemi[0] == 's'))) {
+        *out = -*out;
+    }
+    return true;
+}
+
+static bool parse_lat(const char* v, const char* hemi, float* out) {
+    return parse_coordinate(v, hemi, false, out);
+}
+
+static bool parse_lon(const char* v, const char* hemi, float* out) {
+    return parse_coordinate(v, hemi, true, out);
 }
 
 /* Process one complete, checksum-verified sentence (no trailing CR/LF). */
@@ -86,56 +192,91 @@ static void process_sentence(GpsFix* fix, char* sent) {
     if(strcmp(type, "GGA") == 0) {
         /* $--GGA,time,lat,N,lon,E,quality,nsats,hdop,alt,M,geoid,M,,*cs */
         if(nf >= 10) {
-            const char* t = fields[1];
-            if(strlen(t) >= 6) {
-                fix->hour = (uint8_t)((t[0] - '0') * 10 + (t[1] - '0'));
-                fix->minute = (uint8_t)((t[2] - '0') * 10 + (t[3] - '0'));
-                fix->second = (uint8_t)((t[4] - '0') * 10 + (t[5] - '0'));
+            uint16_t q;
+            uint16_t sats;
+            if(!parse_uint_field(fields[6], 0, 8, &q) ||
+               !parse_uint_field(fields[7], 0, 99, &sats)) {
+                return;
+            }
+            uint8_t hour;
+            uint8_t minute;
+            uint8_t second;
+            bool has_time = !fields[1][0] || parse_time(fields[1], &hour, &minute, &second);
+            if(!has_time) return;
+            fix->nav_sentences++;
+            if(fields[1][0]) {
+                fix->hour = hour;
+                fix->minute = minute;
+                fix->second = second;
                 fix->has_time = true;
             }
-            uint8_t q = (uint8_t)atoi(fields[6]);
-            fix->fix_quality = q;
-            fix->sats = (uint8_t)atoi(fields[7]);
-            if(q > 0 && fields[2][0] && fields[4][0]) {
-                fix->latitude = parse_lat(fields[2], fields[3]);
-                fix->longitude = parse_lon(fields[4], fields[5]);
+            fix->fix_quality = (uint8_t)q;
+            fix->sats = (uint8_t)sats;
+            float latitude;
+            float longitude;
+            if(q > 0 && parse_lat(fields[2], fields[3], &latitude) &&
+               parse_lon(fields[4], fields[5], &longitude)) {
+                fix->latitude = latitude;
+                fix->longitude = longitude;
                 fix->has_pos = true;
                 fix->has_fix = true;
             } else {
-                fix->has_fix = false;
+                fix->has_fix = q > 0;
                 fix->has_pos = false;
             }
         }
     } else if(strcmp(type, "RMC") == 0) {
         /* $--RMC,time,status,lat,N,lon,E,speed,course,date,...*cs */
-        if(nf >= 9) {
-            const char* t = fields[1];
-            if(strlen(t) >= 6) {
-                fix->hour = (uint8_t)((t[0] - '0') * 10 + (t[1] - '0'));
-                fix->minute = (uint8_t)((t[2] - '0') * 10 + (t[3] - '0'));
-                fix->second = (uint8_t)((t[4] - '0') * 10 + (t[5] - '0'));
+        if(nf >= 10) {
+            if(fields[2][0] != 'A' && fields[2][0] != 'V') return;
+            float speed;
+            float course;
+            if(!parse_float_field(fields[7], 0.0f, 1000.0f, &speed) ||
+               !parse_float_field(fields[8], 0.0f, 360.0f, &course)) {
+                return;
+            }
+            uint16_t date_year = 0;
+            uint8_t date_month = 0;
+            uint8_t date_day = 0;
+            bool has_date = false;
+            if(fields[9][0]) {
+                if(!parse_rmc_date(fields[9], &date_year, &date_month, &date_day)) return;
+                has_date = true;
+            }
+            uint8_t hour;
+            uint8_t minute;
+            uint8_t second;
+            bool has_time = !fields[1][0] || parse_time(fields[1], &hour, &minute, &second);
+            if(!has_time) return;
+            fix->nav_sentences++;
+            if(fields[1][0]) {
+                fix->hour = hour;
+                fix->minute = minute;
+                fix->second = second;
                 fix->has_time = true;
             }
             bool active = (fields[2][0] == 'A');
             if(active) {
                 fix->has_fix = true;
+                fix->has_pos = false;
             } else {
                 fix->has_fix = false;
                 fix->has_pos = false;
             }
-            if(active && fields[3][0] && fields[5][0]) {
-                fix->latitude = parse_lat(fields[3], fields[4]);
-                fix->longitude = parse_lon(fields[5], fields[6]);
+            float latitude;
+            float longitude;
+            if(active && parse_lat(fields[3], fields[4], &latitude) &&
+               parse_lon(fields[5], fields[6], &longitude)) {
+                fix->latitude = latitude;
+                fix->longitude = longitude;
                 fix->has_pos = true;
             }
-            if(fields[7][0]) fix->speed_kts = strtof(fields[7], NULL);
-            if(fields[8][0]) fix->course = strtof(fields[8], NULL);
-            /* RMC date: ddmmyy */
-            const char* d = fields[9];
-            if(strlen(d) >= 6) {
-                fix->day = (uint8_t)((d[0] - '0') * 10 + (d[1] - '0'));
-                fix->month = (uint8_t)((d[2] - '0') * 10 + (d[3] - '0'));
-                fix->year = (uint16_t)(2000 + (d[4] - '0') * 10 + (d[5] - '0'));
+            fix->speed_kts = speed;
+            fix->course = course;
+            if(has_date) {
+                fix->day = date_day;
+                fix->month = date_month;
+                fix->year = date_year;
                 fix->has_date = true;
             }
         }
@@ -143,17 +284,26 @@ static void process_sentence(GpsFix* fix, char* sent) {
         /* $--GLL,lat,N,lon,E,time,status,mode*cs
          * Broadcast every second even with no fix — gives us time. */
         if(nf >= 7) {
-            const char* t = fields[5];
-            if(strlen(t) >= 6) {
-                fix->hour = (uint8_t)((t[0] - '0') * 10 + (t[1] - '0'));
-                fix->minute = (uint8_t)((t[2] - '0') * 10 + (t[3] - '0'));
-                fix->second = (uint8_t)((t[4] - '0') * 10 + (t[5] - '0'));
+            if(fields[6][0] != 'A' && fields[6][0] != 'V') return;
+            uint8_t hour;
+            uint8_t minute;
+            uint8_t second;
+            bool has_time = !fields[5][0] || parse_time(fields[5], &hour, &minute, &second);
+            if(!has_time) return;
+            fix->nav_sentences++;
+            if(fields[5][0]) {
+                fix->hour = hour;
+                fix->minute = minute;
+                fix->second = second;
                 fix->has_time = true;
             }
             bool active = (fields[6][0] == 'A');
-            if(active && fields[1][0] && fields[3][0]) {
-                fix->latitude = parse_lat(fields[1], fields[2]);
-                fix->longitude = parse_lon(fields[3], fields[4]);
+            float latitude;
+            float longitude;
+            if(active && parse_lat(fields[1], fields[2], &latitude) &&
+               parse_lon(fields[3], fields[4], &longitude)) {
+                fix->latitude = latitude;
+                fix->longitude = longitude;
                 fix->has_pos = true;
                 fix->has_fix = true;
             } else {
@@ -164,25 +314,41 @@ static void process_sentence(GpsFix* fix, char* sent) {
     } else if(strcmp(type, "ZDA") == 0) {
         /* $--ZDA,time,day,month,year,local_h,local_m*cs */
         if(nf >= 5) {
-            const char* t = fields[1];
-            if(strlen(t) >= 6) {
-                fix->hour = (uint8_t)((t[0] - '0') * 10 + (t[1] - '0'));
-                fix->minute = (uint8_t)((t[2] - '0') * 10 + (t[3] - '0'));
-                fix->second = (uint8_t)((t[4] - '0') * 10 + (t[5] - '0'));
+            uint8_t hour;
+            uint8_t minute;
+            uint8_t second;
+            bool has_time = !fields[1][0] || parse_time(fields[1], &hour, &minute, &second);
+            if(!has_time) return;
+            if(fields[1][0]) {
+                fix->hour = hour;
+                fix->minute = minute;
+                fix->second = second;
                 fix->has_time = true;
             }
-            if(fields[2][0] && fields[3][0] && fields[4][0]) {
-                fix->day = (uint8_t)atoi(fields[2]);
-                fix->month = (uint8_t)atoi(fields[3]);
-                fix->year = (uint16_t)atoi(fields[4]);
+            bool has_date_fields = fields[2][0] || fields[3][0] || fields[4][0];
+            if(has_date_fields) {
+                uint16_t day;
+                uint16_t month;
+                uint16_t year;
+                if(!fields[2][0] || !fields[3][0] || !fields[4][0] ||
+                   !parse_uint_field(fields[2], 1, 31, &day) ||
+                   !parse_uint_field(fields[3], 1, 12, &month) ||
+                   !parse_uint_field(fields[4], 1, 9999, &year) ||
+                   !valid_date(year, month, day)) return;
+                fix->day = (uint8_t)day;
+                fix->month = (uint8_t)month;
+                fix->year = year;
                 fix->has_date = true;
             }
         }
     } else if(strcmp(type, "GSV") == 0) {
         /* $--GSV,total_msgs,msg_num,sats_in_view,...*cs
          * First message carries the total satellites-in-view count. */
-        if(nf >= 4 && atoi(fields[2]) == 1) {
-            fix->sats_in_view = (uint8_t)atoi(fields[3]);
+        uint16_t message;
+        uint16_t sats;
+        if(nf >= 4 && parse_uint_field(fields[2], 1, 99, &message) &&
+           parse_uint_field(fields[3], 0, 99, &sats) && message == 1) {
+            fix->sats_in_view = (uint8_t)sats;
         }
     }
 }
@@ -227,11 +393,15 @@ void nmea_feed(GpsFix* fix, char c) {
     if(star && (star - s_buf) >= 1 && strlen(star) == 3) {
         /* validate checksum */
         *star = '\0'; /* body now NUL-terminated */
-        uint8_t calc = nmea_checksum(s_buf);
-        uint8_t given = (uint8_t)((hex2nib(star[1]) << 4) | hex2nib(star[2]));
-        if(calc == given) {
-            fix->sentences++;
-            process_sentence(fix, s_buf);
+        int high = hex2nib(star[1]);
+        int low = hex2nib(star[2]);
+        if(high >= 0 && low >= 0) {
+            uint8_t calc = nmea_checksum(s_buf);
+            uint8_t given = (uint8_t)((high << 4) | low);
+            if(calc == given) {
+                fix->sentences++;
+                process_sentence(fix, s_buf);
+            }
         }
         s_in_sentence = false;
         s_pos = 0;

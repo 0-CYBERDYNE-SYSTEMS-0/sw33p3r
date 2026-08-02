@@ -16,7 +16,7 @@
 [x] GPS: fixed GLL fields[5] OOB (guard changed to nf >= 7)
 [x] Info tab: live capability card (version, UART state, feedback state, TX state)
 [x] Settings overlay: Sound, Vibro, Auto-Rescan, TX Duration
-[x] NMEA host tests: 44/44 pass
+[x] NMEA host tests: 58/58 executable assertions pass
 [x] Build: clean with -Werror, API 87.1, target 7
 [x] Deployed to device via USB
 
@@ -28,6 +28,10 @@
 [x] User guide: USER_GUIDE.md (every button/tab/mode/setting documented)
 [x] QA audit: settings + input handler verified crash-safe (no bounds/null/div issues)
 [x] MISSION.md updated to v3.0.1
+[x] Back routing: short Back closes/disarms/opens Settings; long Back exits from every context
+[x] GPS freshness: telemetry-only NMEA traffic cannot keep an old fix fresh
+[x] Checksum parser: non-hex checksum characters are rejected
+[x] Host Back-state tests: 4/4 assertions pass
 
 ## NEXT (field-test 2 driven)
 
@@ -35,5 +39,5 @@
 [ ] Verify TX guardrails work end-to-end on device
 [ ] Verify band sweep detects known signals between presets
 [ ] Capture actual BFFB Marauder output lines → adjust parser if needed
-[ ] Add WiFi/BLE scan timeout detection (if scan hangs > 30s, show stale)
+[x] WiFi/BLE scan timeout detection (no result lines for 30s shows ERR and rescan recovers)
 [ ] Consider: C/N0 bars from GSV for GPS signal quality display

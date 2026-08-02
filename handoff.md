@@ -1,27 +1,32 @@
 # Room Sweep — Developer Handoff
 
 **Date:** 2026-08-01
-**Version:** v3.0.1 (commit 8829c77)
+**Version:** v3.0.1 (HEAD d6182a1 plus verified working-tree fixes)
 **Branch:** main
 **Firmware:** Momentum mntm-012, API 87.1, target 7
 **Build tool:** ufbt (pyenv shim at ~/.pyenv/shims/ufbt)
+**Final FAP SHA-256:** `7994ddea5961dc2889a0f767831fc3428b32ae6d1df9f048ec2f0a2fe91e853c`
 
 ---
 
 ## Current State
 
-Fully functional 6-tab Flipper Zero app. Deployed to device and running.
-Passes clean build with -Werror. 44/44 NMEA host tests pass.
+Six-tab Flipper Zero app. The current working tree builds clean with -Werror,
+passes 58/58 executable NMEA assertions plus 4/4 Back-state assertions, and has been
+installed and traversed on the connected Flipper without a crash. Device proof
+uses valid Press→Short/Long→Release input sequences; iPhone Mirroring visually
+checked RF Survey, Settings, WiFi, BLE, GPS, TX, and Info after the final UI
+spacing fixes.
 
 | Feature | Status |
 |---------|--------|
 | RF Survey (16-point) | Working — live RSSI bars |
-| RF Band Sweep (3 bands) | Working — needs field verification |
-| RF Peak Refine | Working — needs field verification |
+| RF Band Sweep (3 bands) | Device traversal verified — signal detection needs field verification |
+| RF Peak Refine | Device traversal verified — signal detection needs field verification |
 | WiFi AP scanner | Implemented — needs BFFB hardware test |
 | BLE device scanner | Implemented — needs BFFB hardware test |
 | GPS passive listener | Working — stale-fix + GLL bugs fixed |
-| TX (safety-gated tab) | Implemented — needs field verification |
+| TX (safety-gated tab) | Arm/disarm/navigation verified — deliberate RF transmission needs field verification |
 | Audio feedback | Implemented — continuous Geiger model |
 | Vibro feedback | Implemented — heartbeat + edge + lock |
 | Settings overlay | Fixed (was crashing, InputTypePress bug) |
@@ -34,12 +39,14 @@ Passes clean build with -Werror. 44/44 NMEA host tests pass.
 ```
 sw33p3r/
 ├── room_sweep.h        # Enums, structs, constants (SweepMode, RfSubMode, TxState, etc.)
-├── room_sweep.c        # Main app (~1550 lines): threads, draw, input, UART, feedback
+├── room_sweep.c        # Main app: threads, draw, input, UART, feedback
 ├── nmea.c              # NMEA sentence parser (GGA, RMC, GLL, ZDA, GSV)
 ├── nmea.h              # NMEA types and function decls
 ├── application.fam     # ufbt manifest (appid=room_sweep, stack=4096)
 ├── tests/
-│   └── test_nmea.c     # Host tests (44 checks, cc -std=c11)
+│   ├── test_nmea.c     # Host NMEA tests (58 executable assertions, cc -std=c11)
+│   └── test_input_state.c # Host Back-routing tests (4 assertions)
+├── room_sweep_input.h  # Back-routing decision table
 ├── MISSION.md          # Product contract + TX safety spec
 ├── USER_GUIDE.md       # End-user manual (every button/setting)
 ├── FLIPPER_PITFALLS.md # 14 verified API pitfalls (READ THIS FIRST)
@@ -58,11 +65,15 @@ sw33p3r/
 ufbt
 
 # Deploy workflow (Flipper must be plugged in via USB):
-# 1. Close running app
+# 1. Close a running app with a complete input sequence
 python3 -c "
 import serial, time
 s = serial.Serial('/dev/cu.usbmodemflip_Rug1k01', 115200, timeout=2)
+s.write(b'input send back press\r\n')
+time.sleep(0.1)
 s.write(b'input send back long\r\n')
+time.sleep(0.1)
+s.write(b'input send back release\r\n')
 time.sleep(2)
 s.close()
 "
@@ -80,9 +91,8 @@ s.close()
 "
 ```
 
-**Known issue:** `ufbt launch` hangs on the "Closing current app" RPC step because
-the app requires manual back-press. The FAP upload completes before this error.
-Workaround: close via CLI first, then `ufbt launch`, then launch via CLI if needed.
+If `ufbt launch` reports that the current fullscreen app must be closed manually,
+send the complete input sequence above, then rerun `ufbt launch`.
 
 **Serial port:** `/dev/cu.usbmodemflip_Rug1k01` at 115200 baud.
 If "Resource busy": `lsof /dev/cu.usbmodemflip_Rug1k01` → kill the PID.
@@ -98,11 +108,11 @@ If "Resource busy": `lsof /dev/cu.usbmodemflip_Rug1k01` → kill the PID.
 - **UART:** callback-driven via `furi_hal_serial` (no dedicated thread)
 
 ### Key Patterns
-- All shared state accessed from main thread only (threads write to app struct fields, main reads them in draw)
+- UART ISR only enqueues bounded lines; the main loop parses them. RF/TX radio state is serialized with a mutex; GUI draws app state.
 - `NotificationSequence` = NULL-terminated array of `const NotificationMessage*` (NOT a struct)
 - Force messages (`message_force_speaker_volume_setting_1f`, `message_force_vibro_setting_on`) bypass global mute
 - Only these delays exist: 1, 10, 25, 50, 100, 250, 500, 1000 ms
-- Input filtering: ONLY process `InputTypeShort` and `InputTypeLong` (line 1448). Never InputTypePress.
+- Input filtering: ONLY process `InputTypeShort` and `InputTypeLong`. Never InputTypePress.
 
 ### TX Safety State Machine
 ```
@@ -131,7 +141,7 @@ TX NEVER fires on tab entry. Multiple deliberate actions required.
 | HIGH | Field-test TX arm→transmit→auto-disarm | Verify safety gating on hardware |
 | HIGH | Capture real BFFB output | Verify parser matches actual firmware |
 | MED | Band sweep field verification | Test with known in-between signal |
-| MED | WiFi/BLE scan timeout detection | If scan hangs >30s, show stale indicator |
+| DONE | WiFi/BLE scan timeout detection | Implemented: no result lines for 30s shows ERR and permits recovery |
 | LOW | GPS C/N0 bars from GSV | Signal quality visualization |
 | LOW | Configurable sweep step/dwell | User-adjustable in settings |
 
@@ -153,8 +163,11 @@ TX NEVER fires on tab entry. Multiple deliberate actions required.
 ## Testing
 
 ```bash
-# Host NMEA tests (44 checks)
+# Host NMEA tests (58 executable assertions)
 cc -std=c11 -Wall -Wextra -Werror -I. tests/test_nmea.c nmea.c -o /tmp/test_nmea && /tmp/test_nmea
+
+# Host Back-routing tests (4 assertions)
+cc -std=c11 -Wall -Wextra -Werror -I. tests/test_input_state.c -o /tmp/room_sweep_input_test && /tmp/room_sweep_input_test
 
 # Build verification
 ufbt  # Must produce: Target: 7, API: 87.1, zero warnings
@@ -171,8 +184,11 @@ No device-side automated tests exist. All device verification is manual via:
 
 Three verification levels — never conflate them:
 1. **Source-backed:** code path exists and compiles
-2. **Host-verified:** passes host tests (only NMEA currently)
+2. **Host-verified:** 58/58 executable NMEA assertions and 4/4 Back-routing assertions pass
 3. **Device-verified:** confirmed on physical Flipper hardware
 
-Current device-verified: RF survey bars, settings menu, app launch/exit.
-Everything else is source-backed or host-verified only.
+Current device-verified: all-six-tab no-crash traversal, settings controls,
+Settings short-close, long-exit, TX disarm navigation, and app launch/exit.
+Actual BFFB result parsing, audio/haptic observation, and deliberate RF
+transmission remain user field tests because the required hardware/consent was
+not available during this audit.
