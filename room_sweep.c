@@ -355,10 +355,9 @@ static void update_gps_mode(App* app) {
         app->gps_had_fix = false;
         gps_request_stream(app);
     } else if(!active && app->gps_active) {
-        if(app->marauder_state == MarauderScanning) {
-            marauder_send(app, "stopscan");
-            if(app->marauder_state != MarauderNoDevice) app->marauder_state = MarauderIdle;
-        }
+        /* Always stop GPS stream on leave — state may be Error after a glitch. */
+        if(app->serial) marauder_send(app, "stopscan");
+        if(app->marauder_state != MarauderNoDevice) app->marauder_state = MarauderIdle;
     }
     app->gps_active = active;
 }
@@ -2026,6 +2025,10 @@ int32_t room_sweep_app(void* p) {
     app->tx_active = false;
     app->tx_state = TxDisarmed;
 
+    /* Stop any Marauder stream (WiFi/BLE/GPS nmea) before releasing UART. */
+    if(app->serial) {
+        marauder_send(app, "stopscan");
+    }
     marauder_close(app);
 
     tx_thread_cleanup(app);
