@@ -14,6 +14,11 @@ Wiki: https://github.com/justcallmekoko/ESP32Marauder/wiki/BFFB
 | Dual CC1101 + nRF24 are on Flipper **SPI** | Room Sweep RF prefers Momentum **`cc1101_ext`** (BFFB dual CC1101). Top switch = 400 vs 900 MHz; bottom = **ESP32** for CC1101. Falls back to internal if external not detected. |
 | Official Flipper UI | [Marauder Companion](https://github.com/0xchocolate/flipperzero-wifi-marauder) |
 
+## GPS paths
+
+1. **GPIO LPUART (primary):** Flipper pins **15/16** @ **9600** (then 115200). Momentum: MNTM → Protocols → GPIO Pins → **NMEA GPS UART = Extra 15,16**.
+2. **Marauder `nmea` (fallback):** USART 13/14 if GPIO silent.
+
 ## UART path (Momentum FAP)
 
 Matches companion `wifi_marauder_uart.c` / `wifi_marauder_app.c`:

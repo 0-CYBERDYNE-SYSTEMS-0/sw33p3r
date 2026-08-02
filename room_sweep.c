@@ -184,7 +184,7 @@ typedef struct {
     bool was_alerting;
     uint8_t lock_ticks;
 
-    /* GPS */
+    /* GPS — GPIO LPUART primary, Marauder nmea fallback */
     GpsFix gps;
     volatile bool gps_active;
     volatile uint32_t gps_last_valid_tick;
@@ -193,6 +193,10 @@ typedef struct {
     float gps_mark_lat;
     float gps_mark_lon;
     bool gps_had_fix;
+    FuriHalSerialHandle* gps_serial; /* LPUART pins 15/16 */
+    uint32_t gps_gpio_baud;
+    bool gps_gpio_open;
+    bool gps_from_gpio; /* last nav sentence came from LPUART */
 
     /* TX (dedicated tab, safety-gated) */
     TxState tx_state;
@@ -371,12 +375,46 @@ static void marauder_start_for_mode(App* app) {
     }
 }
 
-/* BFFB wiki: GPS is wired to the ESP32 only — not Flipper GPIO — so stock
- * Flipper GPS apps cannot see it. JCMK Marauder CLI must stream NMEA:
- *   nmea          → WIFI_SCAN_GPS_NMEA (companion "NMEA Stream")
- *   gps -g nmea   → one-shot synthetic GGA+RMC (companion GPS Data menu)
- * Dev Board Pro build (BFFB firmware target) includes HAS_GPS. */
-static void gps_request_stream(App* app) {
+/* GPIO GPS on LPUART (PC1/PC0 = Flipper pins 15/16). Coexists with USART
+ * Marauder on 13/14. Momentum setting: NMEA GPS UART = Extra 15,16. */
+static void gps_gpio_rx_cb(FuriHalSerialHandle* handle, FuriHalSerialRxEvent event, void* ctx) {
+    UNUSED(handle);
+    App* app = ctx;
+    if(event != FuriHalSerialRxEventData || !app->gps_active) return;
+
+    uint8_t byte = furi_hal_serial_async_rx(app->gps_serial);
+    uint32_t nav_before = app->gps.nav_sentences;
+    nmea_feed(&app->gps, (char)byte);
+    if(app->gps.nav_sentences != nav_before) {
+        app->gps_last_valid_tick = furi_get_tick();
+        app->gps_from_gpio = true;
+    }
+}
+
+static void gps_gpio_close(App* app) {
+    if(!app->gps_serial) return;
+    furi_hal_serial_async_rx_stop(app->gps_serial);
+    furi_hal_serial_deinit(app->gps_serial);
+    furi_hal_serial_control_release(app->gps_serial);
+    app->gps_serial = NULL;
+    app->gps_gpio_open = false;
+}
+
+static bool gps_gpio_open(App* app, uint32_t baud) {
+    if(app->gps_serial) gps_gpio_close(app);
+
+    app->gps_serial = furi_hal_serial_control_acquire(FuriHalSerialIdLpuart);
+    if(!app->gps_serial) return false;
+
+    furi_hal_serial_init(app->gps_serial, baud);
+    furi_hal_serial_async_rx_start(app->gps_serial, gps_gpio_rx_cb, app, false);
+    app->gps_gpio_baud = baud;
+    app->gps_gpio_open = true;
+    return true;
+}
+
+/* Marauder CLI fallback when GPIO is silent (ESP32-streamed NMEA). */
+static void gps_marauder_stream(App* app) {
     if(!app->serial) return;
     marauder_send(app, "nmea");
     app->gps_last_request_tick = furi_get_tick();
@@ -385,23 +423,34 @@ static void gps_request_stream(App* app) {
     }
 }
 
-static void gps_request_poll(App* app) {
+static void gps_marauder_poll(App* app) {
     if(!app->serial) return;
     marauder_send(app, "gps -g nmea");
     app->gps_last_request_tick = furi_get_tick();
 }
 
 static void update_gps_mode(App* app) {
-    bool active = app->mode == SweepModeGps && app->serial != NULL;
+    bool active = app->mode == SweepModeGps;
     if(active && !app->gps_active) {
         nmea_init(&app->gps);
         app->gps_last_valid_tick = 0;
         app->gps_had_fix = false;
-        gps_request_stream(app);
+        app->gps_from_gpio = false;
+        /* 5V often needed for external GPS modules */
+        if(!furi_hal_power_is_otg_enabled()) {
+            furi_hal_power_enable_otg();
+            app->radio_otg_on = true; /* share OTG ownership with radio path */
+            furi_delay_ms(30);
+        }
+        gps_gpio_open(app, GPS_GPIO_BAUD_PRIMARY);
+        /* Don't start Marauder nmea yet — avoid UART noise; fallback after silence */
+        app->gps_last_request_tick = furi_get_tick();
     } else if(!active && app->gps_active) {
-        /* Always stop GPS stream on leave — state may be Error after a glitch. */
-        if(app->serial) marauder_send(app, "stopscan");
-        if(app->marauder_state != MarauderNoDevice) app->marauder_state = MarauderIdle;
+        gps_gpio_close(app);
+        if(app->serial && app->marauder_state == MarauderScanning) {
+            marauder_send(app, "stopscan");
+            if(app->marauder_state != MarauderNoDevice) app->marauder_state = MarauderIdle;
+        }
     }
     app->gps_active = active;
 }
@@ -682,7 +731,10 @@ static void process_uart_lines(App* app) {
         if(app->gps_active) {
             uint32_t nav_sentences = app->gps.nav_sentences;
             for(const char* p = latest; *p; p++) nmea_feed(&app->gps, *p);
-            if(app->gps.nav_sentences != nav_sentences) app->gps_last_valid_tick = furi_get_tick();
+            if(app->gps.nav_sentences != nav_sentences) {
+                app->gps_last_valid_tick = furi_get_tick();
+                app->gps_from_gpio = false; /* came from Marauder USART */
+            }
         }
 
         /* Any non-empty line proves BFFB UART is alive */
@@ -1572,17 +1624,11 @@ static void draw_gps_tab(Canvas* canvas, App* app) {
     canvas_set_font(canvas, FontSecondary);
     canvas_draw_str(canvas, 1, 12, "GPS");
 
-    if(!app->serial) {
-        canvas_draw_str(canvas, 8, 32, "No UART");
-        canvas_draw_str(canvas, 8, 44, "USART unavailable");
-        return;
-    }
-
     bool gps_fresh = app->gps_last_valid_tick > 0 &&
                      furi_get_tick() - app->gps_last_valid_tick < GPS_STALE_TIMEOUT_MS;
     canvas_set_font(canvas, FontKeyboard);
     if(app->gps.has_fix && gps_fresh) {
-        canvas_draw_str(canvas, 36, 12, "FIX");
+        canvas_draw_str(canvas, 36, 12, app->gps_from_gpio ? "FIX G" : "FIX M");
     } else if(app->gps.sentences > 0 && gps_fresh) {
         canvas_draw_str(canvas, 36, 12, "NOFIX");
     } else if(app->gps.sentences > 0) {
@@ -1595,11 +1641,12 @@ static void draw_gps_tab(Canvas* canvas, App* app) {
     canvas_set_font(canvas, FontSecondary);
 
     if(app->gps.sentences == 0) {
-        canvas_draw_str(canvas, 2, 26, "nmea stream...");
-        canvas_draw_str(canvas, 2, 38, "GPS on BFFB ESP32");
+        canvas_draw_str(canvas, 2, 26, "GPIO LPUART 15/16");
+        snprintf(buf, sizeof(buf), "@ %lu baud", (unsigned long)app->gps_gpio_baud);
+        canvas_draw_str(canvas, 2, 38, buf);
         canvas_set_font(canvas, FontKeyboard);
-        canvas_draw_str(canvas, 2, 50, "OK=retry  SW=ESP32");
-        canvas_draw_str(canvas, 2, 60, "not Flipper GPIO");
+        canvas_draw_str(canvas, 2, 50, app->gps_gpio_open ? "listening..." : "LPUART fail");
+        canvas_draw_str(canvas, 2, 60, "OK=retry  MNTM:15,16");
         return;
     }
 
@@ -1972,16 +2019,25 @@ int32_t room_sweep_app(void* p) {
                 }
             }
 
-            /* GPS: re-request stream if no nav data after a few seconds */
-            if(app->serial && app->mode == SweepModeGps && app->gps_active) {
+            /* GPS: GPIO baud cycle, then Marauder nmea fallback */
+            if(app->mode == SweepModeGps && app->gps_active) {
                 uint32_t now = furi_get_tick();
                 bool fresh = app->gps_last_valid_tick > 0 &&
                              now - app->gps_last_valid_tick < GPS_STALE_TIMEOUT_MS;
                 if(!fresh && now - app->gps_last_request_tick >= 5000) {
+                    app->gps_last_request_tick = now;
                     if(app->gps.sentences == 0) {
-                        gps_request_stream(app);
-                    } else {
-                        gps_request_poll(app);
+                        /* Try alternate GPIO baud, then Marauder stream */
+                        if(app->gps_gpio_baud == GPS_GPIO_BAUD_PRIMARY) {
+                            gps_gpio_open(app, GPS_GPIO_BAUD_ALT);
+                        } else if(app->gps_gpio_baud == GPS_GPIO_BAUD_ALT) {
+                            gps_gpio_open(app, GPS_GPIO_BAUD_PRIMARY);
+                            if(app->serial) gps_marauder_stream(app);
+                        } else {
+                            gps_gpio_open(app, GPS_GPIO_BAUD_PRIMARY);
+                        }
+                    } else if(app->serial) {
+                        gps_marauder_poll(app);
                     }
                 }
             }
@@ -2159,12 +2215,21 @@ int32_t room_sweep_app(void* p) {
             marauder_start_for_mode(app);
         }
 
-        /* --- GPS: OK sets/clears mark, or re-requests NMEA if waiting --- */
-        if(event.key == InputKeyOk && app->mode == SweepModeGps && app->serial) {
+        /* --- GPS: OK sets/clears mark, or re-opens GPIO / Marauder --- */
+        if(event.key == InputKeyOk && app->mode == SweepModeGps) {
             bool gps_fresh = app->gps_last_valid_tick > 0 &&
                              furi_get_tick() - app->gps_last_valid_tick < GPS_STALE_TIMEOUT_MS;
             if(app->gps.sentences == 0 || !gps_fresh) {
-                gps_request_stream(app);
+                nmea_init(&app->gps);
+                app->gps_last_valid_tick = 0;
+                /* Cycle baud: 9600 → 115200 → 9600+marauder */
+                if(app->gps_gpio_baud != GPS_GPIO_BAUD_ALT) {
+                    gps_gpio_open(app, GPS_GPIO_BAUD_ALT);
+                } else {
+                    gps_gpio_open(app, GPS_GPIO_BAUD_PRIMARY);
+                    if(app->serial) gps_marauder_stream(app);
+                }
+                app->gps_last_request_tick = furi_get_tick();
             } else if(gps_fresh && app->gps.has_pos) {
                 if(app->gps_mark_set) {
                     app->gps_mark_set = false;
@@ -2199,10 +2264,11 @@ int32_t room_sweep_app(void* p) {
     app->tx_active = false;
     app->tx_state = TxDisarmed;
 
-    /* Stop any Marauder stream (WiFi/BLE/GPS nmea) before releasing UART. */
+    /* Stop Marauder + GPIO GPS UARTs */
     if(app->serial) {
         marauder_send(app, "stopscan");
     }
+    gps_gpio_close(app);
     marauder_close(app);
 
     tx_thread_cleanup(app);
