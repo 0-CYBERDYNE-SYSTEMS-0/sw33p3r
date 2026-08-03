@@ -140,6 +140,13 @@ int main(void) {
     check(room_sweep_external_band_allows(2, 915000000), "900 external band accepts 915 MHz");
     check(!room_sweep_external_band_allows(2, 433920000), "900 external band rejects 433 MHz");
     check(!room_sweep_external_band_allows(3, 433920000), "unknown external band is rejected");
+    check(room_sweep_external_band_for_frequency(433920000) == 1, "433 maps to 400 path");
+    check(room_sweep_external_band_for_frequency(915000000) == 2, "915 maps to 900 path");
+    check(room_sweep_external_band_for_frequency(315000000) == 0, "315 is not dual-path");
+    check(room_sweep_cc1101_band_covers(315000000), "315 is a CC1101 band");
+    check(room_sweep_cc1101_band_covers(433920000), "433 is a CC1101 band");
+    check(room_sweep_cc1101_band_covers(915000000), "915 is a CC1101 band");
+    check(!room_sweep_cc1101_band_covers(500000000), "500 MHz is a CC1101 gap");
 
     check(
         room_sweep_tx_ok_decision(

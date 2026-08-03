@@ -322,9 +322,28 @@ typedef struct {
 /* ================================================================== */
 /* TX frequency presets                                                */
 /* ================================================================== */
-#define TX_FREQ_PRESET_COUNT 6
+/*
+ * TX presets span all three CC1101 bands the Flipper radio can tune.
+ * BFFB external dual-CC1101 only covers 400 + 900 paths (top switch);
+ * ~300 MHz presets require the internal radio (or fail on external).
+ */
+#define TX_FREQ_PRESET_COUNT 12
 static const uint32_t tx_freq_presets[TX_FREQ_PRESET_COUNT] = {
-    433920000, 868350000, 915000000, 315000000, 390000000, 418000000,
+    /* ~400 MHz path (BFFB top switch 400 / CC1101 mid) */
+    390000000,
+    418000000,
+    433420000,
+    433920000,
+    434420000,
+    450000000,
+    /* ~900 MHz path (BFFB top switch 900 / CC1101 high) */
+    868350000,
+    915000000,
+    925000000,
+    /* ~300 MHz path (internal CC1101 low; not on BFFB dual 400/900) */
+    303875000,
+    315000000,
+    345000000,
 };
 
 /* Settings menu aliases (host-tested indices in room_sweep_settings.h) */
@@ -377,6 +396,7 @@ static bool record_enqueue(
     uint8_t channel,
     const char* detail);
 static bool tx_pick_allowed_preset(App* app);
+static void tx_select_preset_index(App* app, uint8_t idx);
 
 /* Shared ExtBand apply path for Settings and TX tab Long-L/R. */
 static void apply_ext_band_pref(App* app, ExtBandPref band) {
@@ -396,11 +416,11 @@ static void apply_ext_band_pref(App* app, ExtBandPref band) {
         app->target_rssi = -127;
     }
     if(app->ext_band == ExtBand400) {
-        app->tx_freq_idx = 0; /* 433.92 default for 400 path; may be adjusted below */
-        app->tx_freq_hz = tx_freq_presets[app->tx_freq_idx];
+        /* Prefer classic 433.92 within the 400 path. */
+        tx_select_preset_index(app, 3);
     } else if(app->ext_band == ExtBand900) {
-        app->tx_freq_idx = 2; /* 915 default for 900 path */
-        app->tx_freq_hz = tx_freq_presets[app->tx_freq_idx];
+        /* Prefer 915 within the 900 path. */
+        tx_select_preset_index(app, 7);
     }
     if(app->radio_path == RadioPathExternal && app->ext_band != ExtBandAuto) {
         app->sweep_band_idx = rf_default_sweep_band(app);
@@ -808,6 +828,38 @@ static void publish_signal_candidate(
         detail);
 }
 
+/*
+ * Keep software ExtBand aligned with the chosen TX frequency on external radio.
+ * BFFB top switch must still match (400 vs 900) or the module will not tune.
+ * Returns false if frequency is not on either external path (~300 MHz).
+ */
+static bool tx_sync_ext_band_to_frequency(App* app, uint32_t freq_hz) {
+    if(app->radio_path != RadioPathExternal) return true;
+    uint8_t path = room_sweep_external_band_for_frequency(freq_hz);
+    if(path == 0) return false;
+    ExtBandPref needed = path == 1 ? ExtBand400 : ExtBand900;
+    if(app->ext_band != needed) {
+        app->ext_band = needed;
+        if(app->radio_path == RadioPathExternal) {
+            app->sweep_band_idx = rf_default_sweep_band(app);
+        }
+        if(app->tx_refusal == RoomSweepTxRefusalExtBandUnknown) {
+            app->tx_refusal = RoomSweepTxRefusalNone;
+        }
+    }
+    return true;
+}
+
+static void tx_select_preset_index(App* app, uint8_t idx) {
+    if(idx >= TX_FREQ_PRESET_COUNT) idx = 0;
+    app->tx_freq_idx = idx;
+    app->tx_freq_hz = tx_freq_presets[idx];
+    app->tx_from_candidate = false;
+    room_sweep_candidate_invalidate(&app->tx_candidate);
+    (void)tx_sync_ext_band_to_frequency(app, app->tx_freq_hz);
+    app->tx_refusal = RoomSweepTxRefusalNone;
+}
+
 static bool tx_frequency_preflight(App* app) {
     app->tx_refusal = RoomSweepTxRefusalNone;
     if(app->tx_from_candidate) {
@@ -828,8 +880,10 @@ static bool tx_frequency_preflight(App* app) {
         return false;
     }
     if(app->radio_path == RadioPathExternal) {
-        if(app->ext_band == ExtBandAuto) {
-            app->tx_refusal = RoomSweepTxRefusalExtBandUnknown;
+        /* Auto-select ExtBand from frequency so U/D can use every dual-path preset. */
+        if(!tx_sync_ext_band_to_frequency(app, app->tx_freq_hz)) {
+            /* ~300 MHz is not on BFFB dual CC1101 400/900 paths. */
+            app->tx_refusal = RoomSweepTxRefusalInvalidFrequency;
             return false;
         }
         if(!room_sweep_external_band_allows((uint8_t)app->ext_band, app->tx_freq_hz)) {
@@ -856,18 +910,14 @@ static bool tx_pick_allowed_preset(App* app) {
         uint32_t hz = tx_freq_presets[idx];
         if(!subghz_devices_is_frequency_valid(app->radio, hz)) continue;
         if(app->radio_path == RadioPathExternal) {
-            if(app->ext_band == ExtBandAuto) continue;
-            if(!room_sweep_external_band_allows((uint8_t)app->ext_band, hz)) continue;
+            if(room_sweep_external_band_for_frequency(hz) == 0) continue;
         }
         if(!room_sweep_tx_region_allows(
                furi_hal_region_is_provisioned(),
                furi_hal_region_is_frequency_allowed(hz))) {
             continue;
         }
-        app->tx_freq_idx = idx;
-        app->tx_freq_hz = hz;
-        app->tx_from_candidate = false;
-        room_sweep_candidate_invalidate(&app->tx_candidate);
+        tx_select_preset_index(app, idx);
         return true;
     }
     return false;
@@ -2859,8 +2909,11 @@ static void draw_tx_tab(Canvas* canvas, App* app) {
     canvas_draw_str(canvas, 1, 12, "TX Control");
 
     char buf[40];
-    bool ext_auto_blocks = app->radio_path == RadioPathExternal &&
-                           app->ext_band == ExtBandAuto;
+    bool ext_path = app->radio_path == RadioPathExternal;
+    uint8_t path_for_freq = room_sweep_external_band_for_frequency(app->tx_freq_hz);
+    bool needs_board_400 = ext_path && path_for_freq == 1;
+    bool needs_board_900 = ext_path && path_for_freq == 2;
+    bool needs_int_only = ext_path && path_for_freq == 0;
 
     if(app->tx_state == TxDisarmed) {
         canvas_set_font(canvas, FontPrimary);
@@ -2879,36 +2932,43 @@ static void draw_tx_tab(Canvas* canvas, App* app) {
             canvas_set_font(canvas, FontSecondary);
             canvas_draw_str(canvas, 2, 38, refusal);
             canvas_set_font(canvas, FontKeyboard);
-            if(app->tx_refusal == RoomSweepTxRefusalExtBandUnknown || ext_auto_blocks) {
-                canvas_draw_str(canvas, 2, 48, "Hold L/R: ExtBand 400/900");
+            if(app->tx_refusal == RoomSweepTxRefusalInvalidFrequency && needs_int_only) {
+                canvas_draw_str(canvas, 2, 48, "300MHz needs INT radio");
             } else if(app->tx_refusal == RoomSweepTxRefusalPolicy) {
                 snprintf(buf, sizeof(buf), "region %s — U/D other freq", reg_name);
                 canvas_draw_str(canvas, 2, 48, buf);
             } else {
-                canvas_draw_str(canvas, 2, 48, "Carrier only; no replay");
+                canvas_draw_str(canvas, 2, 48, "U/D other preset");
             }
-        } else if(ext_auto_blocks) {
-            canvas_set_font(canvas, FontSecondary);
-            canvas_draw_str(canvas, 2, 38, "Select EXT 400/900");
-            canvas_set_font(canvas, FontKeyboard);
-            canvas_draw_str(canvas, 2, 48, "Hold L/R band before arm");
+        } else if(needs_int_only) {
+            canvas_draw_str(canvas, 2, 38, "300MHz: INT radio only");
+            canvas_draw_str(canvas, 2, 48, "U/D for 400/900 presets");
         } else {
             canvas_draw_str(canvas, 2, 38, "Carrier only; no replay");
-            snprintf(
-                buf,
-                sizeof(buf),
-                "%s reg:%s",
-                candidate_ready ? "RX cand" : "U/D=freq",
-                reg_name);
-            canvas_draw_str(canvas, 2, 48, buf);
+            if(needs_board_400) {
+                canvas_draw_str(canvas, 2, 48, "Flip TOP switch to 400");
+            } else if(needs_board_900) {
+                canvas_draw_str(canvas, 2, 48, "Flip TOP switch to 900");
+            } else {
+                snprintf(
+                    buf,
+                    sizeof(buf),
+                    "%s reg:%s",
+                    candidate_ready ? "RX cand" : "U/D=freq",
+                    reg_name);
+                canvas_draw_str(canvas, 2, 48, buf);
+            }
         }
 
-        snprintf(buf, sizeof(buf), "%lu.%03lu %ds band:%s",
+        snprintf(buf, sizeof(buf), "%lu.%03lu %ds %s",
                  (unsigned long)(app->tx_freq_hz / 1000000),
                  (unsigned long)((app->tx_freq_hz % 1000000) / 1000),
                  app->tx_duration_s,
-                 app->ext_band == ExtBand400 ? "400" :
-                 app->ext_band == ExtBand900 ? "900" : "AUTO");
+                 needs_board_400 ? "sw:400" :
+                 needs_board_900 ? "sw:900" :
+                 needs_int_only ? "INT" :
+                 app->ext_band == ExtBand400 ? "band:400" :
+                 app->ext_band == ExtBand900 ? "band:900" : "band:AUTO");
         canvas_draw_str(canvas, 2, 58, buf);
         canvas_draw_str(canvas, 88, 12, "OK=arm");
 
@@ -3301,13 +3361,13 @@ int32_t room_sweep_app(void* p) {
     app->dump_count = 0;
     for(uint8_t i = 0; i < RF_NUM_CHANNELS; i++) app->baseline_rssi[i] = -120.0f;
 
-    /* TX defaults */
+    /* TX defaults — 433.92 MHz preset index 3 in the expanded table */
     app->tx_state = TxDisarmed;
-    app->tx_freq_hz = 433920000;
-    app->tx_tuned_freq_hz = 433920000;
+    app->tx_freq_idx = 3;
+    app->tx_freq_hz = tx_freq_presets[app->tx_freq_idx];
+    app->tx_tuned_freq_hz = app->tx_freq_hz;
     app->tx_from_candidate = false;
     room_sweep_candidate_invalidate(&app->tx_candidate);
-    app->tx_freq_idx = 0;
     app->tx_duration_s = TX_DEFAULT_DURATION;
     app->tx_active = false;
     app->tx_thread = NULL;
@@ -3787,18 +3847,13 @@ int32_t room_sweep_app(void* p) {
                     furi_thread_start(app->tx_thread);
                 }
             }
-            /* U/D selects presets when disarmed or armed (not while radiating). */
+            /* U/D selects presets; ExtBand auto-follows 400/900 dual-path freqs. */
             if((input_action == RoomSweepInputBrowseUp ||
                 input_action == RoomSweepInputBrowseDown) &&
                (app->tx_state == TxArmed || app->tx_state == TxDisarmed)) {
-                app->tx_freq_idx = (uint8_t)room_sweep_cursor_step(
+                uint8_t next = (uint8_t)room_sweep_cursor_step(
                     app->tx_freq_idx, TX_FREQ_PRESET_COUNT, input_action);
-                app->tx_freq_hz = tx_freq_presets[app->tx_freq_idx];
-                app->tx_from_candidate = false;
-                room_sweep_candidate_invalidate(&app->tx_candidate);
-                if(app->tx_refusal != RoomSweepTxRefusalExtBandUnknown) {
-                    app->tx_refusal = RoomSweepTxRefusalNone;
-                }
+                tx_select_preset_index(app, next);
             }
             if(room_sweep_input_is_tab_navigation(input_action)) {
                 navigate_tab(app, input_action == RoomSweepInputNavigateNext);
