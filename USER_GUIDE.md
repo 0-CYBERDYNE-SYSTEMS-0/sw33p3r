@@ -1,231 +1,174 @@
-# Room Sweep v3.0.1 — Complete User Guide
+# Room Sweep v3.2 — Operator Guide
 
-## Quick Start
+Room Sweep is designed so a non-specialist can collect useful, honest evidence
+without pretending that RSSI identifies a device's purpose or that passive scans
+prove what a device is doing.
 
-1. Launch **Room Sweep** from Apps → Tools on your Flipper
-2. You start on the **RF tab** — it's already scanning 16 frequencies
-3. **Short Back** opens Settings — turn Sound ON to hear Geiger clicks
-4. **Left/Right** switches tabs. **Long Back** exits.
+## The controls to remember
 
----
+- **Short Left / Right:** previous or next tab.
+- **Up / Down:** browse or change the thing shown in the current tab.
+- **Short OK:** the normal action shown at the bottom of the screen.
+- **Long OK:** lock a target, or confirm TX only after TX has been armed.
+- **Short Back:** open/close Settings; on an armed TX screen, disarm first.
+- **Long Back:** exit from anywhere.
 
-## Tabs (Left ◀ / Right ▶ to cycle, wraps around)
+Sound and vibration are changed only in Settings. Up and Down are no longer
+wasted on those toggles.
 
-### 1. RF Tab — Sub-GHz Signal Detection
+## RF: Survey, Sweep, and Peak
 
-The RF tab has **3 sub-modes** (cycle with **Up ▲ / Down ▼**):
+Use **Up/Down** to choose one of three receive modes:
 
-#### [SURVEY] — Quick 16-Point Scan (default)
-- Sweeps 16 preset ISM frequencies (304–925 MHz) continuously
-- Bar chart shows RSSI per channel
-- Dotted line = alert threshold (-75 dBm)
-- "SIGNAL!" banner when any channel exceeds threshold
-- Peak dBm shown top-right
-- **No button action needed** — runs automatically
+- **Survey:** continuously checks 16 useful preset frequencies. Long OK locks a
+  qualified signal so the relative-strength feedback can follow it.
+- **Sweep:** checks an entire 300–348, 387–464, or 779–928 MHz band. Long
+  Left/Right changes the band while idle. Short OK starts or cancels. Long OK
+  locks the completed qualified result.
+- **Peak:** refines the most recent qualified Survey/Sweep result in 25 kHz
+  steps. Short OK starts or cancels; Long OK locks the completed refined result.
 
-#### [SWEEP] — Coarse Band Sweep
-- **Long Left/Right** (when idle): select band (300-348 / 387-464 / 779-928 MHz)
-- **Short Left/Right**: switch tabs
-- **OK**: starts sweep (progress bar + current frequency + peak hold)
-- **OK** (while running): cancels sweep
-- After sweep: shows peak frequency and RSSI
-- Step size: 250 kHz — finds signals BETWEEN the 16 presets
+A candidate must be stronger than -75 dBm, come from a completed operation,
+have a valid actually tuned frequency, and be less than 30 seconds old. RSSI is
+relative signal strength—not distance, identity, ownership, or intent.
 
-#### [PEAK] — Fine Peak Refinement
-- Requires a detected signal (from Survey or Sweep)
-- **OK**: starts fine sweep ±1 MHz around last detected peak
-- Step size: 25 kHz — pinpoints exact frequency
-- Shows refined frequency and RSSI when done
-- If no peak: shows "No peak detected" message
+## Wi-Fi
 
----
+The BFFB Marauder connection passively listens for AP beacon observations.
 
-### 2. WiFi Tab — Access Point Scanner
+- **Up/Down:** browse every stored AP row.
+- **Short OK:** start a new 30-second scan window.
+- **Long OK:** lock/unlock the selected row for relative-strength feedback.
 
-**Requires:** JCMK **BFFB** with Marauder (Dev Board Pro) on UART @ **115200**.
-Bottom module switch = **ESP32** (not NRF24). Command: **`scanall`** (current
-Marauder CLI; legacy `scanap` is gone). The app can acquire the
-Flipper UART even when the board is absent, so actual scan result lines confirm the
-board is responding.
+Each row shows its display name, redacted/present hardware identity on disk,
+RSSI, channel, age, and observation count. Hidden devices are shown as
+`Hidden/unknown`; the app does not invent names. Observations with neither a
+name nor hardware identity are explicitly grouped and are not a device count.
 
-- **Primary display:** Strongest AP RSSI (dBm) + meter bar + AP count + freshness
-- **Secondary:** Top 3 APs sorted by signal (SSID + RSSI)
-- **OK**: manually trigger scan
-- **Auto-rescan:** every 5 seconds (configurable in Settings)
-- **No response:** shows `ERR` after 30 seconds without Marauder result lines
-- **Up ▲**: toggle Sound ON/OFF (test beep confirms)
-- **Down ▼**: toggle Vibro ON/OFF (test buzz confirms)
+Important: an AP beacon proves only that a beacon was heard. It does not prove
+Internet connectivity, telemetry upload, recording, ownership, or intent. A
+window with no observation does not prove a device is absent or inactive.
 
-When Sound is ON: Geiger clicks speed up as you move toward access points.
+## BLE
 
----
+The BFFB Marauder connection performs active BLE scanning.
 
-### 3. BLE Tab — Bluetooth Device Scanner (BFFB Marauder `sniffbt`)
+- **Up/Down:** browse every stored BLE row.
+- **Short OK:** start a new 30-second scan window.
+- **Long OK:** lock/unlock the selected row.
 
-**Requires:** Same BFFB/Marauder UART as WiFi. Command: **`sniffbt`** (JCMK
-`BT_SNIFF_CMD` / companion Sniff→bt). Lines look like `-60 Device: NameOrMac`.
-Already-seen BLE devices do not re-print on RSSI update. Actual scan result lines
-confirm that the board is responding.
+The app records advertisements/scan responses, RSSI, age, and observation count.
+Observations with no name or hardware identity are grouped rather than treated
+as individually identified devices.
+It cannot prove Internet telemetry or detect a silent/offline recorder merely
+because nothing advertised during the bounded window.
 
-- **Primary display:** Strongest device RSSI + meter bar + device count + freshness
-- **Secondary:** Top 3 BLE devices (name + RSSI)
-- **OK**: manually trigger sniff
-- **Auto-rescan:** every 5 seconds
-- **No response:** shows `ERR` after 30 seconds without Marauder result lines
-- **Up ▲ / Down ▼**: Sound / Vibro toggle (same as WiFi)
+## GPS
 
----
+The default source is **BFFB Marauder**. Settings can select an optional external
+GPIO NMEA receiver instead.
 
-### 4. GPS Tab — Position & Fix Status
+- **Up/Down:** switch between Summary and Detail pages.
+- **Short OK:** retry when data is absent/stale; with a fresh position, set or
+  clear a distance mark.
+- **Long OK:** intentionally does nothing.
 
-**Requires:** BFFB with GPS antenna + Marauder Dev Board Pro (`HAS_GPS`).
+The pages expose source, link/fix state, UTC/date, latitude/longitude, fix
+quality, satellites used/in view, speed/course, valid sentence count, navigation
+sentence count, bytes received, age, and dropped-byte count.
 
-Per [BFFB wiki](https://github.com/justcallmekoko/ESP32Marauder/wiki/BFFB): GPS is
-wired to the **ESP32 only**, not Flipper GPIO — stock Flipper GPS apps will not
-work. On tab enter we send Marauder **`nmea`** (companion “NMEA Stream”) over
-USART @ 115200; silent retry uses **`gps -g nmea`**. Leave tab / exit sends
-**`stopscan`**. **OK** retries stream or sets/clears a **mark** (haversine distance).
+## TX: a bounded frequency-only test
 
-- Shows: fix state (3D FIX / NO FIX / STALE), UTC time, date, satellites, lat/lon
-- Fully passive — no buttons needed, just watches navigation NMEA data
-- Sentence counter (bottom-right) confirms data is flowing
-- **Up ▲ / Down ▼**: Sound / Vibro toggle
+TX is intentionally harder to activate because it radiates RF energy.
 
----
+1. Entering TX automatically preloads a fresh qualified RF candidate when one
+   exists; otherwise it uses the selected safe preset.
+2. **Short OK** performs preflight and arms. Arming emits no RF.
+3. While armed, **Up/Down** chooses a preset instead of the captured candidate.
+4. **Long OK** confirms a bounded 1–10 second carrier test.
+5. **Back** disarms/stops; leaving the tab also stops and disarms.
 
-### 5. TX Tab — Transmit (SAFETY-GATED)
+The handoff copies frequency only. It does not capture or replay modulation,
+decode a protocol, clone a remote, measure antenna output, or identify what the
+signal controls. There is no jammer, blocker, deauthentication, or arbitrary
+replay mode. Transmission is restricted by the radio, region checks, selected
+external band, and the app's explicit two-step confirmation. Use only where you
+are authorized.
 
-⚠️ **This tab radiates RF energy. Own property / licensed use only.**
+## Info
 
-**State machine (NEVER transmits accidentally):**
+**Up/Down** switches between live status and a plain-language glossary. Status
+shows radio path, Marauder/GPS evidence, recording number/errors/drops, baseline,
+lock, UART lines, and UART drops.
 
-| State | Display | How to enter | How to exit |
-|-------|---------|-------------|-------------|
-| **DISARMED** | "DISARMED" + legal text | Default on tab entry | Press OK → ARMED |
-| **ARMED** | Inverse "!! ARMED !!" + freq | Press OK from DISARMED | Long-OK → TRANSMIT, or Back → DISARMED |
-| **TRANSMITTING** | Inverse countdown screen | Long-OK while ARMED | Auto-disarms when timer ends |
+## Settings
 
-**Controls while DISARMED:**
-- **OK**: Arm the transmitter (you hear a double-beep warning)
-- Nothing else works — you MUST arm first
+Open Settings with Short Back. Use Up/Down to move and OK to change:
 
-**Controls while ARMED:**
-- **Up ▲ / Down ▼**: Change frequency (6 presets: 433.92, 868.35, 915.00, 315.00, 390.00, 418.00 MHz)
-- **Long OK**: TRANSMIT (bounded by TX Duration setting, default 3s)
-- **Back**: Disarm (back to safe state)
+- **Sound:** Geiger-style audio feedback.
+- **Vibro:** haptic feedback.
+- **Rescan:** automatic Wi-Fi/BLE scan windows.
+- **Record:** start/finish a numbered cross-tab session.
+- **ExtBand:** Auto, explicit 400 MHz, or explicit 900 MHz external-radio path.
+- **GPS Src:** BFFB Marauder or optional external GPIO NMEA.
+- **GPS in Log:** exact coordinates are omitted by default; this is a separate
+  explicit opt-in.
+- **Baseline:** save the current RSSI value for all 16 RF Survey channels.
+- **Raw Dump:** save the newest bounded full UART lines. This explicit file may
+  contain raw identifiers and GPS coordinates. A recording session has one
+  associated raw snapshot; finish/start a new session for another associated
+  snapshot.
+- **TXDur:** bounded carrier duration, 1–10 seconds.
 
-**Controls while TRANSMITTING:**
-- Full-screen inverse countdown display
-- **Auto-disarms** when timer expires
-- No user input can extend transmission
+## What gets dumped
 
-**Signal → TX flow:** When RF Survey/Sweep detects a signal above threshold, that exact frequency is stored and pre-loaded when you enter TX. Up/Down while armed selects one of the six presets; the stored signal remains shown separately.
+The main **Record** switch creates one session spanning every tab; you do not
+need to start a separate dump in each tab. It writes:
 
----
+- `session-N.csv`: a versioned, 28-column machine-readable event stream.
+- `report-N.txt`: a plain-English completion/coverage summary, strongest
+  observations, scan-window counts, TX outcome, privacy state, dropped data,
+  storage state, file paths, and limitations.
+- `uart-N.txt`: created only by **Raw Dump**; the newest 24 complete 127-character
+  UART lines, oldest first, with queue-drop and ring-overwrite counts.
 
-### 6. Info Tab — Live Status Card
+The CSV includes sequence/tick, event, source, tab/submode, per-session redacted
+identifier, RSSI, tuned frequency, channel, optional coordinates, GPS fix
+quality/satellites/speed/course/UTC/date/NMEA counters, repeated-observation
+count, state, error code, and detail. It records begin/end, tab/config changes,
+RF results/baselines/locks, accepted Wi-Fi/BLE observations and scan windows,
+GPS snapshots/marks, TX intent/result/refusal/abort, and data loss.
 
-Shows (always current, never stale):
-- App version (v3.0.1)
-- Tab count and RF sub-modes
-- UART connection state (acquired / no device)
-- Sound and Vibro actual state (ON/off)
-- TX state (disarmed / ARMED / ACTIVE)
-- Legal notice
-- API version
+Recording is bounded to 2,048 records and at most 256 KiB per session, reduced
+automatically when SD free space is low. The app refuses to start below 1 MiB
+free, syncs periodically, never overwrites an earlier numbered file, and marks
+sessions incomplete when data was dropped or storage failed. Live scanning
+continues if recording stops.
 
----
+### Where the files are
 
-## Settings Menu (Short Back from any tab)
+On the SD card:
 
-| Item | Options | Effect |
-|------|---------|--------|
-| **Sound** | ON / OFF | Geiger clicks + lock tone. Test beep on enable. |
-| **Vibro** | ON / OFF | Pulse on detection + heartbeat. Test buzz on enable. |
-| **Auto-Rescan** | ON / OFF | WiFi/BLE auto-scan every 5s |
-| **TX Duration** | 1–10s | How long TX transmits before auto-stop |
+```text
+/ext/apps_data/room_sweep/session-N.csv
+/ext/apps_data/room_sweep/report-N.txt
+/ext/apps_data/room_sweep/uart-N.txt
+```
 
-**Navigation:**
-- **Up ▲ / Down ▼**: Move selection
-- **OK**: Toggle/change selected item
-- **Short Back**: Close settings
-- **Long Back**: Exit the app
+In qFlipper or the Flipper Files browser, open `apps_data` → `room_sweep`.
+Older fixed files remain untouched at
+`/ext/apps_data/room_sweep/room_sweep/session.csv` and
+`/ext/apps_data/room_sweep/room_sweep/bffb_dump.txt`.
 
----
+## Hardware and evidence boundaries
 
-## Audio Feedback Behavior (when Sound = ON)
+| Capability | Required path | What a result means |
+|---|---|---|
+| RF Survey/Sweep/Peak | internal CC1101 or supported BFFB external CC1101 | energy was measured near a tuned frequency |
+| Wi-Fi | BFFB Marauder UART, `sniffbeacon` | an AP beacon was observed |
+| BLE | BFFB Marauder UART, `sniffbt` | an advertisement/scan response was observed |
+| GPS | BFFB Marauder NMEA or optional GPIO NMEA | checksummed navigation sentences were parsed |
+| TX | supported radio plus region/band approval | software accepted a bounded carrier request; antenna output is not measured |
 
-| Signal Level | Click Rate | Additional |
-|-------------|-----------|------------|
-| None (idle) | 1 click / 2 sec | Heartbeat — confirms audio is live |
-| Weak (-100 to -90 dBm) | 1 click / 1.2 sec | — |
-| Light (-90 to -80 dBm) | 1 click / 0.7 sec | — |
-| Moderate (-80 to -70 dBm) | 1 click / 0.35 sec | — |
-| Strong (-70 to -60 dBm) | 1 click / 0.18 sec | — |
-| Very strong (-60 to -50 dBm) | 1 click / 0.1 sec | — |
-| Extreme (> -50 dBm) | 1 click / 0.06 sec | Lock tone after 5 ticks above -75 |
-
-**Lock tone:** A sustained note plays when signal stays above -75 dBm for 5+ consecutive ticks. Stops when signal drops.
-
-## Vibro Feedback (when Vibro = ON)
-
-- **Heartbeat:** Subtle pulse every 4 seconds (confirms it's active)
-- **Detection edge:** Pulse on rising edge of signal above threshold
-- **Sustained lock:** Pulse every 800ms while signal stays above threshold
-
----
-
-## LED Behavior (always active, no setting — **per active tab**)
-
-LED / sound / vibro follow the **current tab's** signal (RF peak, WiFi/BLE
-strongest RSSI, GPS sat quality, TX arm/transmit state).
-
-| Peak RSSI | LED |
-|-----------|-----|
-| < -85 dBm | Off |
-| -85 to -75 | Green |
-| -75 to -65 | Yellow |
-| -65 to -55 | Red solid |
-| > -55 | Red blinking |
-
----
-
-## Button Summary (all contexts)
-
-| Button | RF Tab | WiFi/BLE/GPS | TX Tab | Settings |
-|--------|--------|-------------|--------|----------|
-| **◀ Left** | Prev tab | Prev tab | Prev tab | — |
-| **▶ Right** | Next tab | Next tab | Next tab | — |
-| **▲ Up** | Sub-mode ↑ | Sound toggle | Freq ↑ (armed) | Menu ↑ |
-| **▼ Down** | Sub-mode ↓ | Vibro toggle | Freq ↓ (armed) | Menu ↓ |
-| **OK** | Start sweep | Start scan | Arm TX | Toggle item |
-| **Long OK** | — | — | TRANSMIT | — |
-| **Short Back** | Settings | Settings | Disarm/Settings | Close |
-| **Long Back** | EXIT APP | EXIT APP | EXIT APP | EXIT APP |
-
----
-
-## Hardware Requirements
-
-| Feature | Hardware |
-|---------|----------|
-| RF Survey/Sweep/Peak | Flipper Zero (built-in CC1101) |
-| WiFi scanning | BFFB + Marauder Dev Board Pro, switch=ESP32, `scanall` |
-| BLE scanning | BFFB + Marauder, switch=ESP32, `sniffbt` |
-| GPS | BFFB GPS module on ESP32; Flipper uses CLI `nmea` (not GPIO GPS) |
-| TX | Flipper Zero (built-in CC1101) |
-| Audio | Flipper Zero speaker |
-| Vibro | Flipper Zero vibration motor |
-
----
-
-## Troubleshooting
-
-| Symptom | Cause | Fix |
-|---------|-------|-----|
-| No sound after enabling | Global Flipper volume at 0 | App forces volume — should work. Check speaker isn't physically blocked. |
-| WiFi shows "No UART" | USART unavailable | Release the UART from another app, then plug in BFFB via UART (PC0/PC1) |
-| WiFi shows data but no RSSI | Parser format mismatch | Capture serial output, report for parser update |
-| TX won't transmit | Still DISARMED | Press OK to arm first, then Long-OK |
-| Settings "crashes" | Was InputTypePress bug | Fixed in v3.0.1 — update |
-| RF bars don't move | Normal in quiet environment | Walk near a WiFi router, radio, or remote control |
+If the app says `not confirmed`, `unavailable`, `stale`, `partial`, or
+`incomplete`, treat that wording literally. It is not evidence of absence.

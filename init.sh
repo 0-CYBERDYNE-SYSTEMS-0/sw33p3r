@@ -15,6 +15,22 @@ echo "== host RF/TX state helpers =="
 cc -std=c11 -Wall -Wextra -Werror -I. tests/test_rf_tx_state.c -o /tmp/room_sweep_rf_tx_state_test
 /tmp/room_sweep_rf_tx_state_test
 
+echo "== host wireless state =="
+cc -std=c11 -Wall -Wextra -Werror -pedantic -I. tests/test_wireless_state.c -o /tmp/room_sweep_wireless_state_test
+/tmp/room_sweep_wireless_state_test
+
+echo "== host GPS presentation state =="
+cc -std=c11 -Wall -Wextra -Werror -I. tests/test_gps_state.c -o /tmp/room_sweep_gps_state_test
+/tmp/room_sweep_gps_state_test
+
+echo "== host recorder state =="
+cc -std=c11 -Wall -Wextra -Werror -pedantic -I. tests/test_record_state.c -o /tmp/room_sweep_record_state_test
+/tmp/room_sweep_record_state_test
+
+echo "== host report state =="
+cc -std=c11 -Wall -Wextra -Werror -I. tests/test_report_state.c -o /tmp/room_sweep_report_state_test
+/tmp/room_sweep_report_state_test
+
 if [[ -f tests/test_scan_logic.c ]]; then
   echo "== host scan/GPS helpers =="
   cc -std=c11 -Wall -Wextra -Werror -I. tests/test_scan_logic.c -o /tmp/test_scan_logic

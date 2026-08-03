@@ -87,6 +87,32 @@ static inline RoomSweepInputAction room_sweep_input_action(
     }
 }
 
+/*
+ * Advance a browse cursor while keeping it inside [0, count).  Invalid
+ * cursors are normalized to the first item; non-browse actions are no-ops.
+ */
+static inline unsigned int room_sweep_cursor_step(
+    unsigned int cursor,
+    unsigned int count,
+    RoomSweepInputAction action) {
+    if(count == 0u) return 0u;
+    if(cursor >= count) cursor = 0u;
+
+    if(action == RoomSweepInputBrowseUp) {
+        return cursor == 0u ? count - 1u : cursor - 1u;
+    }
+    if(action == RoomSweepInputBrowseDown) {
+        return cursor + 1u == count ? 0u : cursor + 1u;
+    }
+    return cursor;
+}
+
+/* Only short Left/Right may change tabs; long and repeat phases are separate
+ * actions (or None) and must be handled by their explicit owning context. */
+static inline bool room_sweep_input_is_tab_navigation(RoomSweepInputAction action) {
+    return action == RoomSweepInputNavigatePrev || action == RoomSweepInputNavigateNext;
+}
+
 typedef enum {
     RoomSweepBackCloseSettings,
     RoomSweepBackOpenSettings,

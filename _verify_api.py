@@ -44,7 +44,7 @@ CALL_RE = re.compile(
     r'|expansion_[a-z0-9_]+'
     r'|notification_message'
     r'|notification_message_block'
-    r')\b'
+    r')\b\s*(?=\()'
 )
 
 files = sorted(glob.glob(str(APP_DIR / "*.c")) + glob.glob(str(APP_DIR / "*.h")))
