@@ -103,6 +103,25 @@ static inline bool room_sweep_external_band_allows(uint8_t ext_band, uint32_t fr
     return false;
 }
 
+/*
+ * Map a frequency onto the BFFB dual-CC1101 top-switch path.
+ * Returns 1 (400), 2 (900), or 0 if the freq is not on those paths
+ * (typically the ~300 MHz CC1101 band — internal radio only).
+ */
+static inline uint8_t room_sweep_external_band_for_frequency(uint32_t frequency_hz) {
+    if(frequency_hz >= 387000000U && frequency_hz <= 464000000U) return 1;
+    if(frequency_hz >= 779000000U && frequency_hz <= 928000000U) return 2;
+    return 0;
+}
+
+/* True if frequency sits in any standard CC1101 operating band. */
+static inline bool room_sweep_cc1101_band_covers(uint32_t frequency_hz) {
+    if(frequency_hz >= 300000000U && frequency_hz <= 348000000U) return true;
+    if(frequency_hz >= 387000000U && frequency_hz <= 464000000U) return true;
+    if(frequency_hz >= 779000000U && frequency_hz <= 928000000U) return true;
+    return false;
+}
+
 typedef enum {
     RoomSweepTxWorkerIdle = 0,
     RoomSweepTxWorkerRunning,
