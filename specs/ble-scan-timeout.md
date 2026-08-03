@@ -19,7 +19,7 @@ Secondary: Marauder `sniffbt` only prints **first sighting** of each BLE device 
 2. Timeout → `ERR` only when **zero** parsed results for the full timeout window.
 3. If at least one result exists, silence does **not** force `ERR` (BLE dedup is expected).
 4. Auto-rescan may still restart a scan on interval when auto-rescan is ON.
-5. Commands: `sniffbt` / `scanall` (JCMK Marauder CLI; `scanap` removed from current CommandLine.h).
+5. Commands: `sniffbt` / `sniffbeacon` (JCMK Marauder CLI; `scanap` removed from current CommandLine.h).
 6. BLE line format: `-60 Device: NameOrMac` (verified in WiFiScan.cpp).
 
 ## Verification

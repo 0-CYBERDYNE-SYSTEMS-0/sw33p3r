@@ -37,7 +37,8 @@ relative signal strength—not distance, identity, ownership, or intent.
 The BFFB Marauder connection passively listens for AP beacon observations.
 
 - **Up/Down:** browse every stored AP row.
-- **Short OK:** start a new 30-second scan window.
+- **Long Left/Right:** scan window 15 / 30 / 60 seconds.
+- **Short OK:** start a new scan window.
 - **Long OK:** lock/unlock the selected row for relative-strength feedback.
 
 Each row shows its display name, redacted/present hardware identity on disk,
@@ -51,10 +52,11 @@ window with no observation does not prove a device is absent or inactive.
 
 ## BLE
 
-The BFFB Marauder connection performs active BLE scanning.
+The BFFB Marauder connection performs active BLE scanning (`sniffbt` over UART — not Flipper native BLE).
 
 - **Up/Down:** browse every stored BLE row.
-- **Short OK:** start a new 30-second scan window.
+- **Long Left/Right:** scan window 15 / 30 / 60 seconds.
+- **Short OK:** start a new scan window.
 - **Long OK:** lock/unlock the selected row.
 
 The app records advertisements/scan responses, RSSI, age, and observation count.
@@ -83,10 +85,14 @@ TX is intentionally harder to activate because it radiates RF energy.
 
 1. Entering TX automatically preloads a fresh qualified RF candidate when one
    exists; otherwise it uses the selected safe preset.
-2. **Short OK** performs preflight and arms. Arming emits no RF.
-3. While armed, **Up/Down** chooses a preset instead of the captured candidate.
-4. **Long OK** confirms a bounded 1–10 second carrier test.
-5. **Back** disarms/stops; leaving the tab also stops and disarms.
+2. On external radio with **ExtBand AUTO**, TX is blocked until you set
+   **400** or **900** (Settings → Radio → ExtBand, or **Long Left/Right** on
+   the TX tab while disarmed).
+3. **Up/Down** chooses a frequency preset while disarmed or armed.
+4. **Short OK** performs preflight and arms. Arming emits no RF.
+5. **Long OK** confirms a bounded 1–10 second carrier test.
+6. **Back** disarms/stops; leaving the tab also stops and disarms.
+   Refusal reasons (policy, band, expired candidate) stay on the DISARMED screen.
 
 The handoff copies frequency only. It does not capture or replay modulation,
 decode a protocol, clone a remote, measure antenna output, or identify what the
@@ -103,22 +109,33 @@ lock, UART lines, and UART drops.
 
 ## Settings
 
-Open Settings with Short Back. Use Up/Down to move and OK to change:
+Open Settings with Short Back. **Long Left/Right** changes group; **Up/Down**
+moves within the group; **OK** changes the value:
 
+**Feedback**
 - **Sound:** Geiger-style audio feedback.
 - **Vibro:** haptic feedback.
+
+**Wireless**
 - **Rescan:** automatic Wi-Fi/BLE scan windows.
-- **Record:** start/finish a numbered cross-tab session.
+- **ScanWin:** 15 / 30 / 60 second window (also Long L/R on Wi-Fi/BLE tabs).
+
+**Radio**
 - **ExtBand:** Auto, explicit 400 MHz, or explicit 900 MHz external-radio path.
+  External TX requires 400 or 900 (not Auto).
+- **TXDur:** bounded carrier duration, 1–10 seconds.
+
+**GPS**
 - **GPS Src:** BFFB Marauder or optional external GPIO NMEA.
-- **GPS in Log:** exact coordinates are omitted by default; this is a separate
+- **GPS Log:** exact coordinates are omitted by default; this is a separate
   explicit opt-in.
+
+**Session**
+- **Record:** start/finish a numbered cross-tab session (`session-N.csv` +
+  `report-N.txt`). Status also shows on the Info tab.
 - **Baseline:** save the current RSSI value for all 16 RF Survey channels.
 - **Raw Dump:** save the newest bounded full UART lines. This explicit file may
-  contain raw identifiers and GPS coordinates. A recording session has one
-  associated raw snapshot; finish/start a new session for another associated
-  snapshot.
-- **TXDur:** bounded carrier duration, 1–10 seconds.
+  contain raw identifiers and GPS coordinates.
 
 ## What gets dumped
 
