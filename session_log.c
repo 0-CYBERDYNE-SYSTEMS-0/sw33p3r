@@ -13,6 +13,7 @@
 #define MIN_FREE_SPACE (1024U * 1024U)
 #define SYNC_INTERVAL_MS 5000U
 #define SYNC_INTERVAL_BYTES 4096U
+#define END_RECORD_RESERVE_BYTES 256U
 
 typedef struct {
     Storage* storage;
@@ -88,7 +89,14 @@ static bool choose_ordinal(Storage* storage, uint32_t* ordinal) {
 
 static bool checked_write(File* file, const char* data, size_t size) {
     if(!file || !data || size == 0 || s_log.record.storage_failed) return false;
-    if(!room_sweep_record_state_can_append(&s_log.record, size)) {
+    bool end_reserved = s_log.record.records_written < s_log.record.max_records &&
+                        s_log.record.max_records - s_log.record.records_written > 1U &&
+                        s_log.record.bytes_written <= s_log.record.max_bytes &&
+                        END_RECORD_RESERVE_BYTES <=
+                            s_log.record.max_bytes - s_log.record.bytes_written &&
+                        size <= s_log.record.max_bytes - s_log.record.bytes_written -
+                                    END_RECORD_RESERVE_BYTES;
+    if(!end_reserved || !room_sweep_record_state_can_append(&s_log.record, size)) {
         s_log.record.dropped_records++;
         room_sweep_report_note_drop(&s_log.report, 1);
         s_log.budget_exhausted = true;
@@ -103,6 +111,22 @@ static bool checked_write(File* file, const char* data, size_t size) {
         return false;
     }
     s_log.bytes_since_sync += (uint32_t)size;
+    return true;
+}
+
+static bool checked_write_end(File* file, const char* data, size_t size) {
+    if(!file || !data || size == 0 || s_log.record.storage_failed ||
+       !room_sweep_record_state_can_append(&s_log.record, size)) {
+        return false;
+    }
+    if(storage_file_write(file, data, size) != size) {
+        note_storage_failure();
+        return false;
+    }
+    if(!room_sweep_record_state_commit_append(&s_log.record, size)) {
+        note_storage_failure();
+        return false;
+    }
     return true;
 }
 
@@ -297,7 +321,6 @@ bool session_log_write_event(const SessionLogEvent* event) {
     if(event->has_position) {
         snprintf(latitude, sizeof(latitude), "%.6f", (double)event->latitude);
         snprintf(longitude, sizeof(longitude), "%.6f", (double)event->longitude);
-        room_sweep_report_set_gps_included(&s_log.report);
     }
     if(event->has_gps) {
         snprintf(fix_quality, sizeof(fix_quality), "%u", event->fix_quality);
@@ -344,6 +367,7 @@ bool session_log_write_event(const SessionLogEvent* event) {
         return false;
     }
     if(!checked_write(s_log.session_file, line, (size_t)written)) return false;
+    if(event->has_position) room_sweep_report_set_gps_included(&s_log.report);
     s_log.sequence++;
     int index = sensor_index(source_clean);
     if((strcmp(event_clean, "observation") == 0 ||
@@ -365,9 +389,10 @@ bool session_log_write_event(const SessionLogEvent* event) {
     if(strcmp(source_clean, "TX") == 0) {
         if(strcmp(event_clean, "tx_arm") == 0)
             room_sweep_report_set_tx(&s_log.report, RoomSweepReportTxArmed);
-        else if(strcmp(event_clean, "tx_started") == 0 ||
-                strcmp(event_clean, "tx_end") == 0)
+        else if(strcmp(event_clean, "tx_started") == 0)
             room_sweep_report_set_tx(&s_log.report, RoomSweepReportTxStarted);
+        else if(strcmp(event_clean, "tx_end") == 0)
+            room_sweep_report_set_tx(&s_log.report, RoomSweepReportTxCompleted);
         else if(strcmp(event_clean, "tx_refused") == 0)
             room_sweep_report_set_tx(&s_log.report, RoomSweepReportTxRefused);
         else if(strcmp(event_clean, "tx_aborted") == 0)
@@ -485,9 +510,10 @@ static bool write_report(void) {
 void session_log_end(Storage* storage) {
     UNUSED(storage);
     if(!s_log.session_file) return;
-    bool clean = !session_log_has_error();
+    bool clean = !session_log_has_error() && s_log.record.dropped_records == 0;
     if(session_log_is_open()) {
         char end_line[256];
+        uint32_t final_records = s_log.record.records_written + 1U;
         int written = snprintf(
             end_line,
             sizeof(end_line),
@@ -495,17 +521,12 @@ void session_log_end(Storage* storage) {
             (unsigned long)s_log.sequence,
             (unsigned long)furi_get_tick(),
             clean ? "complete" : "incomplete",
-            (unsigned long)s_log.record.records_written,
+            (unsigned long)final_records,
             (unsigned long)s_log.record.dropped_records);
         bool end_ok = written > 0 && written < (int)sizeof(end_line);
-        if(end_ok && s_log.budget_exhausted) {
-            end_ok = storage_file_write(s_log.session_file, end_line, (size_t)written) ==
-                         (size_t)written &&
+        if(end_ok)
+            end_ok = checked_write_end(s_log.session_file, end_line, (size_t)written) &&
                      storage_file_sync(s_log.session_file);
-        } else if(end_ok) {
-            end_ok = checked_write(s_log.session_file, end_line, (size_t)written) &&
-                     sync_session_if_due(true);
-        }
         if(!end_ok) {
             clean = false;
             note_storage_failure();
@@ -537,9 +558,10 @@ bool session_log_write_dump(
         return false;
     }
 
+    bool active_session = session_log_is_open();
     uint32_t ordinal = s_log.ordinal;
     char path[SESSION_PATH_MAX];
-    if(ordinal == 0) {
+    if(!active_session || ordinal == 0) {
         if(!choose_ordinal(storage, &ordinal)) {
             session_log_note_storage_failure();
             return false;
@@ -550,16 +572,19 @@ bool session_log_write_dump(
         return false;
     }
     if(storage_file_exists(storage, path)) {
-        if(session_log_is_open()) return false;
+        if(active_session) return false;
         if(!choose_ordinal(storage, &ordinal) ||
            !make_path(RoomSweepRecordFileUart, ordinal, path, sizeof(path))) {
             session_log_note_storage_failure();
             return false;
         }
     }
-    if(s_log.ordinal == 0 && !session_log_is_open()) {
+    if(!active_session) {
         s_log.ordinal = ordinal;
+        s_log.session_path[0] = '\0';
+        s_log.report_path[0] = '\0';
         strncpy(s_log.uart_path, path, sizeof(s_log.uart_path) - 1U);
+        s_log.uart_path[sizeof(s_log.uart_path) - 1U] = '\0';
     }
 
     File* file = storage_file_alloc(storage);

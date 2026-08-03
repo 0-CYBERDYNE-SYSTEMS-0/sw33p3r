@@ -17,6 +17,7 @@ typedef enum {
     RoomSweepReportTxNone = 0,
     RoomSweepReportTxArmed,
     RoomSweepReportTxStarted,
+    RoomSweepReportTxCompleted,
     RoomSweepReportTxRefused,
     RoomSweepReportTxAborted,
 } RoomSweepReportTxState;
@@ -26,6 +27,7 @@ typedef struct {
     uint8_t sensors_confirmed;
     uint8_t sensors_unavailable;
     RoomSweepReportTxState tx_state;
+    bool tx_started;
     uint32_t dropped_events;
     bool storage_error;
     bool gps_included;
@@ -89,7 +91,9 @@ static inline void room_sweep_report_set_gps_omitted(RoomSweepReportState* state
 static inline void room_sweep_report_set_tx(
     RoomSweepReportState* state,
     RoomSweepReportTxState tx_state) {
-    if(state) state->tx_state = tx_state;
+    if(!state) return;
+    if(tx_state == RoomSweepReportTxStarted) state->tx_started = true;
+    state->tx_state = tx_state;
 }
 
 static inline bool room_sweep_report_is_clean(const RoomSweepReportState* state) {
@@ -102,6 +106,8 @@ static inline const char* room_sweep_report_tx_text(RoomSweepReportTxState tx_st
         return "armed";
     case RoomSweepReportTxStarted:
         return "started";
+    case RoomSweepReportTxCompleted:
+        return "completed";
     case RoomSweepReportTxRefused:
         return "refused";
     case RoomSweepReportTxAborted:
@@ -183,7 +189,15 @@ static inline size_t room_sweep_report_format(
         &used,
         (uint8_t)(all_sensors &
                   (uint8_t)~(state->sensors_confirmed | state->sensors_unavailable)));
-    room_sweep_report_append(output, capacity, &used, "\nTX: %s\n", room_sweep_report_tx_text(state->tx_state));
+    room_sweep_report_append(
+        output,
+        capacity,
+        &used,
+        "\nTX: %s%s\n",
+        room_sweep_report_tx_text(state->tx_state),
+        state->tx_started && state->tx_state != RoomSweepReportTxStarted &&
+                state->tx_state != RoomSweepReportTxCompleted ?
+            " (started earlier)" : "");
     room_sweep_report_append(output, capacity, &used, "Dropped events: %lu\n", (unsigned long)state->dropped_events);
     room_sweep_report_append(output, capacity, &used, "Storage: %s\n", state->storage_error ? "error" : "ok");
     room_sweep_report_append(
