@@ -69,14 +69,15 @@ TX NEVER activates on tab entry. Multiple deliberate actions required.
 
 ## Control scheme
 
-| Button | RF tab | WiFi/BLE | TX tab | Other |
-|--------|--------|----------|--------|-------|
-| ◀ / ▶ | Cycle tabs | Cycle tabs | Cycle tabs | Cycle tabs |
-| ▲ / ▼ | Sub-mode cycle | Sound/Vibro | Freq select | Sound/Vibro |
-| OK | Start sweep/scan | Start scan | Arm TX | — |
-| Long OK | — | — | TRANSMIT | — |
-| Back (short) | Settings | Settings | Disarm/Settings | Settings |
-| Back (long) | Exit | Exit | Exit | Exit |
+| Button | RF tab | WiFi/BLE | TX tab | Settings | Other |
+|--------|--------|----------|--------|----------|-------|
+| ◀ / ▶ | Cycle tabs | Cycle tabs | Cycle tabs | Group change | Cycle tabs |
+| Long ◀ / ▶ | Band (Sweep idle) | Scan window 15/30/60s | ExtBand (disarmed+EXT) | Group change | — |
+| ▲ / ▼ | Sub-mode cycle | Browse rows | Freq preset | Item in group | Page/browse |
+| OK | Start sweep/scan | Start scan | Arm TX | Toggle/act | — |
+| Long OK | Lock RF target | Lock row | TRANSMIT (armed) | — | — |
+| Back (short) | Settings | Settings | Disarm/Settings | Close | Settings |
+| Back (long) | Exit | Exit | Exit | Exit | Exit |
 
 ## Definition of done
 

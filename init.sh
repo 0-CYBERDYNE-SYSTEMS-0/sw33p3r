@@ -31,6 +31,10 @@ echo "== host report state =="
 cc -std=c11 -Wall -Wextra -Werror -I. tests/test_report_state.c -o /tmp/room_sweep_report_state_test
 /tmp/room_sweep_report_state_test
 
+echo "== host settings/scan window =="
+cc -std=c11 -Wall -Wextra -Werror -I. tests/test_settings_state.c -o /tmp/room_sweep_settings_state_test
+/tmp/room_sweep_settings_state_test
+
 if [[ -f tests/test_scan_logic.c ]]; then
   echo "== host scan/GPS helpers =="
   cc -std=c11 -Wall -Wextra -Werror -I. tests/test_scan_logic.c -o /tmp/test_scan_logic

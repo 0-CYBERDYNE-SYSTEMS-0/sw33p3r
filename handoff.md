@@ -125,7 +125,7 @@ TX NEVER fires on tab entry. Multiple deliberate actions required.
 ### Marauder Protocol (JCMK BFFB = Dev Board Pro)
 See `docs/BFFB_MOMENTUM.md` for wiki + source citations.
 - UART: USART1 @ **115200**, `expansion_disable`, TX ends with **`\\n`** (companion style)
-- WiFi: **`scanall`** (not legacy `scanap` — removed from current CommandLine.h)
+- WiFi: **`sniffbeacon`** (AP beacon path; not legacy `scanap`. `scanall` is AP+STA and not used here)
 - BLE: **`sniffbt`** → `-60 Device: NameOrMac`
 - GPS: **`nmea`** stream; GPS is on ESP32 only (BFFB wiki — not Flipper GPIO)
 - Stop: **`stopscan`** (companion also uses `stopscan -f`)
