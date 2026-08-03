@@ -376,6 +376,7 @@ static bool record_enqueue(
     uint32_t freq_hz,
     uint8_t channel,
     const char* detail);
+static bool tx_pick_allowed_preset(App* app);
 
 /* Shared ExtBand apply path for Settings and TX tab Long-L/R. */
 static void apply_ext_band_pref(App* app, ExtBandPref band) {
@@ -395,10 +396,10 @@ static void apply_ext_band_pref(App* app, ExtBandPref band) {
         app->target_rssi = -127;
     }
     if(app->ext_band == ExtBand400) {
-        app->tx_freq_idx = 0;
+        app->tx_freq_idx = 0; /* 433.92 default for 400 path; may be adjusted below */
         app->tx_freq_hz = tx_freq_presets[app->tx_freq_idx];
     } else if(app->ext_band == ExtBand900) {
-        app->tx_freq_idx = 2;
+        app->tx_freq_idx = 2; /* 915 default for 900 path */
         app->tx_freq_hz = tx_freq_presets[app->tx_freq_idx];
     }
     if(app->radio_path == RadioPathExternal && app->ext_band != ExtBandAuto) {
@@ -407,6 +408,10 @@ static void apply_ext_band_pref(App* app, ExtBandPref band) {
     if(app->tx_refusal == RoomSweepTxRefusalExtBandUnknown &&
        app->ext_band != ExtBandAuto) {
         app->tx_refusal = RoomSweepTxRefusalNone;
+    }
+    /* Prefer a region+radio-legal preset in the new band when possible. */
+    if(app->ext_band != ExtBandAuto) {
+        (void)tx_pick_allowed_preset(app);
     }
     record_enqueue(
         app,
@@ -832,12 +837,40 @@ static bool tx_frequency_preflight(App* app) {
             return false;
         }
     }
-    if(!furi_hal_region_is_provisioned() ||
-       !furi_hal_region_is_frequency_allowed(app->tx_freq_hz)) {
+    /* Unprovisioned region ("--") is not a ban; see room_sweep_tx_region_allows. */
+    if(!room_sweep_tx_region_allows(
+           furi_hal_region_is_provisioned(),
+           furi_hal_region_is_frequency_allowed(app->tx_freq_hz))) {
         app->tx_refusal = RoomSweepTxRefusalPolicy;
         return false;
     }
     return true;
+}
+
+/* Prefer a preset that passes radio + ExtBand + region gates. */
+static bool tx_pick_allowed_preset(App* app) {
+    if(!app->radio) return false;
+    uint8_t start = app->tx_freq_idx % TX_FREQ_PRESET_COUNT;
+    for(uint8_t n = 0; n < TX_FREQ_PRESET_COUNT; n++) {
+        uint8_t idx = (uint8_t)((start + n) % TX_FREQ_PRESET_COUNT);
+        uint32_t hz = tx_freq_presets[idx];
+        if(!subghz_devices_is_frequency_valid(app->radio, hz)) continue;
+        if(app->radio_path == RadioPathExternal) {
+            if(app->ext_band == ExtBandAuto) continue;
+            if(!room_sweep_external_band_allows((uint8_t)app->ext_band, hz)) continue;
+        }
+        if(!room_sweep_tx_region_allows(
+               furi_hal_region_is_provisioned(),
+               furi_hal_region_is_frequency_allowed(hz))) {
+            continue;
+        }
+        app->tx_freq_idx = idx;
+        app->tx_freq_hz = hz;
+        app->tx_from_candidate = false;
+        room_sweep_candidate_invalidate(&app->tx_candidate);
+        return true;
+    }
+    return false;
 }
 
 /* ================================================================== */
@@ -1959,14 +1992,15 @@ static int32_t tx_thread(void* ctx) {
         subghz_devices_idle(app->radio);
         subghz_devices_load_preset(app->radio, FuriHalSubGhzPresetOok650Async, NULL);
         app->tx_tuned_freq_hz = subghz_devices_set_frequency(app->radio, app->tx_freq_hz);
-        bool tuned_allowed = app->tx_tuned_freq_hz > 0 &&
-                             subghz_devices_is_frequency_valid(
-                                 app->radio, app->tx_tuned_freq_hz) &&
-                             furi_hal_region_is_provisioned() &&
-                             furi_hal_region_is_frequency_allowed(app->tx_tuned_freq_hz) &&
-                             (app->radio_path != RadioPathExternal ||
-                              room_sweep_external_band_allows(
-                                  (uint8_t)app->ext_band, app->tx_tuned_freq_hz));
+        bool hardware_ok = app->tx_tuned_freq_hz > 0 &&
+                           subghz_devices_is_frequency_valid(
+                               app->radio, app->tx_tuned_freq_hz) &&
+                           (app->radio_path != RadioPathExternal ||
+                            room_sweep_external_band_allows(
+                                (uint8_t)app->ext_band, app->tx_tuned_freq_hz));
+        bool region_ok = room_sweep_tx_region_allows(
+            furi_hal_region_is_provisioned(),
+            furi_hal_region_is_frequency_allowed(app->tx_tuned_freq_hz));
         bool start_ok = false;
         furi_mutex_acquire(app->mutex, FuriWaitForever);
         bool candidate_ready =
@@ -1975,8 +2009,10 @@ static int32_t tx_thread(void* ctx) {
              app->tx_candidate.tuned_hz == app->tx_freq_hz);
         if(!candidate_ready) {
             app->tx_refusal = RoomSweepTxRefusalExpiredCandidate;
-        } else if(!tuned_allowed) {
+        } else if(!hardware_ok) {
             app->tx_refusal = RoomSweepTxRefusalInvalidFrequency;
+        } else if(!region_ok) {
+            app->tx_refusal = RoomSweepTxRefusalPolicy;
         } else if(!app->running || !app->tx_active ||
                   app->tx_worker_state != RoomSweepTxWorkerRunning) {
             app->tx_refusal = RoomSweepTxRefusalCanceled;
@@ -2835,6 +2871,8 @@ static void draw_tx_tab(Canvas* canvas, App* app) {
         bool candidate_ready = app->tx_from_candidate &&
                                room_sweep_candidate_is_fresh(
                                    &app->tx_candidate, furi_get_tick());
+        const char* reg_name = furi_hal_region_get_name();
+        if(!reg_name || !reg_name[0]) reg_name = "--";
 
         /* Refusal / band gate gets the prominent line. */
         if(refusal[0]) {
@@ -2843,6 +2881,9 @@ static void draw_tx_tab(Canvas* canvas, App* app) {
             canvas_set_font(canvas, FontKeyboard);
             if(app->tx_refusal == RoomSweepTxRefusalExtBandUnknown || ext_auto_blocks) {
                 canvas_draw_str(canvas, 2, 48, "Hold L/R: ExtBand 400/900");
+            } else if(app->tx_refusal == RoomSweepTxRefusalPolicy) {
+                snprintf(buf, sizeof(buf), "region %s — U/D other freq", reg_name);
+                canvas_draw_str(canvas, 2, 48, buf);
             } else {
                 canvas_draw_str(canvas, 2, 48, "Carrier only; no replay");
             }
@@ -2853,11 +2894,13 @@ static void draw_tx_tab(Canvas* canvas, App* app) {
             canvas_draw_str(canvas, 2, 48, "Hold L/R band before arm");
         } else {
             canvas_draw_str(canvas, 2, 38, "Carrier only; no replay");
-            canvas_draw_str(
-                canvas,
-                2,
-                48,
-                candidate_ready ? "RX candidate ready" : "U/D=freq preset");
+            snprintf(
+                buf,
+                sizeof(buf),
+                "%s reg:%s",
+                candidate_ready ? "RX cand" : "U/D=freq",
+                reg_name);
+            canvas_draw_str(canvas, 2, 48, buf);
         }
 
         snprintf(buf, sizeof(buf), "%lu.%03lu %ds band:%s",
@@ -3667,18 +3710,30 @@ int32_t room_sweep_app(void* p) {
                     long_press);
 
                 if(needs_preflight && !frequency_valid) {
-                    record_enqueue(
-                        app,
-                        "tx_refused",
-                        "TX",
-                        app->tx_from_candidate ? "rx_candidate" : "preset",
-                        0,
-                        app->tx_freq_hz,
-                        0,
-                        room_sweep_tx_refusal_text(app->tx_refusal));
-                    tx_recover_from_candidate_refusal(app);
-                    app->tx_state = TxDisarmed;
-                    continue;
+                    /* Region-block on a preset: try another legal preset once. */
+                    if(app->tx_refusal == RoomSweepTxRefusalPolicy &&
+                       !app->tx_from_candidate && tx_pick_allowed_preset(app) &&
+                       tx_frequency_preflight(app)) {
+                        frequency_valid = true;
+                        decision = room_sweep_tx_ok_decision(
+                            input_state,
+                            app->tx_worker_state,
+                            frequency_valid,
+                            long_press);
+                    } else {
+                        record_enqueue(
+                            app,
+                            "tx_refused",
+                            "TX",
+                            app->tx_from_candidate ? "rx_candidate" : "preset",
+                            0,
+                            app->tx_freq_hz,
+                            0,
+                            room_sweep_tx_refusal_text(app->tx_refusal));
+                        tx_recover_from_candidate_refusal(app);
+                        app->tx_state = TxDisarmed;
+                        continue;
+                    }
                 }
 
                 if(decision == RoomSweepTxDecisionArm) {

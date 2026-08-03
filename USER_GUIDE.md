@@ -92,14 +92,16 @@ TX is intentionally harder to activate because it radiates RF energy.
 4. **Short OK** performs preflight and arms. Arming emits no RF.
 5. **Long OK** confirms a bounded 1–10 second carrier test.
 6. **Back** disarms/stops; leaving the tab also stops and disarms.
-   Refusal reasons (policy, band, expired candidate) stay on the DISARMED screen.
+   Refusal reasons (band, expired candidate, real region table) stay on DISARMED.
+   Flipper region `--` (unprovisioned) is **not** a full TX ban; radio + ExtBand
+   still apply. A provisioned region that forbids a frequency still blocks it.
 
 The handoff copies frequency only. It does not capture or replay modulation,
 decode a protocol, clone a remote, measure antenna output, or identify what the
 signal controls. There is no jammer, blocker, deauthentication, or arbitrary
-replay mode. Transmission is restricted by the radio, region checks, selected
-external band, and the app's explicit two-step confirmation. Use only where you
-are authorized.
+replay mode. Transmission is restricted by the radio, installed region table
+(when present), selected external band, and two-step confirmation. Use only
+where you are authorized.
 
 ## Info
 
