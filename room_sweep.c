@@ -206,7 +206,8 @@ typedef struct {
     int8_t wifi_strongest;
     uint32_t wifi_last_scan_tick;
     uint32_t wifi_scan_end_tick;
-    uint16_t wifi_table_full;
+    uint32_t wifi_table_full;
+    uint16_t wifi_window_table_full;
     uint16_t wifi_window_observations;
     uint8_t wifi_scroll;
     uint8_t wifi_last_updated;
@@ -217,7 +218,8 @@ typedef struct {
     int8_t ble_strongest;
     uint32_t ble_last_scan_tick;
     uint32_t ble_scan_end_tick;
-    uint16_t ble_table_full;
+    uint32_t ble_table_full;
+    uint16_t ble_window_table_full;
     uint16_t ble_window_observations;
     uint8_t ble_scroll;
     uint8_t ble_last_updated;
@@ -239,7 +241,6 @@ typedef struct {
     volatile uint32_t record_dropped_total;
     uint32_t reported_uart_drops;
     uint32_t reported_gps_drops;
-    uint32_t reported_dump_overwrites;
     uint32_t reported_wifi_table_full;
     uint32_t reported_ble_table_full;
 
@@ -435,8 +436,8 @@ static bool record_enqueue_ex(
     }
     uint8_t next = (uint8_t)((app->record_head + 1U) % RECORD_QUEUE_CAPACITY);
     if(next == app->record_tail) {
-        app->record_queue_drops++;
-        app->record_dropped_total++;
+        if(app->record_queue_drops < UINT32_MAX) app->record_queue_drops++;
+        if(app->record_dropped_total < UINT32_MAX) app->record_dropped_total++;
         furi_mutex_release(app->record_mutex);
         return false;
     }
@@ -536,7 +537,6 @@ static void record_drain(App* app) {
     if(!session_log_is_open()) return;
     uint32_t uart_drops = app->uart_line_drops;
     uint32_t gps_drops = app->gps_byte_drops;
-    uint32_t dump_overwrites = app->dump_overwrites;
     uint32_t wifi_table_full = app->wifi_table_full;
     uint32_t ble_table_full = app->ble_table_full;
     record_transport_drop(
@@ -553,12 +553,6 @@ static void record_drain(App* app) {
         "GPS bytes were lost before NMEA parsing");
     record_transport_drop(
         app,
-        "SYSTEM",
-        dump_overwrites - app->reported_dump_overwrites,
-        "uart_snapshot_bounded",
-        "old raw UART snapshot lines were overwritten");
-    record_transport_drop(
-        app,
         "WIFI",
         wifi_table_full - app->reported_wifi_table_full,
         "wifi_table_full",
@@ -571,7 +565,6 @@ static void record_drain(App* app) {
         "accepted observations exceeded the on-screen table");
     app->reported_uart_drops = uart_drops;
     app->reported_gps_drops = gps_drops;
-    app->reported_dump_overwrites = dump_overwrites;
     app->reported_wifi_table_full = wifi_table_full;
     app->reported_ble_table_full = ble_table_full;
 
@@ -584,6 +577,16 @@ static void record_drain(App* app) {
             drops = app->record_queue_drops;
             app->record_queue_drops = 0;
         }
+        furi_mutex_release(app->record_mutex);
+        record_transport_drop(
+            app,
+            "SYSTEM",
+            drops,
+            "record_queue_full",
+            "recorder events were lost before storage");
+        if(session_log_has_error()) break;
+
+        furi_mutex_acquire(app->record_mutex, FuriWaitForever);
         if(app->record_tail != app->record_head) {
             pending = app->record_queue[app->record_tail];
             app->record_tail =
@@ -591,7 +594,6 @@ static void record_drain(App* app) {
             has_event = true;
         }
         furi_mutex_release(app->record_mutex);
-        if(drops) session_log_note_drop(drops);
         if(!has_event) break;
         SessionLogEvent event = {
             .event = pending.event,
@@ -620,7 +622,11 @@ static void record_drain(App* app) {
             .error_code = pending.error_code,
             .detail = pending.detail,
         };
-        session_log_write_event(&event);
+        uint32_t dropped_before = session_log_dropped();
+        if(!session_log_write_event(&event) &&
+           session_log_dropped() == dropped_before) {
+            session_log_note_drop(1);
+        }
         if(session_log_has_error()) break;
     }
     app->record_dropped_total = session_log_dropped();
@@ -869,7 +875,7 @@ static void clear_wifi_results(App* app) {
     app->wifi_strongest = -127;
     app->wifi_last_scan_tick = 0;
     app->wifi_scan_end_tick = 0;
-    app->wifi_table_full = 0;
+    app->wifi_window_table_full = 0;
     app->wifi_window_observations = 0;
     app->wifi_scroll = 0;
     furi_mutex_release(app->mutex);
@@ -882,7 +888,7 @@ static void clear_ble_results(App* app) {
     app->ble_strongest = -127;
     app->ble_last_scan_tick = 0;
     app->ble_scan_end_tick = 0;
-    app->ble_table_full = 0;
+    app->ble_window_table_full = 0;
     app->ble_window_observations = 0;
     app->ble_scroll = 0;
     furi_mutex_release(app->mutex);
@@ -1258,7 +1264,8 @@ static bool parse_wifi_line(App* app, const char* line) {
             return true;
         }
     }
-    app->wifi_table_full++;
+    if(app->wifi_table_full < UINT32_MAX) app->wifi_table_full++;
+    if(app->wifi_window_table_full < UINT16_MAX) app->wifi_window_table_full++;
     return true;
 }
 
@@ -1345,7 +1352,8 @@ static bool parse_ble_line(App* app, const char* line) {
             return true;
         }
     }
-    app->ble_table_full++;
+    if(app->ble_table_full < UINT32_MAX) app->ble_table_full++;
+    if(app->ble_window_table_full < UINT16_MAX) app->ble_window_table_full++;
     return true;
 }
 
@@ -2449,7 +2457,7 @@ static void draw_wifi_tab(Canvas* canvas, App* app) {
     furi_mutex_acquire(app->mutex, FuriWaitForever);
     uint8_t count = app->wifi_count;
     uint16_t window_observations = app->wifi_window_observations;
-    uint16_t table_full = app->wifi_table_full;
+    uint16_t table_full = app->wifi_window_table_full;
     uint8_t selected = app->wifi_scroll < count ? app->wifi_scroll : 0;
     WifiAp ap = count > 0 ? app->wifi_aps[selected] : (WifiAp){0};
     bool locked = count > 0 && app->target_kind == TargetWifi &&
@@ -2533,7 +2541,7 @@ static void draw_ble_tab(Canvas* canvas, App* app) {
     furi_mutex_acquire(app->mutex, FuriWaitForever);
     uint8_t count = app->ble_count;
     uint16_t window_observations = app->ble_window_observations;
-    uint16_t table_full = app->ble_table_full;
+    uint16_t table_full = app->ble_window_table_full;
     uint8_t selected = app->ble_scroll < count ? app->ble_scroll : 0;
     BleDev dev = count > 0 ? app->ble_devs[selected] : (BleDev){0};
     bool locked = count > 0 && app->target_kind == TargetBle &&
@@ -3373,7 +3381,6 @@ int32_t room_sweep_app(void* p) {
                             app->record_dropped_total = 0;
                             app->reported_uart_drops = app->uart_line_drops;
                             app->reported_gps_drops = app->gps_byte_drops;
-                            app->reported_dump_overwrites = app->dump_overwrites;
                             app->reported_wifi_table_full = app->wifi_table_full;
                             app->reported_ble_table_full = app->ble_table_full;
                             uint8_t unavailable = 0;

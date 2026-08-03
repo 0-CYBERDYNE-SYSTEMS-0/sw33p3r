@@ -50,15 +50,30 @@ int main(void) {
     check_contains(report, "Status: COMPLETE", "an unused sensor does not invalidate the file");
     check_contains(report, "Coverage: PARTIAL", "unconfirmed sensor coverage is not called full");
 
-    room_sweep_report_set_tx(&state, RoomSweepReportTxArmed);
-    room_sweep_report_format(&state, report, sizeof(report));
+    RoomSweepReportState tx_state;
+    room_sweep_report_init(&tx_state);
+    room_sweep_report_set_tx(&tx_state, RoomSweepReportTxArmed);
+    room_sweep_report_format(&tx_state, report, sizeof(report));
     check_contains(report, "TX: armed", "armed TX is explicit");
-    room_sweep_report_set_tx(&state, RoomSweepReportTxRefused);
-    room_sweep_report_format(&state, report, sizeof(report));
+    room_sweep_report_set_tx(&tx_state, RoomSweepReportTxRefused);
+    room_sweep_report_format(&tx_state, report, sizeof(report));
     check_contains(report, "TX: refused", "refused TX is explicit");
-    room_sweep_report_set_tx(&state, RoomSweepReportTxAborted);
-    room_sweep_report_format(&state, report, sizeof(report));
+    room_sweep_report_set_tx(&tx_state, RoomSweepReportTxAborted);
+    room_sweep_report_format(&tx_state, report, sizeof(report));
     check_contains(report, "TX: aborted", "aborted TX is explicit");
+
+    room_sweep_report_set_tx(&tx_state, RoomSweepReportTxStarted);
+    room_sweep_report_set_tx(&tx_state, RoomSweepReportTxAborted);
+    room_sweep_report_format(&tx_state, report, sizeof(report));
+    check_contains(
+        report,
+        "TX: aborted (started earlier)",
+        "terminal TX outcome preserves earlier start history");
+
+    room_sweep_report_set_tx(&tx_state, RoomSweepReportTxStarted);
+    room_sweep_report_set_tx(&tx_state, RoomSweepReportTxCompleted);
+    room_sweep_report_format(&tx_state, report, sizeof(report));
+    check_contains(report, "TX: completed", "successful TX end is explicit");
 
     room_sweep_report_sensor_unavailable(&state, RoomSweepReportSensorWifi);
     room_sweep_report_set_gps_omitted(&state);
