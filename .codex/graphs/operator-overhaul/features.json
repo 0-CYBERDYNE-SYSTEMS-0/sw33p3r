@@ -87,6 +87,6 @@
       "Run git diff check and fresh ufbt APPCHK",
       "Record final commit, FAP SHA-256, size, and final read-only review"
     ],
-    "passes": false
+    "passes": true
   }
 ]
