@@ -2611,7 +2611,7 @@ static void draw_wifi_tab(Canvas* canvas, App* app) {
         canvas_set_font(canvas, FontSecondary);
         canvas_draw_str(canvas, 2, 28, "Waiting for Marauder");
         canvas_set_font(canvas, FontKeyboard);
-        canvas_draw_str(canvas, 2, 42, "check BFFB power/firmware");
+        canvas_draw_str(canvas, 2, 42, "ESP32 on; bottom switch");
         snprintf(buf, sizeof(buf), "win %us  OK=scan", win_s);
         canvas_draw_str(canvas, 2, 63, buf);
         return;
@@ -2696,7 +2696,7 @@ static void draw_ble_tab(Canvas* canvas, App* app) {
         canvas_set_font(canvas, FontSecondary);
         canvas_draw_str(canvas, 2, 28, "Waiting for Marauder");
         canvas_set_font(canvas, FontKeyboard);
-        canvas_draw_str(canvas, 2, 42, "check BFFB power/firmware");
+        canvas_draw_str(canvas, 2, 42, "ESP32 on; bottom switch");
         snprintf(buf, sizeof(buf), "win %us  OK=scan", win_s);
         canvas_draw_str(canvas, 2, 63, buf);
         return;
