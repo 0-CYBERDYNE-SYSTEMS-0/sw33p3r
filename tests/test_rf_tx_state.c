@@ -203,6 +203,20 @@ int main(void) {
         room_sweep_tx_refusal_text(RoomSweepTxRefusalCanceled)[0] != '\0',
         "canceled TX is visible");
 
+    /* Unprovisioned region ("--") must not ban TX; radio checks stay separate. */
+    check(
+        room_sweep_tx_region_allows(false, false),
+        "unprovisioned region allows TX (no band table)");
+    check(
+        room_sweep_tx_region_allows(false, true),
+        "unprovisioned region allows TX even if allow-flag is false");
+    check(
+        room_sweep_tx_region_allows(true, true),
+        "provisioned + allowed frequency passes");
+    check(
+        !room_sweep_tx_region_allows(true, false),
+        "provisioned + disallowed frequency blocks");
+
     printf("RESULT: %s (%d failure(s))\n", failures ? "FAIL" : "ALL PASS", failures);
     return failures ? 1 : 0;
 }

@@ -144,7 +144,7 @@ static inline const char* room_sweep_tx_refusal_text(RoomSweepTxRefusal refusal)
     case RoomSweepTxRefusalExtBandUnknown:
         return "Select EXT 400/900";
     case RoomSweepTxRefusalPolicy:
-        return "TX blocked by radio policy";
+        return "Freq not allowed in region";
     case RoomSweepTxRefusalStartFailed:
         return "TX start failed";
     case RoomSweepTxRefusalCanceled:
@@ -153,6 +153,23 @@ static inline const char* room_sweep_tx_refusal_text(RoomSweepTxRefusal refusal)
     default:
         return "";
     }
+}
+
+/*
+ * Flipper region gate for TX.
+ *
+ * hardware_region_provisioned "--" / is_provisioned()==false means NO band
+ * table is installed — not "every frequency is forbidden". Treating that as a
+ * hard ban blocked all TX on devices that never ran official region
+ * provisioning (common on Momentum). Radio validity + ExtBand checks remain.
+ *
+ * When provisioned, honor the installed region band table.
+ */
+static inline bool room_sweep_tx_region_allows(
+    bool region_provisioned,
+    bool frequency_allowed_by_region) {
+    if(!region_provisioned) return true;
+    return frequency_allowed_by_region;
 }
 
 static inline RoomSweepTxDecision room_sweep_tx_ok_decision(
