@@ -12,6 +12,20 @@ discover a new pitfall, add it here immediately with the date and context.
 
 **BFFB / Marauder:** see `docs/BFFB_MOMENTUM.md` (JCMK wiki + companion + CommandLine.h).
 
+## Pitfall #17: BFFB switch map — ESP32 is NOT switched
+
+**Date:** 2026-08-02  
+**Source:** operator, physical board (supersedes wiki phrasing)
+
+- **Top switch:** up = 900 MHz CC1101 path, down = 400 MHz CC1101 path.
+- **Bottom switch:** up = CC1101 pair on Flipper SPI, down = nRF24 on SPI.
+- The ESP32 is **always available** on UART 13/14 — it is not behind the
+  switch. Marauder WiFi/BLE/GPS work in both bottom-switch positions.
+- Consequence: bottom switch down (nRF24) costs only the external CC1101
+  (`cc1101_ext` connect fails → app falls back to internal CC1101); WiFi,
+  BLE, and GPS tabs are unaffected. The old wiki claim ("bottom switch
+  selects NRF24 vs ESP32") is wrong for this board.
+
 ## Pitfall #15: BFFB GPS is not on Flipper USART
 
 **Date:** 2026-08-01  

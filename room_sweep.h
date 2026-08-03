@@ -113,7 +113,9 @@ static const RfBand rf_bands[RF_BAND_COUNT] = {
  * 15,16 — used by BFFB and many combo boards so GPS + WiFi can coexist).
  * Marauder `nmea` remains a fallback if GPIO is silent.
  *
- * Bottom switch ESP32 for Marauder + CC1101 access; top switch 400/900 MHz.
+ * Bottom switch routes the SPI radio: up = CC1101 pair, down = nRF24
+ * (operator-verified 2026-08-02). ESP32 is on UART 13/14, unaffected by it.
+ * Top switch selects the CC1101 path: up = 900 MHz, down = 400 MHz.
  * --------------------------------------------------------------------------- */
 #define MARAUDER_BAUD        115200UL
 #define MARAUDER_RX_BUF_SIZE 1024
