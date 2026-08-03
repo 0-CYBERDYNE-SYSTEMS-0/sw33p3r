@@ -10,8 +10,9 @@ Wiki: https://github.com/justcallmekoko/ESP32Marauder/wiki/BFFB
 |------|----------------------------|
 | ESP32 runs **Marauder Dev Board Pro** firmware (`_marauder_dev_board_pro.bin`) | CLI command set = current ESP32Marauder `CommandLine.h` |
 | **GPS is wired to the ESP32 only**, not Flipper GPIO | Stock Flipper GPS apps will **not** see BFFB GPS. Must use Marauder CLI (`nmea`, `gps -g …`) over UART |
-| Bottom module switch selects the **SPI radio: up = CC1101 pair, down = nRF24** (operator-verified 2026-08-02; wiki's "NRF24 vs ESP32" phrasing is wrong) | ESP32 is on **UART 13/14, not SPI** — WiFi/BLE/GPS via Marauder work in **both** switch positions |
-| Dual CC1101 + nRF24 are on Flipper **SPI** | Room Sweep RF prefers Momentum **`cc1101_ext`** (BFFB dual CC1101). Top switch = **up 900 / down 400 MHz** path; external CC1101 needs bottom switch **up (CC1101)**. Falls back to internal if external not detected (e.g. switch down on nRF24). |
+| Bottom SPI switch silkscreen **nRF24 ↔ CC1101** (no “ESP32” label; wiki “NRF24 vs ESP32” is wrong) | **SPI mux only.** Operator-verified: **up = CC1101**, **down = nRF24**. ESP32 is on **UART 13/14**, not SPI — Marauder WiFi/BLE/GPS work in **both** positions |
+| Top switch **400 ↔ 900** | **up = 900 MHz**, **down = 400 MHz** external CC1101. Irrelevant for BLE/WiFi |
+| Dual CC1101 + nRF24 on Flipper **SPI** | Room Sweep RF prefers Momentum **`cc1101_ext`**. External CC1101 needs bottom **up (CC1101)**. Falls back to internal if not detected (e.g. nRF24 selected) |
 | Official Flipper UI | [Marauder Companion](https://github.com/0xchocolate/flipperzero-wifi-marauder) |
 
 ## GPS paths
@@ -49,12 +50,18 @@ From `esp32_marauder/CommandLine.h` + companion menu (current main):
 
 ### Output formats (WiFiScan.cpp)
 
-**BLE (`sniffbt`):**
+**BLE (`sniffbt`) — live BFFB capture (uart-4.txt):**
 ```text
--60 Device: DeviceName
--72 Device: aa:bb:cc:dd:ee:ff
+Started BLE Scan
+>  RSSI: -37 Device: 00:11:22:33:44:55 RSSI: -50 Device: 00:11:22:33:44:58#stopscan
 ```
-RSSI updates for already-seen devices are **silent** (callback returns without print).
+Also may appear as wiki form `-60 Device: name`. Updates for already-seen devices can be silent.
+
+**Critical Room Sweep pitfalls (root cause of empty BLE list):**
+1. Do **not** drop lines starting with `>` — BFFB prefixes every result with `> `.
+2. Format is often `RSSI: -NN Device: …`, not bare `-NN Device:`.
+3. Multiple records abut on one line with no `\n`; split on the next `RSSI:`.
+4. `#stopscan` can abut the last MAC with no space.
 
 **WiFi AP beacon path (`scanall` / `sniffbeacon`):**
 ```text

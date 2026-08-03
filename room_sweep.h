@@ -119,6 +119,7 @@ static const RfBand rf_bands[RF_BAND_COUNT] = {
  * --------------------------------------------------------------------------- */
 #define MARAUDER_BAUD        115200UL
 #define MARAUDER_RX_BUF_SIZE 1024
+/* Must match ROOM_SWEEP_UART_LINE_MAX in room_sweep_scan.h (headless BLE framer). */
 #define MARAUDER_LINE_MAX    128
 #define MARAUDER_MAX_LINES   24 /* deeper ring — AP/BLE bursts drop less */
 
