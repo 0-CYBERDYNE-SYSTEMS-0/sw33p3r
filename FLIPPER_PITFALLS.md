@@ -41,6 +41,20 @@ Must send Marauder CLI `nmea` / `gps -g nmea` at **115200** after `expansion_dis
 
 Use **`sniffbeacon`** for AP beacons (Room Sweep). `scanall` is AP+STA and is not what this app sends. Companion TX terminator is **`\\n`**, not CRLF.
 
+## Pitfall #17: Headless Marauder BLE has no Serial newlines
+
+**Date:** 2026-08-02  
+**Source:** `esp32_marauder/WiFiScan.cpp` `BT_SCAN_ALL` + `configs.h` `MARAUDER_DEV_BOARD_PRO`  
+
+BFFB uses Dev Board Pro firmware: `HAS_BT`, no `HAS_SCREEN`. BLE prints
+`Serial.print(rssi)` / `Device:` / name but **`Serial.println()` only inside
+`#ifdef HAS_SCREEN`**. Line-oriented Flipper parsers see zero BLE devices forever
+while WiFi (which uses `Serial.print(F("\\n"))`) still works.
+
+**Room Sweep fix:** `room_sweep_uart_feed_byte` in `room_sweep_scan.h` splits on
+a new `-digit` RSSI after a complete `Device:` record and idle-flushes the last
+record. Do not assume Marauder always sends `\n` for BLE on BFFB.
+
 ---
 
 ## Pitfall #1: NotificationSequence is an array typedef, NOT a struct
