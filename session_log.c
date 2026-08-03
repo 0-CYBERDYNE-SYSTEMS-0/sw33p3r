@@ -50,9 +50,8 @@ static void close_and_free(File** file) {
 }
 
 static bool ensure_log_directory(Storage* storage) {
-    if(!storage) return false;
-    FS_Error app_data = storage_common_mkdir(storage, APP_DATA_PATH(""));
-    return app_data == FSE_OK || app_data == FSE_EXIST;
+    /* The loader resolves /data to this FAP's existing app-data directory. */
+    return storage != NULL;
 }
 
 static bool make_path(
