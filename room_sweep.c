@@ -1511,8 +1511,9 @@ static void process_uart_lines(App* app) {
 
 /* ================================================================== */
 /* SubGHz radio — BFFB external CC1101 (SPI) preferred, else internal  */
-/* BFFB wiki: dual CC1101 on Flipper SPI; top switch 400 vs 900 MHz;   */
-/* bottom switch ESP32 for CC1101 access. Momentum: cc1101_ext.        */
+/* BFFB: dual CC1101 on Flipper SPI. Top switch: up=900 / down=400 MHz; */
+/* bottom switch: up=CC1101 / down=nRF24 (ESP32 on UART, unaffected).   */
+/* Momentum: cc1101_ext.                                                 */
 /* ================================================================== */
 static void radio_otg_on(App* app) {
     if(!furi_hal_power_is_otg_enabled()) {
@@ -2468,7 +2469,7 @@ static void draw_wifi_tab(Canvas* canvas, App* app) {
         canvas_set_font(canvas, FontSecondary);
         canvas_draw_str(canvas, 2, 28, "Marauder not confirmed");
         canvas_set_font(canvas, FontKeyboard);
-        canvas_draw_str(canvas, 2, 41, "Check ESP32 switch/firmware");
+        canvas_draw_str(canvas, 2, 41, "Check BFFB power/firmware");
         canvas_draw_str(canvas, 2, 52, "Scan evidence unavailable");
         return;
     }
@@ -2552,7 +2553,7 @@ static void draw_ble_tab(Canvas* canvas, App* app) {
         canvas_set_font(canvas, FontSecondary);
         canvas_draw_str(canvas, 2, 28, "Marauder not confirmed");
         canvas_set_font(canvas, FontKeyboard);
-        canvas_draw_str(canvas, 2, 41, "Check ESP32 switch/firmware");
+        canvas_draw_str(canvas, 2, 41, "Check BFFB power/firmware");
         canvas_draw_str(canvas, 2, 52, "Scan evidence unavailable");
         return;
     }
