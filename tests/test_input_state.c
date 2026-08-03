@@ -100,6 +100,47 @@ int main(void) {
         RoomSweepInputNone,
         "unsupported input phase is rejected");
 
+    /* Browse movement wraps at both ends and never escapes an empty list. */
+    check(
+        room_sweep_cursor_step(0u, 3u, RoomSweepInputBrowseUp) == 2u,
+        "Up wraps the browse cursor from the first item");
+    check(
+        room_sweep_cursor_step(2u, 3u, RoomSweepInputBrowseDown) == 0u,
+        "Down wraps the browse cursor from the last item");
+    check(
+        room_sweep_cursor_step(1u, 3u, RoomSweepInputBrowseUp) == 0u,
+        "Up steps toward the first item");
+    check(
+        room_sweep_cursor_step(1u, 3u, RoomSweepInputBrowseDown) == 2u,
+        "Down steps toward the last item");
+    check(
+        room_sweep_cursor_step(9u, 3u, RoomSweepInputBrowseDown) == 1u,
+        "an invalid cursor is normalized before stepping");
+    check(
+        room_sweep_cursor_step(1u, 0u, RoomSweepInputBrowseDown) == 0u,
+        "an empty browse list always returns cursor zero");
+    check(
+        room_sweep_cursor_step(1u, 3u, RoomSweepInputPrimary) == 1u,
+        "a non-browse action leaves the cursor unchanged");
+
+    /* Long Left/Right and every repeat action cannot change tabs. */
+    check(
+        room_sweep_input_is_tab_navigation(RoomSweepInputNavigatePrev),
+        "short Left is the only previous-tab action");
+    check(
+        room_sweep_input_is_tab_navigation(RoomSweepInputNavigateNext),
+        "short Right is the only next-tab action");
+    check(
+        !room_sweep_input_is_tab_navigation(RoomSweepInputAlternatePrev) &&
+            !room_sweep_input_is_tab_navigation(RoomSweepInputAlternateNext),
+        "long Left/Right alternate actions cannot change tabs");
+    check(
+        !room_sweep_input_is_tab_navigation(
+            room_sweep_input_action(RoomSweepInputLeft, RoomSweepInputRepeat)) &&
+            !room_sweep_input_is_tab_navigation(
+                room_sweep_input_action(RoomSweepInputRight, RoomSweepInputRepeat)),
+        "repeated Left/Right cannot change tabs");
+
     if(failures) {
         printf("RESULT: %d failure(s)\n", failures);
         return 1;

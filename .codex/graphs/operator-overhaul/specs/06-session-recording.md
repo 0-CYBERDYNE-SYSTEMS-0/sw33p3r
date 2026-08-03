@@ -24,9 +24,8 @@ lock/unlock, TX arm/start/result/abort intent, UART/system/storage errors, and
 final counters. State exactly what each source cannot provide. Do not claim raw
 IQ, packets, modulation, RF power, calibrated distance, or complete coverage.
 
-Preserve existing `session.csv` and `bffb_dump.txt` bytes. Migrate to unique
-`legacy-*` names only after a collision-free target is selected; if migration
-fails, leave them untouched. Never overwrite a prior dump.
+Preserve existing nested `session.csv` and `bffb_dump.txt` files in place. New
+numbered artifacts live at the app-data root and never overwrite prior files.
 
 Apply conservative per-session and total storage budgets based on runtime free
 space. A missing clean `end` marker means incomplete.

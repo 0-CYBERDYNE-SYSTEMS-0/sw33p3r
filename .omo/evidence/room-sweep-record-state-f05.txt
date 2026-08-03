@@ -1,0 +1,38 @@
+Room Sweep F05 recorder-state receipt (host-only)
+
+Scope: room_sweep_record_state.h and tests/test_record_state.c only.
+No room_sweep.c, session_log.*, init.sh, device, or build artifact was changed.
+
+Invocation:
+cc -std=c11 -Wall -Wextra -Werror -pedantic -I. tests/test_record_state.c -o /tmp/room_sweep_test_record_state && /tmp/room_sweep_test_record_state
+
+Observed output:
+PASS: session ordinal filename
+PASS: UART ordinal filename
+PASS: report ordinal filename
+PASS: unknown filename kind rejected
+PASS: truncated filename rejected
+PASS: first AP is redacted to AP-01
+PASS: same AP keeps stable ordinal
+PASS: different AP gets next ordinal
+PASS: identifier ordinals are scoped by source kind
+PASS: missing identifier is represented without raw data
+PASS: record state opens
+PASS: second begin is rejected
+PASS: first record fits
+PASS: second record reaches byte cap
+PASS: record cap drops later record
+PASS: record and byte bounds are tracked
+PASS: clean end is accepted
+PASS: clean end is complete
+PASS: closed state cannot append
+PASS: failure state opens
+PASS: storage failure is latched
+PASS: latched storage failure blocks writes
+PASS: failed storage cannot claim clean end
+PASS: failed storage is incomplete
+RESULT: ALL PASS (0 failures)
+
+Additional check:
+git diff --check -- room_sweep_record_state.h tests/test_record_state.c
+exit 0

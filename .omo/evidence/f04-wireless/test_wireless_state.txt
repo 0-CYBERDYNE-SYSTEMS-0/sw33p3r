@@ -1,0 +1,17 @@
+SCENARIO: F04 wireless identity and evidence helper host test
+INVOCATION: cc -std=c11 -Wall -Wextra -Werror -pedantic -I. tests/test_wireless_state.c -o /tmp/test_wireless_state && /tmp/test_wireless_state
+BINARY_OBSERVABLE: process exited 0; output ended with RESULT: ALL PASS (0 failure(s))
+PASS: matching MAC wins even when the display label changes
+PASS: same SSID cannot merge different MAC addresses
+PASS: a MAC-bearing stored row cannot fall back to a MAC-less label
+PASS: a MAC-bearing observation cannot match a MAC-less stored row by label
+PASS: two MAC-less rows may match by their label
+PASS: MAC-less labels use exact text matching
+PASS: null MAC fields count as absent for label fallback
+PASS: missing labels do not create a fallback identity
+PASS: Wi-Fi evidence is labeled AP beacon heard
+PASS: BLE evidence is labeled BLE advertisement heard
+PASS: empty scan windows say Not observed in this scan
+PASS: Internet telemetry is explicitly marked not measured
+PASS: no observation is not presented as proof of absence
+RESULT: ALL PASS (0 failure(s))

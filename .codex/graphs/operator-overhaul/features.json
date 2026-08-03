@@ -27,7 +27,7 @@
       "Verify sound and vibration are Settings-only",
       "Audit every on-screen footer against its handler"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "wireless",
@@ -37,7 +37,7 @@
       "Verify row browsing, age, count, channel, and source display",
       "Verify no-observation and telemetry limitation language"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "recording",
@@ -47,7 +47,7 @@
       "Verify worker and ISR paths enqueue without storage I/O",
       "Pass API scan and ufbt build"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "gps",
@@ -57,7 +57,7 @@
       "Review producer synchronization",
       "Pass ufbt build"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "reporting",
@@ -67,7 +67,7 @@
       "Verify complete, incomplete, drop, storage, GPS privacy, and TX result language",
       "Audit for unsupported capability claims"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "documentation",
@@ -77,7 +77,7 @@
       "Verify BFFB GPS and Marauder command descriptions against pinned upstream source",
       "Pass source-document consistency review"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "verification",

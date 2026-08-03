@@ -153,7 +153,9 @@ typedef struct {
     int8_t rssi;         // signal strength dBm
     uint8_t channel;     // WiFi channel
     char bssid[18];      // MAC string "AA:BB:CC:DD:EE:FF"
+    uint32_t first_seen; // tick when first observed
     uint32_t last_seen;  // tick when last updated
+    uint16_t observations;
     bool valid;
 } WifiAp;
 
@@ -161,6 +163,8 @@ typedef struct {
     char name[33];       // device name
     int8_t rssi;         // signal strength dBm
     char mac[18];        // MAC string
+    uint32_t first_seen; // tick when first observed
     uint32_t last_seen;  // tick when last updated
+    uint16_t observations;
     bool valid;
 } BleDev;
