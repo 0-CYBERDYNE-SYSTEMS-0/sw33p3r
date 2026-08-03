@@ -39,7 +39,7 @@ Must send Marauder CLI `nmea` / `gps -g nmea` at **115200** after `expansion_dis
 **Date:** 2026-08-01  
 **Source:** `esp32_marauder/CommandLine.h` (main), companion Scan menu  
 
-Use **`scanall`** (or `sniffbeacon` for AP beacons). Companion TX terminator is **`\\n`**, not CRLF.
+Use **`sniffbeacon`** for AP beacons (Room Sweep). `scanall` is AP+STA and is not what this app sends. Companion TX terminator is **`\\n`**, not CRLF.
 
 ---
 
