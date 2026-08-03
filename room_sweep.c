@@ -29,6 +29,7 @@
 #include "room_sweep_input.h"
 #include "room_sweep_report.h"
 #include "room_sweep_scan.h"
+#include "room_sweep_settings.h"
 #include "room_sweep_gps_state.h"
 #include "room_sweep_wireless.h"
 #include "session_log.h"
@@ -224,9 +225,10 @@ typedef struct {
     uint8_t ble_scroll;
     uint8_t ble_last_updated;
 
-    /* Rescan timer */
+    /* Rescan timer + Wi-Fi/BLE window length (15/30/60s presets) */
     uint32_t last_rescan_tick;
     bool auto_rescan;
+    uint8_t scan_timeout_idx;
     volatile bool session_log_on;
     Storage* storage;
     bool gps_log_coordinates;
@@ -325,23 +327,21 @@ static const uint32_t tx_freq_presets[TX_FREQ_PRESET_COUNT] = {
     433920000, 868350000, 915000000, 315000000, 390000000, 418000000,
 };
 
-/* Settings menu items */
-enum {
-    SET_SOUND = 0,
-    SET_VIBRO,
-    SET_RESCAN,
-    SET_LOG,
-    SET_EXTBAND,
-    SET_GPSSRC,
-    SET_GPSLOG,
-    SET_BASELINE,
-    SET_DUMP,
-    SET_TXDUR,
-    SET_COUNT,
-};
+/* Settings menu aliases (host-tested indices in room_sweep_settings.h) */
+#define SET_SOUND    RoomSweepSetSound
+#define SET_VIBRO    RoomSweepSetVibro
+#define SET_RESCAN   RoomSweepSetRescan
+#define SET_SCANWIN  RoomSweepSetScanWin
+#define SET_LOG      RoomSweepSetRecord
+#define SET_EXTBAND  RoomSweepSetExtBand
+#define SET_GPSSRC   RoomSweepSetGpsSrc
+#define SET_GPSLOG   RoomSweepSetGpsLog
+#define SET_BASELINE RoomSweepSetBaseline
+#define SET_DUMP     RoomSweepSetDump
+#define SET_TXDUR    RoomSweepSetTxDur
+#define SET_COUNT    RoomSweepSetCount
 
 #define RESCAN_INTERVAL_MS 5000
-#define MARAUDER_SCAN_TIMEOUT_MS 30000
 #define GPS_STALE_TIMEOUT_MS 5000
 #define GPS_PROFILE_BFFB 0
 #define GPS_PROFILE_EXTERNAL 1
@@ -365,6 +365,60 @@ static uint8_t rf_default_sweep_band(App* app) {
         if(app->ext_band == ExtBand900) return 2;
     }
     return app->sweep_band_idx;
+}
+
+static bool record_enqueue(
+    App* app,
+    const char* event,
+    const char* kind,
+    const char* id,
+    int rssi,
+    uint32_t freq_hz,
+    uint8_t channel,
+    const char* detail);
+
+/* Shared ExtBand apply path for Settings and TX tab Long-L/R. */
+static void apply_ext_band_pref(App* app, ExtBandPref band) {
+    app->ext_band = band;
+    app->rf_config_generation++;
+    app->sweep_running = false;
+    app->peak_running = false;
+    furi_mutex_acquire(app->mutex, FuriWaitForever);
+    room_sweep_candidate_invalidate(&app->signal_candidate);
+    furi_mutex_release(app->mutex);
+    app->tx_from_candidate = false;
+    room_sweep_candidate_invalidate(&app->tx_candidate);
+    if(app->target_kind == TargetRF) {
+        app->target_kind = TargetNone;
+        app->target_freq_hz = 0;
+        app->target_id[0] = '\0';
+        app->target_rssi = -127;
+    }
+    if(app->ext_band == ExtBand400) {
+        app->tx_freq_idx = 0;
+        app->tx_freq_hz = tx_freq_presets[app->tx_freq_idx];
+    } else if(app->ext_band == ExtBand900) {
+        app->tx_freq_idx = 2;
+        app->tx_freq_hz = tx_freq_presets[app->tx_freq_idx];
+    }
+    if(app->radio_path == RadioPathExternal && app->ext_band != ExtBandAuto) {
+        app->sweep_band_idx = rf_default_sweep_band(app);
+    }
+    if(app->tx_refusal == RoomSweepTxRefusalExtBandUnknown &&
+       app->ext_band != ExtBandAuto) {
+        app->tx_refusal = RoomSweepTxRefusalNone;
+    }
+    record_enqueue(
+        app,
+        "config",
+        "RF",
+        "external_band",
+        0,
+        0,
+        0,
+        app->ext_band == ExtBand400 ? "400 MHz path selected" :
+        app->ext_band == ExtBand900 ? "900 MHz path selected" :
+                                       "automatic receive path; external TX blocked");
 }
 
 static void dump_push_line(App* app, const char* line) {
@@ -2435,11 +2489,14 @@ static void draw_wifi_tab(Canvas* canvas, App* app) {
     canvas_set_font(canvas, FontSecondary);
     canvas_draw_str(canvas, 1, 12, "WiFi");
 
+    char buf[48];
+    uint8_t win_s = room_sweep_scan_timeout_seconds(app->scan_timeout_idx);
+
     if(!app->serial) {
-        canvas_draw_str(canvas, 2, 30, "No UART handle");
         canvas_set_font(canvas, FontKeyboard);
-        canvas_draw_str(canvas, 2, 43, "BFFB/Marauder unavailable");
-        canvas_draw_str(canvas, 2, 55, "No observation != absence");
+        canvas_draw_str(canvas, 2, 30, "No UART — attach BFFB");
+        canvas_draw_str(canvas, 2, 42, "ESP32 switch for Marauder");
+        canvas_draw_str(canvas, 2, 63, "absence not proven");
         return;
     }
 
@@ -2453,7 +2510,6 @@ static void draw_wifi_tab(Canvas* canvas, App* app) {
                         app->marauder_state == MarauderError ? "ERR" : "idle";
     canvas_draw_str(canvas, 127 - canvas_string_width(canvas, state), 12, state);
 
-    char buf[48];
     furi_mutex_acquire(app->mutex, FuriWaitForever);
     uint8_t count = app->wifi_count;
     uint16_t window_observations = app->wifi_window_observations;
@@ -2466,10 +2522,11 @@ static void draw_wifi_tab(Canvas* canvas, App* app) {
     furi_mutex_release(app->mutex);
     if(!app->marauder_confirmed) {
         canvas_set_font(canvas, FontSecondary);
-        canvas_draw_str(canvas, 2, 28, "Marauder not confirmed");
+        canvas_draw_str(canvas, 2, 28, "Waiting for Marauder");
         canvas_set_font(canvas, FontKeyboard);
-        canvas_draw_str(canvas, 2, 41, "Check ESP32 switch/firmware");
-        canvas_draw_str(canvas, 2, 52, "Scan evidence unavailable");
+        canvas_draw_str(canvas, 2, 42, "ESP32 on; bottom switch");
+        snprintf(buf, sizeof(buf), "win %us  OK=scan", win_s);
+        canvas_draw_str(canvas, 2, 63, buf);
         return;
     }
     if(count == 0 ||
@@ -2479,18 +2536,15 @@ static void draw_wifi_tab(Canvas* canvas, App* app) {
             canvas,
             2,
             28,
-            app->marauder_state == MarauderDone ?
-                room_sweep_wireless_evidence_text(
-                    RoomSweepWirelessEvidenceNotObservedInScan) :
-                "Listening for AP beacons");
+            app->marauder_state == MarauderDone ? "No AP this window" : "Listening...");
         canvas_set_font(canvas, FontKeyboard);
-        canvas_draw_str(canvas, 2, 41, "Internet telemetry not measured");
-        canvas_draw_str(canvas, 2, 52, "No observation != absence");
+        canvas_draw_str(canvas, 2, 42, "beacon only; not telemetry");
         if(count > 0) {
             snprintf(buf, sizeof(buf), "old:%u", count);
-            canvas_draw_str(canvas, 98, 63, buf);
+            canvas_draw_str(canvas, 98, 54, buf);
         }
-        canvas_draw_str(canvas, 2, 63, "OK=scan");
+        snprintf(buf, sizeof(buf), "HoldLR %us OK=scan", win_s);
+        canvas_draw_str(canvas, 2, 63, buf);
         return;
     }
 
@@ -2500,16 +2554,17 @@ static void draw_wifi_tab(Canvas* canvas, App* app) {
     canvas_draw_str(canvas, 38, 12, buf);
     canvas_set_font(canvas, FontSecondary);
     bool unidentified = !ap.bssid[0] && strcmp(ap.ssid, "Hidden/unknown") == 0;
-    canvas_draw_str(canvas, 2, 24, unidentified ? "Unidentified observations" : ap.ssid);
-    snprintf(buf, sizeof(buf), "%ddBm Ch%u age%lus seen%u",
+    canvas_draw_str(canvas, 2, 24, unidentified ? "Unidentified obs." : ap.ssid);
+    snprintf(buf, sizeof(buf), "%ddBm Ch%u age%lus n%u",
              ap.rssi, ap.channel,
              (unsigned long)((furi_get_tick() - ap.last_seen) / 1000U),
              ap.observations);
     canvas_set_font(canvas, FontKeyboard);
     canvas_draw_str(canvas, 2, 35, buf);
-    canvas_draw_str(canvas, 2, 44, ap.bssid[0] ? ap.bssid : "ID unavailable; grouped");
-    canvas_draw_str(canvas, 2, 53, "AP beacon heard; net unmeasured");
-    canvas_draw_str(canvas, 2, 63, "U/D browse OK scan Hold lock");
+    canvas_draw_str(canvas, 2, 44, ap.bssid[0] ? ap.bssid : "no ID (grouped)");
+    canvas_draw_str(canvas, 2, 53, "beacon heard");
+    snprintf(buf, sizeof(buf), "U/D HoldLR %us OK Hold=lock", win_s);
+    canvas_draw_str(canvas, 2, 63, buf);
 }
 
 /* ================================================================== */
@@ -2519,11 +2574,14 @@ static void draw_ble_tab(Canvas* canvas, App* app) {
     canvas_set_font(canvas, FontSecondary);
     canvas_draw_str(canvas, 1, 12, "BLE");
 
+    char buf[48];
+    uint8_t win_s = room_sweep_scan_timeout_seconds(app->scan_timeout_idx);
+
     if(!app->serial) {
-        canvas_draw_str(canvas, 2, 30, "No UART handle");
         canvas_set_font(canvas, FontKeyboard);
-        canvas_draw_str(canvas, 2, 43, "BFFB/Marauder unavailable");
-        canvas_draw_str(canvas, 2, 55, "No observation != absence");
+        canvas_draw_str(canvas, 2, 30, "No UART — attach BFFB");
+        canvas_draw_str(canvas, 2, 42, "ESP32 switch for Marauder");
+        canvas_draw_str(canvas, 2, 63, "absence not proven");
         return;
     }
 
@@ -2537,7 +2595,6 @@ static void draw_ble_tab(Canvas* canvas, App* app) {
                         app->marauder_state == MarauderError ? "ERR" : "idle";
     canvas_draw_str(canvas, 127 - canvas_string_width(canvas, state), 12, state);
 
-    char buf[48];
     furi_mutex_acquire(app->mutex, FuriWaitForever);
     uint8_t count = app->ble_count;
     uint16_t window_observations = app->ble_window_observations;
@@ -2550,10 +2607,11 @@ static void draw_ble_tab(Canvas* canvas, App* app) {
     furi_mutex_release(app->mutex);
     if(!app->marauder_confirmed) {
         canvas_set_font(canvas, FontSecondary);
-        canvas_draw_str(canvas, 2, 28, "Marauder not confirmed");
+        canvas_draw_str(canvas, 2, 28, "Waiting for Marauder");
         canvas_set_font(canvas, FontKeyboard);
-        canvas_draw_str(canvas, 2, 41, "Check ESP32 switch/firmware");
-        canvas_draw_str(canvas, 2, 52, "Scan evidence unavailable");
+        canvas_draw_str(canvas, 2, 42, "ESP32 on; bottom switch");
+        snprintf(buf, sizeof(buf), "win %us  OK=scan", win_s);
+        canvas_draw_str(canvas, 2, 63, buf);
         return;
     }
     if(count == 0 ||
@@ -2563,18 +2621,15 @@ static void draw_ble_tab(Canvas* canvas, App* app) {
             canvas,
             2,
             28,
-            app->marauder_state == MarauderDone ?
-                room_sweep_wireless_evidence_text(
-                    RoomSweepWirelessEvidenceNotObservedInScan) :
-                "Listening for BLE devices");
+            app->marauder_state == MarauderDone ? "No BLE this window" : "Listening...");
         canvas_set_font(canvas, FontKeyboard);
-        canvas_draw_str(canvas, 2, 41, "Internet telemetry not measured");
-        canvas_draw_str(canvas, 2, 52, "No observation != absence");
+        canvas_draw_str(canvas, 2, 42, "ads only; not telemetry");
         if(count > 0) {
             snprintf(buf, sizeof(buf), "old:%u", count);
-            canvas_draw_str(canvas, 98, 63, buf);
+            canvas_draw_str(canvas, 98, 54, buf);
         }
-        canvas_draw_str(canvas, 2, 63, "OK=scan");
+        snprintf(buf, sizeof(buf), "HoldLR %us OK=scan", win_s);
+        canvas_draw_str(canvas, 2, 63, buf);
         return;
     }
 
@@ -2584,16 +2639,17 @@ static void draw_ble_tab(Canvas* canvas, App* app) {
     canvas_draw_str(canvas, 38, 12, buf);
     canvas_set_font(canvas, FontSecondary);
     bool unidentified = !dev.mac[0] && strcmp(dev.name, "Hidden/unknown") == 0;
-    canvas_draw_str(canvas, 2, 24, unidentified ? "Unidentified observations" : dev.name);
-    snprintf(buf, sizeof(buf), "%ddBm age%lus seen%u",
+    canvas_draw_str(canvas, 2, 24, unidentified ? "Unidentified obs." : dev.name);
+    snprintf(buf, sizeof(buf), "%ddBm age%lus n%u",
              dev.rssi,
              (unsigned long)((furi_get_tick() - dev.last_seen) / 1000U),
              dev.observations);
     canvas_set_font(canvas, FontKeyboard);
     canvas_draw_str(canvas, 2, 35, buf);
-    canvas_draw_str(canvas, 2, 44, dev.mac[0] ? dev.mac : "ID unavailable; grouped");
-    canvas_draw_str(canvas, 2, 53, "BLE advertisement heard");
-    canvas_draw_str(canvas, 2, 63, "U/D browse OK scan Hold lock");
+    canvas_draw_str(canvas, 2, 44, dev.mac[0] ? dev.mac : "no ID (grouped)");
+    canvas_draw_str(canvas, 2, 53, "advertisement heard");
+    snprintf(buf, sizeof(buf), "U/D HoldLR %us OK Hold=lock", win_s);
+    canvas_draw_str(canvas, 2, 63, buf);
 }
 
 /* ================================================================== */
@@ -2766,37 +2822,53 @@ static void draw_tx_tab(Canvas* canvas, App* app) {
     canvas_draw_str(canvas, 1, 12, "TX Control");
 
     char buf[40];
+    bool ext_auto_blocks = app->radio_path == RadioPathExternal &&
+                           app->ext_band == ExtBandAuto;
 
     if(app->tx_state == TxDisarmed) {
-        /* DISARMED — show safety contract */
         canvas_set_font(canvas, FontPrimary);
-        canvas_draw_str(canvas, 2, 28, "DISARMED");
+        canvas_draw_str(canvas, 2, 26, "DISARMED");
 
         canvas_set_font(canvas, FontKeyboard);
-        canvas_draw_str(canvas, 2, 38, "Carrier only; no replay.");
         const char* refusal = room_sweep_tx_refusal_text(app->tx_refusal);
         bool candidate_ready = app->tx_from_candidate &&
                                room_sweep_candidate_is_fresh(
                                    &app->tx_candidate, furi_get_tick());
-        canvas_draw_str(
-            canvas,
-            2,
-            47,
-            refusal[0] ? refusal :
-            candidate_ready ? "Detected RX candidate" : "Own/licensed use only.");
 
-        snprintf(buf, sizeof(buf), "Freq: %lu.%03lu MHz Dur:%ds",
+        /* Refusal / band gate gets the prominent line. */
+        if(refusal[0]) {
+            canvas_set_font(canvas, FontSecondary);
+            canvas_draw_str(canvas, 2, 38, refusal);
+            canvas_set_font(canvas, FontKeyboard);
+            if(app->tx_refusal == RoomSweepTxRefusalExtBandUnknown || ext_auto_blocks) {
+                canvas_draw_str(canvas, 2, 48, "Hold L/R: ExtBand 400/900");
+            } else {
+                canvas_draw_str(canvas, 2, 48, "Carrier only; no replay");
+            }
+        } else if(ext_auto_blocks) {
+            canvas_set_font(canvas, FontSecondary);
+            canvas_draw_str(canvas, 2, 38, "Select EXT 400/900");
+            canvas_set_font(canvas, FontKeyboard);
+            canvas_draw_str(canvas, 2, 48, "Hold L/R band before arm");
+        } else {
+            canvas_draw_str(canvas, 2, 38, "Carrier only; no replay");
+            canvas_draw_str(
+                canvas,
+                2,
+                48,
+                candidate_ready ? "RX candidate ready" : "U/D=freq preset");
+        }
+
+        snprintf(buf, sizeof(buf), "%lu.%03lu %ds band:%s",
                  (unsigned long)(app->tx_freq_hz / 1000000),
                  (unsigned long)((app->tx_freq_hz % 1000000) / 1000),
-                 app->tx_duration_s);
-        canvas_set_font(canvas, FontSecondary);
-        canvas_draw_str(canvas, 2, 60, buf);
-
-        canvas_set_font(canvas, FontKeyboard);
+                 app->tx_duration_s,
+                 app->ext_band == ExtBand400 ? "400" :
+                 app->ext_band == ExtBand900 ? "900" : "AUTO");
+        canvas_draw_str(canvas, 2, 58, buf);
         canvas_draw_str(canvas, 88, 12, "OK=arm");
 
     } else if(app->tx_state == TxArmed) {
-        /* ARMED — inverse video warning, frequency selectable */
         canvas_set_color(canvas, ColorBlack);
         canvas_draw_box(canvas, 0, 14, 128, 16);
         canvas_set_color(canvas, ColorWhite);
@@ -2833,7 +2905,7 @@ static void draw_tx_tab(Canvas* canvas, App* app) {
                 (unsigned long)age_s);
             canvas_draw_str(canvas, 2, 55, buf);
         } else {
-            canvas_draw_str(canvas, 2, 55, "No captured signal/replay");
+            canvas_draw_str(canvas, 2, 55, "U/D=freq HoldOK=TX");
         }
 
         canvas_set_font(canvas, FontKeyboard);
@@ -2845,7 +2917,7 @@ static void draw_tx_tab(Canvas* canvas, App* app) {
         canvas_set_font(canvas, FontKeyboard);
         canvas_draw_str(canvas, 2, 42, "Back=stop");
     } else if(app->tx_state == TxTransmitting) {
-        /* The radio API accepted the carrier request; antenna output is not measured. */
+        /* Radio API accepted carrier; antenna output is not measured. */
         canvas_set_color(canvas, ColorBlack);
         canvas_draw_box(canvas, 0, 0, 128, 64);
         canvas_set_color(canvas, ColorWhite);
@@ -2882,9 +2954,9 @@ static void draw_info_tab(Canvas* canvas, App* app) {
 
     if(app->info_page != 0) {
         canvas_draw_str(canvas, 2, 10, "Glossary 2/2");
-        canvas_draw_str(canvas, 2, 20, "Survey=known channels");
-        canvas_draw_str(canvas, 2, 29, "Sweep=search band");
-        canvas_draw_str(canvas, 2, 38, "Peak=refine; Lock=follow");
+        canvas_draw_str(canvas, 2, 20, "WiFi=sniffbeacon BLE=sniffbt");
+        canvas_draw_str(canvas, 2, 29, "HoldLR=win 15/30/60s");
+        canvas_draw_str(canvas, 2, 38, "Record=session+report files");
         canvas_draw_str(canvas, 2, 47, "RSSI=relative, not distance");
         canvas_draw_str(canvas, 2, 56, "No proof of Internet telemetry");
         canvas_draw_str(canvas, 2, 63, "U/D=page");
@@ -2951,22 +3023,43 @@ static void draw_settings(Canvas* canvas, App* app) {
     canvas_draw_frame(canvas, 1, 1, 126, 62);
 
     canvas_set_font(canvas, FontKeyboard);
-    canvas_draw_str(canvas, 4, 9, "Settings");
+    RoomSweepSetGroup group = room_sweep_set_group_of(app->settings_sel);
+    char title[28];
+    snprintf(
+        title,
+        sizeof(title),
+        "%s %u/%u",
+        room_sweep_set_group_label(group),
+        (unsigned)group + 1U,
+        (unsigned)RoomSweepSetGroupCount);
+    canvas_draw_str(canvas, 4, 9, title);
+    canvas_draw_str(canvas, 100, 9, "HoldLR");
 
     const char* labels[SET_COUNT] = {
-        "Sound", "Vibro", "Rescan", "Record", "ExtBand", "GPS Src", "GPS in Log", "Baseline", "Raw Dump", "TXDur",
+        "Sound",
+        "Vibro",
+        "Rescan",
+        "ScanWin",
+        "Record",
+        "ExtBand",
+        "GPS Src",
+        "GPS Log",
+        "Baseline",
+        "Raw Dump",
+        "TXDur",
     };
 
-    /* Show 5 rows, scroll with selection */
-    int start = 0;
-    if(app->settings_sel > 3) start = (int)app->settings_sel - 3;
-    if(start > SET_COUNT - 5) start = SET_COUNT - 5;
-    if(start < 0) start = 0;
+    /* Collect indices in the current group (max 4 items per group). */
+    uint8_t items[SET_COUNT];
+    uint8_t n_items = 0;
+    for(uint8_t i = 0; i < SET_COUNT; i++) {
+        if(room_sweep_set_group_of(i) == group) items[n_items++] = i;
+    }
 
-    for(int row = 0; row < 5 && start + row < SET_COUNT; row++) {
-        int i = start + row;
-        uint8_t y = (uint8_t)(18 + row * 9);
-        if(i == (int)app->settings_sel) {
+    for(uint8_t row = 0; row < n_items && row < 5; row++) {
+        uint8_t i = items[row];
+        uint8_t y = (uint8_t)(20 + row * 10);
+        if(i == app->settings_sel) {
             canvas_draw_box(canvas, 2, y - 7, 124, 9);
             canvas_set_color(canvas, ColorWhite);
         }
@@ -2976,6 +3069,8 @@ static void draw_settings(Canvas* canvas, App* app) {
         if(i == SET_SOUND) snprintf(val, sizeof(val), "%s", app->sound_on ? "ON" : "off");
         else if(i == SET_VIBRO) snprintf(val, sizeof(val), "%s", app->vibro_on ? "ON" : "off");
         else if(i == SET_RESCAN) snprintf(val, sizeof(val), "%s", app->auto_rescan ? "ON" : "off");
+        else if(i == SET_SCANWIN)
+            snprintf(val, sizeof(val), "%us", room_sweep_scan_timeout_seconds(app->scan_timeout_idx));
         else if(i == SET_LOG)
             snprintf(
                 val,
@@ -3008,7 +3103,7 @@ static void draw_settings(Canvas* canvas, App* app) {
 
         uint16_t w = canvas_string_width(canvas, val);
         canvas_draw_str(canvas, 124 - w, y, val);
-        if(i == (int)app->settings_sel) canvas_set_color(canvas, ColorBlack);
+        if(i == app->settings_sel) canvas_set_color(canvas, ColorBlack);
     }
 }
 
@@ -3149,6 +3244,7 @@ int32_t room_sweep_app(void* p) {
     app->wifi_strongest = -127;
     app->ble_strongest = -127;
     app->auto_rescan = true;
+    app->scan_timeout_idx = 1; /* 30s default */
     app->session_log_on = false;
     app->gps_log_coordinates = false;
     app->record_storage_error = false;
@@ -3261,7 +3357,8 @@ int32_t room_sweep_app(void* p) {
                 uint32_t now = furi_get_tick();
                 /* A bounded window completes regardless of result count. */
                 if(app->marauder_state == MarauderScanning &&
-                   (uint32_t)(now - app->last_rescan_tick) >= MARAUDER_SCAN_TIMEOUT_MS) {
+                   (uint32_t)(now - app->last_rescan_tick) >=
+                       room_sweep_scan_timeout_ms(app->scan_timeout_idx)) {
                     marauder_stop_scan(app);
                     app->marauder_state = app->marauder_confirmed ?
                                                MarauderDone : MarauderError;
@@ -3353,10 +3450,20 @@ int32_t room_sweep_app(void* p) {
 
         /* --- Settings overlay input --- */
         if(app->settings_active) {
-            if(input_action == RoomSweepInputBrowseUp ||
-               input_action == RoomSweepInputBrowseDown) {
-                app->settings_sel = (uint8_t)room_sweep_cursor_step(
-                    app->settings_sel, SET_COUNT, input_action);
+            /* Short or Long L/R both change settings group (no tab switch under overlay). */
+            if(input_action == RoomSweepInputAlternatePrev ||
+               input_action == RoomSweepInputAlternateNext ||
+               input_action == RoomSweepInputNavigatePrev ||
+               input_action == RoomSweepInputNavigateNext) {
+                app->settings_sel = room_sweep_set_group_step(
+                    app->settings_sel,
+                    input_action == RoomSweepInputAlternateNext ||
+                        input_action == RoomSweepInputNavigateNext);
+            } else if(input_action == RoomSweepInputBrowseUp ||
+                      input_action == RoomSweepInputBrowseDown) {
+                app->settings_sel = room_sweep_set_cursor_step(
+                    app->settings_sel,
+                    input_action == RoomSweepInputBrowseDown);
             } else if(input_action == RoomSweepInputPrimary) {
                 if(app->settings_sel == SET_SOUND) {
                     app->sound_on = !app->sound_on;
@@ -3366,6 +3473,18 @@ int32_t room_sweep_app(void* p) {
                     if(app->vibro_on) notification_message(app->notif, &seq_test_vibro);
                 } else if(app->settings_sel == SET_RESCAN) {
                     app->auto_rescan = !app->auto_rescan;
+                } else if(app->settings_sel == SET_SCANWIN) {
+                    app->scan_timeout_idx = room_sweep_scan_timeout_step(
+                        app->scan_timeout_idx, true);
+                    record_enqueue(
+                        app,
+                        "config",
+                        "SYSTEM",
+                        "scan_window",
+                        0,
+                        0,
+                        0,
+                        "Wi-Fi/BLE window duration changed");
                 } else if(app->settings_sel == SET_LOG) {
                     if(!app->session_log_on) {
                         if(!app->storage) app->storage = furi_record_open(RECORD_STORAGE);
@@ -3416,42 +3535,8 @@ int32_t room_sweep_app(void* p) {
                         record_finish_session(app);
                     }
                 } else if(app->settings_sel == SET_EXTBAND) {
-                    app->ext_band = (ExtBandPref)((app->ext_band + 1) % 3);
-                    app->rf_config_generation++;
-                    app->sweep_running = false;
-                    app->peak_running = false;
-                    furi_mutex_acquire(app->mutex, FuriWaitForever);
-                    room_sweep_candidate_invalidate(&app->signal_candidate);
-                    furi_mutex_release(app->mutex);
-                    app->tx_from_candidate = false;
-                    room_sweep_candidate_invalidate(&app->tx_candidate);
-                    if(app->target_kind == TargetRF) {
-                        app->target_kind = TargetNone;
-                        app->target_freq_hz = 0;
-                        app->target_id[0] = '\0';
-                        app->target_rssi = -127;
-                    }
-                    if(app->ext_band == ExtBand400) {
-                        app->tx_freq_idx = 0;
-                        app->tx_freq_hz = tx_freq_presets[app->tx_freq_idx];
-                    } else if(app->ext_band == ExtBand900) {
-                        app->tx_freq_idx = 2;
-                        app->tx_freq_hz = tx_freq_presets[app->tx_freq_idx];
-                    }
-                    if(app->radio_path == RadioPathExternal && app->ext_band != ExtBandAuto) {
-                        app->sweep_band_idx = rf_default_sweep_band(app);
-                    }
-                    record_enqueue(
-                        app,
-                        "config",
-                        "RF",
-                        "external_band",
-                        0,
-                        0,
-                        0,
-                        app->ext_band == ExtBand400 ? "400 MHz path selected" :
-                        app->ext_band == ExtBand900 ? "900 MHz path selected" :
-                                                       "automatic receive path; external TX blocked");
+                    apply_ext_band_pref(
+                        app, (ExtBandPref)((app->ext_band + 1) % 3));
                 } else if(app->settings_sel == SET_GPSSRC) {
                     app->gps_profile = app->gps_profile == GPS_PROFILE_BFFB ?
                                            GPS_PROFILE_EXTERNAL : GPS_PROFILE_BFFB;
@@ -3552,6 +3637,20 @@ int32_t room_sweep_app(void* p) {
 
         /* --- TX tab: safety-critical input handling --- */
         if(app->mode == SweepModeTx) {
+            /* Hold L/R while disarmed: set external band (fixes EXT AUTO block). */
+            if((input_action == RoomSweepInputAlternatePrev ||
+                input_action == RoomSweepInputAlternateNext) &&
+               app->tx_state == TxDisarmed &&
+               app->radio_path == RadioPathExternal) {
+                ExtBandPref next = app->ext_band;
+                if(input_action == RoomSweepInputAlternateNext) {
+                    next = (ExtBandPref)((next + 1) % 3);
+                } else {
+                    next = (ExtBandPref)((next + 2) % 3);
+                }
+                apply_ext_band_pref(app, next);
+                continue;
+            }
             if(input_action == RoomSweepInputPrimary ||
                input_action == RoomSweepInputSecondary) {
                 bool long_press = input_action == RoomSweepInputSecondary;
@@ -3632,15 +3731,18 @@ int32_t room_sweep_app(void* p) {
                     furi_thread_start(app->tx_thread);
                 }
             }
+            /* U/D selects presets when disarmed or armed (not while radiating). */
             if((input_action == RoomSweepInputBrowseUp ||
                 input_action == RoomSweepInputBrowseDown) &&
-               app->tx_state == TxArmed) {
+               (app->tx_state == TxArmed || app->tx_state == TxDisarmed)) {
                 app->tx_freq_idx = (uint8_t)room_sweep_cursor_step(
                     app->tx_freq_idx, TX_FREQ_PRESET_COUNT, input_action);
                 app->tx_freq_hz = tx_freq_presets[app->tx_freq_idx];
                 app->tx_from_candidate = false;
                 room_sweep_candidate_invalidate(&app->tx_candidate);
-                app->tx_refusal = RoomSweepTxRefusalNone;
+                if(app->tx_refusal != RoomSweepTxRefusalExtBandUnknown) {
+                    app->tx_refusal = RoomSweepTxRefusalNone;
+                }
             }
             if(room_sweep_input_is_tab_navigation(input_action)) {
                 navigate_tab(app, input_action == RoomSweepInputNavigateNext);
@@ -3751,8 +3853,22 @@ int32_t room_sweep_app(void* p) {
         }
 
         if(app->mode == SweepModeWifi) {
-            if(input_action == RoomSweepInputBrowseUp ||
-               input_action == RoomSweepInputBrowseDown) {
+            if(input_action == RoomSweepInputAlternatePrev ||
+               input_action == RoomSweepInputAlternateNext) {
+                app->scan_timeout_idx = room_sweep_scan_timeout_step(
+                    app->scan_timeout_idx,
+                    input_action == RoomSweepInputAlternateNext);
+                record_enqueue(
+                    app,
+                    "config",
+                    "WIFI",
+                    "scan_window",
+                    0,
+                    0,
+                    0,
+                    "window duration changed");
+            } else if(input_action == RoomSweepInputBrowseUp ||
+                      input_action == RoomSweepInputBrowseDown) {
                 furi_mutex_acquire(app->mutex, FuriWaitForever);
                 app->wifi_scroll = (uint8_t)room_sweep_cursor_step(
                     app->wifi_scroll, app->wifi_count, input_action);
@@ -3801,8 +3917,22 @@ int32_t room_sweep_app(void* p) {
         }
 
         if(app->mode == SweepModeBle) {
-            if(input_action == RoomSweepInputBrowseUp ||
-               input_action == RoomSweepInputBrowseDown) {
+            if(input_action == RoomSweepInputAlternatePrev ||
+               input_action == RoomSweepInputAlternateNext) {
+                app->scan_timeout_idx = room_sweep_scan_timeout_step(
+                    app->scan_timeout_idx,
+                    input_action == RoomSweepInputAlternateNext);
+                record_enqueue(
+                    app,
+                    "config",
+                    "BLE",
+                    "scan_window",
+                    0,
+                    0,
+                    0,
+                    "window duration changed");
+            } else if(input_action == RoomSweepInputBrowseUp ||
+                      input_action == RoomSweepInputBrowseDown) {
                 furi_mutex_acquire(app->mutex, FuriWaitForever);
                 app->ble_scroll = (uint8_t)room_sweep_cursor_step(
                     app->ble_scroll, app->ble_count, input_action);
