@@ -10,8 +10,9 @@ Wiki: https://github.com/justcallmekoko/ESP32Marauder/wiki/BFFB
 |------|----------------------------|
 | ESP32 runs **Marauder Dev Board Pro** firmware (`_marauder_dev_board_pro.bin`) | CLI command set = current ESP32Marauder `CommandLine.h` |
 | **GPS is wired to the ESP32 only**, not Flipper GPIO | Stock Flipper GPS apps will **not** see BFFB GPS. Must use Marauder CLI (`nmea`, `gps -g …`) over UART |
-| Bottom module switch selects **NRF24 vs ESP32** | For WiFi/BLE/GPS via Marauder, switch must be on **ESP32** |
-| Dual CC1101 + nRF24 are on Flipper **SPI** | Room Sweep RF prefers Momentum **`cc1101_ext`** (BFFB dual CC1101). Top switch = 400 vs 900 MHz; bottom = **ESP32** for CC1101. Falls back to internal if external not detected. |
+| Bottom SPI switch (silkscreen usually **nRF24 ↔ CC1101**, *not* “ESP32”) | **SPI mux only.** nRF24 side = nRF apps. **CC1101 side** = external dual CC1101 *and* is the wiki’s “ESP32 position” for Marauder/WiFi/BLE. There is no separate ESP32 toggle on the panel. |
+| Top switch **400 ↔ 900** | Which external CC1101 band is on SPI. Irrelevant for BLE/WiFi (ESP32 radio). |
+| ESP32 / Marauder | Always the onboard ESP32 for WiFi+BLE over UART. Power + **bottom switch off nRF24** (on **CC1101** side). |
 | Official Flipper UI | [Marauder Companion](https://github.com/0xchocolate/flipperzero-wifi-marauder) |
 
 ## GPS paths
@@ -49,12 +50,18 @@ From `esp32_marauder/CommandLine.h` + companion menu (current main):
 
 ### Output formats (WiFiScan.cpp)
 
-**BLE (`sniffbt`):**
+**BLE (`sniffbt`) — live BFFB capture (uart-4.txt):**
 ```text
--60 Device: DeviceName
--72 Device: aa:bb:cc:dd:ee:ff
+Started BLE Scan
+>  RSSI: -37 Device: 00:11:22:33:44:55 RSSI: -50 Device: 00:11:22:33:44:58#stopscan
 ```
-RSSI updates for already-seen devices are **silent** (callback returns without print).
+Also may appear as wiki form `-60 Device: name`. Updates for already-seen devices can be silent.
+
+**Critical Room Sweep pitfalls (root cause of empty BLE list):**
+1. Do **not** drop lines starting with `>` — BFFB prefixes every result with `> `.
+2. Format is often `RSSI: -NN Device: …`, not bare `-NN Device:`.
+3. Multiple records abut on one line with no `\n`; split on the next `RSSI:`.
+4. `#stopscan` can abut the last MAC with no space.
 
 **WiFi AP beacon path (`scanall` / `sniffbeacon`):**
 ```text

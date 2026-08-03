@@ -191,10 +191,10 @@ typedef struct {
     char pending_lines[MARAUDER_MAX_LINES][MARAUDER_LINE_MAX];
     volatile uint8_t uart_line_head;
     volatile uint8_t uart_line_tail;
-    char line_buf[MARAUDER_LINE_MAX];
-    uint8_t line_pos;
+    RoomSweepUartLineAccum uart_accum; /* byte→line framer (handles headless BLE) */
     char last_uart_line[40]; /* debug: last non-empty RX line (UI) */
     volatile uint32_t uart_rx_tick;   /* any Marauder line received */
+    volatile uint32_t uart_byte_tick; /* last UART byte (for idle BLE flush) */
     volatile uint16_t uart_line_count;
     volatile uint32_t uart_line_drops;
     volatile bool marauder_confirmed;
@@ -923,6 +923,19 @@ static bool tx_pick_allowed_preset(App* app) {
     return false;
 }
 
+/* Enqueue one completed UART line into the ring (ISR or main after RX stop). */
+static void uart_enqueue_completed_line(App* app, const char* line) {
+    if(!app || !line || line[0] == '\0') return;
+    uint8_t next_head = (uint8_t)((app->uart_line_head + 1U) % MARAUDER_MAX_LINES);
+    if(next_head == app->uart_line_tail) {
+        app->uart_line_drops++;
+        return;
+    }
+    strncpy(app->pending_lines[app->uart_line_head], line, MARAUDER_LINE_MAX - 1);
+    app->pending_lines[app->uart_line_head][MARAUDER_LINE_MAX - 1] = '\0';
+    app->uart_line_head = next_head;
+}
+
 /* ================================================================== */
 /* UART ISR callback                                                   */
 /* ================================================================== */
@@ -932,24 +945,13 @@ static void uart_rx_cb(FuriHalSerialHandle* handle, FuriHalSerialRxEvent event, 
     if(event != FuriHalSerialRxEventData) return;
 
     uint8_t byte = furi_hal_serial_async_rx(app->serial);
+    app->uart_byte_tick = furi_get_tick();
 
-    if(byte == '\n' || byte == '\r') {
-        if(app->line_pos > 0) {
-            uint8_t next_head = (app->uart_line_head + 1) % MARAUDER_MAX_LINES;
-            if(next_head != app->uart_line_tail) {
-                app->line_buf[app->line_pos] = '\0';
-                strncpy(app->pending_lines[app->uart_line_head], app->line_buf, MARAUDER_LINE_MAX - 1);
-                app->pending_lines[app->uart_line_head][MARAUDER_LINE_MAX - 1] = '\0';
-                app->uart_line_head = next_head;
-            } else {
-                app->uart_line_drops++;
-            }
-            app->line_pos = 0;
-        }
-    } else {
-        if(app->line_pos < MARAUDER_LINE_MAX - 1) {
-            app->line_buf[app->line_pos++] = (char)byte;
-        }
+    char completed[ROOM_SWEEP_UART_LINE_MAX];
+    /* Headless BFFB BLE: no '\n' between Device records (see room_sweep_scan.h). */
+    if(room_sweep_uart_feed_byte(
+           &app->uart_accum, (char)byte, completed, sizeof(completed))) {
+        uart_enqueue_completed_line(app, completed);
     }
 }
 
@@ -960,6 +962,13 @@ static bool marauder_open(App* app) {
     Expansion* expansion = furi_record_open(RECORD_EXPANSION);
     expansion_disable(expansion);
     furi_record_close(RECORD_EXPANSION);
+
+    /* BFFB often needs Flipper 5V (OTG) for stable ESP32 / BLE radio. */
+    if(!furi_hal_power_is_otg_enabled()) {
+        furi_hal_power_enable_otg();
+        app->radio_otg_on = true;
+        furi_delay_ms(200);
+    }
 
     app->serial = furi_hal_serial_control_acquire(FuriHalSerialIdUsart);
     if(!app->serial) {
@@ -975,7 +984,8 @@ static bool marauder_open(App* app) {
     app->marauder_state = MarauderIdle;
     app->uart_line_head = 0;
     app->uart_line_tail = 0;
-    app->line_pos = 0;
+    room_sweep_uart_line_reset(&app->uart_accum);
+    app->uart_byte_tick = 0;
     app->marauder_confirmed = false;
     app->marauder_probe_tick = furi_get_tick();
     static const uint8_t help_command[] = "help\n";
@@ -1047,12 +1057,19 @@ static void clear_wireless_target(App* app, TargetKind kind) {
     furi_mutex_release(app->mutex);
 }
 
+/* Emit trailing headless BLE record (no following '-' and no '\n'). */
+static void uart_flush_idle_ble(App* app) {
+    char completed[ROOM_SWEEP_UART_LINE_MAX];
+    if(room_sweep_uart_flush_ble_idle(&app->uart_accum, completed, sizeof(completed))) {
+        uart_enqueue_completed_line(app, completed);
+    }
+}
+
 static void clear_uart_lines(App* app) {
     if(app->serial) furi_hal_serial_async_rx_stop(app->serial);
     app->uart_line_head = 0;
     app->uart_line_tail = 0;
-    app->line_pos = 0;
-    app->line_buf[0] = '\0';
+    room_sweep_uart_line_reset(&app->uart_accum);
     if(app->serial)
         furi_hal_serial_async_rx_start(app->serial, uart_rx_cb, app, false);
 }
@@ -1064,6 +1081,11 @@ static void marauder_stop_scan(App* app) {
         marauder_send(app, MARAUDER_CMD_STOP);
         furi_delay_ms(80);
     }
+    /* Capture final headless BLE line after traffic stops. */
+    if(app->serial) furi_hal_serial_async_rx_stop(app->serial);
+    uart_flush_idle_ble(app);
+    if(app->serial)
+        furi_hal_serial_async_rx_start(app->serial, uart_rx_cb, app, false);
     if(app->marauder_state != MarauderNoDevice) app->marauder_state = MarauderIdle;
     if(was_scanning)
         record_enqueue(app, "scan_stop", "SYSTEM", "marauder", 0, 0, 0, "requested");
@@ -1321,15 +1343,18 @@ static void parse_device_name(const char* line, char* out, size_t out_sz) {
 }
 
 /* Parse a WiFi AP result line into the AP table.
- * Format: "-45 Ch: 6 AA:BB:CC:DD:EE:FF ESSID: Name 00 00" */
+ * Formats seen on BFFB:
+ *   "-45 Ch: 6 AA:BB:CC:DD:EE:FF ESSID: Name 00 00"
+ *   "> RSSI: -38 Ch: 5 BSSID: aa:… ESSID: Name"
+ */
 static bool parse_wifi_line(App* app, const char* line) {
-    if(line[0] == '#') return false; /* command echo */
-    if(line[0] == '>') return false; /* prompt */
+    line = room_sweep_uart_strip_prompt(line);
+    if(!line || line[0] == '\0' || line[0] == '#') return false;
 
     int rssi_val = 0;
     bool found_rssi = false;
 
-    /* Primary: line starts with negative number (Marauder format) */
+    /* Primary: line starts with negative number (older Marauder format) */
     if(line[0] == '-' && line[1] >= '0' && line[1] <= '9') {
         char* end;
         long v = strtol(line, &end, 10);
@@ -1338,7 +1363,7 @@ static bool parse_wifi_line(App* app, const char* line) {
             found_rssi = true;
         }
     }
-    /* Fallback: "RSSI: -45" or "rssi":-45 (other firmware) */
+    /* BFFB live: "RSSI: -38 Ch: …" */
     if(!found_rssi) {
         if(!parse_int_after(line, "RSSI", &rssi_val) &&
            !parse_int_after(line, "rssi", &rssi_val)) {
@@ -1347,10 +1372,12 @@ static bool parse_wifi_line(App* app, const char* line) {
     }
     if(rssi_val > 0 || rssi_val < -120) return false;
 
-    /* Must have ESSID or Ch: to be a WiFi AP line */
-    if(!strstr(line, "ESSID") && !strstr(line, "Ch:") && !strstr(line, "essid")) {
+    /* Must have ESSID or Ch: to be a WiFi AP line (not a BLE "RSSI: Device:" line) */
+    if(!strstr(line, "ESSID") && !strstr(line, "Ch:") && !strstr(line, "essid") &&
+       !strstr(line, "BSSID")) {
         return false;
     }
+    if(strstr(line, "Device:")) return false; /* BLE */
 
     char ssid[33] = {0};
     parse_essid(line, ssid, sizeof(ssid));
@@ -1406,16 +1433,16 @@ static bool parse_wifi_line(App* app, const char* line) {
     return true;
 }
 
-/* Parse a BLE device result line.
- * Format: "-60 Device: DeviceName" */
-static bool parse_ble_line(App* app, const char* line) {
-    if(line[0] == '#') return false;
-    if(line[0] == '>') return false;
+/* Store one BLE observation (single record text). */
+static bool parse_ble_one_record(App* app, const char* line) {
+    line = room_sweep_uart_strip_prompt(line);
+    if(!line || line[0] == '\0' || line[0] == '#') return false;
+    /* Not WiFi */
+    if(strstr(line, "ESSID") || strstr(line, "BSSID") || strstr(line, "Ch:")) return false;
 
     int rssi_val = 0;
     bool found_rssi = false;
 
-    /* Primary: line starts with negative number */
     if(line[0] == '-' && line[1] >= '0' && line[1] <= '9') {
         char* end;
         long v = strtol(line, &end, 10);
@@ -1424,7 +1451,6 @@ static bool parse_ble_line(App* app, const char* line) {
             found_rssi = true;
         }
     }
-    /* Fallback */
     if(!found_rssi) {
         if(!parse_int_after(line, "RSSI", &rssi_val) &&
            !parse_int_after(line, "rssi", &rssi_val)) {
@@ -1433,7 +1459,6 @@ static bool parse_ble_line(App* app, const char* line) {
     }
     if(rssi_val > 0 || rssi_val < -120) return false;
 
-        /* Marauder: "Device:" / "Name:" — or bare MAC after RSSI */
     char mac_early[18] = {0};
     copy_mac(line, mac_early);
     if(!strstr(line, "Device") && !strstr(line, "Name") && !strstr(line, "name") &&
@@ -1445,12 +1470,16 @@ static bool parse_ble_line(App* app, const char* line) {
     parse_device_name(line, name, sizeof(name));
     if(name[0] == '\0') parse_str_after(line, "Device", name, sizeof(name));
     if(name[0] == '\0') parse_str_after(line, "Name", name, sizeof(name));
+    /* Truncate name if a second RSSI token leaked in. */
+    char* cut = strstr(name, " RSSI");
+    if(cut) *cut = '\0';
+    cut = strstr(name, "RSSI:");
+    if(cut) *cut = '\0';
     if(name[0] == '\0' && mac_early[0]) strncpy(name, mac_early, sizeof(name) - 1);
     if(name[0] == '\0') snprintf(name, sizeof(name), "Hidden/unknown");
 
     char mac[18] = {0};
     parse_str_after(line, "MAC", mac, sizeof(mac));
-    /* Marauder prints MAC as the Device field when the peer has no name. */
     if(mac[0] == '\0') copy_mac(line, mac);
     if(mac[0] == '\0' && name[0] != '\0') {
         char maybe[18] = {0};
@@ -1483,7 +1512,7 @@ static bool parse_ble_line(App* app, const char* line) {
             app->ble_devs[i].first_seen = now;
             app->ble_devs[i].last_seen = now;
             app->ble_devs[i].observations = 1;
-            app->ble_devs[i].valid = true; /* publish the completed row last */
+            app->ble_devs[i].valid = true;
             app->ble_count++;
             app->ble_last_updated = i;
             return true;
@@ -1494,10 +1523,50 @@ static bool parse_ble_line(App* app, const char* line) {
     return true;
 }
 
+/*
+ * Parse BLE payload that may contain many abutting records:
+ * "RSSI: -37 Device: aa:… RSSI: -50 Device: bb:…#stopscan"
+ */
+static uint8_t parse_ble_line(App* app, const char* line) {
+    if(!line) return 0;
+    line = room_sweep_uart_strip_prompt(line);
+    if(!line[0] || line[0] == '#') return 0;
+
+    uint8_t found = 0;
+    const char* rec = room_sweep_uart_find_ble_record(line);
+    while(rec) {
+        const char* end = room_sweep_uart_ble_record_end(rec);
+        char one[ROOM_SWEEP_UART_LINE_MAX];
+        size_t len = (size_t)(end - rec);
+        if(len >= sizeof(one)) len = sizeof(one) - 1U;
+        memcpy(one, rec, len);
+        one[len] = '\0';
+        /* Trim trailing spaces */
+        while(len > 0 && (one[len - 1] == ' ' || one[len - 1] == '\t')) {
+            one[--len] = '\0';
+        }
+        if(parse_ble_one_record(app, one)) found++;
+        if(*end == '\0' || *end == '#') break;
+        rec = room_sweep_uart_find_ble_record(end);
+    }
+    return found;
+}
+
 /* Process new UART lines — route to appropriate parser.
  * Marauder streams results continuously until stopscan — no "done" marker.
- * Lines starting with '#' are command echoes; '> ' is the prompt. */
+ * BFFB prefixes result lines with "> " — strip, do not drop (that hid all BLE/WiFi). */
 static void process_uart_lines(App* app) {
+    /* Headless BLE: last Device: has no trailing delimiter until silence. */
+    if(app->mode == SweepModeBle && app->uart_accum.pos > 0 && app->uart_byte_tick != 0) {
+        uint32_t now = furi_get_tick();
+        if((uint32_t)(now - app->uart_byte_tick) >= 80U) {
+            if(app->serial) furi_hal_serial_async_rx_stop(app->serial);
+            uart_flush_idle_ble(app);
+            if(app->serial)
+                furi_hal_serial_async_rx_start(app->serial, uart_rx_cb, app, false);
+        }
+    }
+
     char latest[MARAUDER_LINE_MAX];
     while(app->uart_line_tail != app->uart_line_head) {
         uint8_t tail = app->uart_line_tail;
@@ -1527,22 +1596,25 @@ static void process_uart_lines(App* app) {
             dump_push_line(app, latest);
         }
 
-        if(latest[0] == '#' || latest[0] == '>') continue;
+        const char* body = room_sweep_uart_strip_prompt(latest);
+        /* Pure command echo "#sniffbt" — skip. Prompt-only ">" already stripped empty. */
+        if(!body[0] || body[0] == '#') continue;
 
-        if(strstr(latest, "ESP32 Marauder") || strstr(latest, "sniffbeacon") ||
-           strstr(latest, "sniffbt") || strstr(latest, "Commands")) {
+        if(strstr(body, "ESP32 Marauder") || strstr(body, "sniffbeacon") ||
+           strstr(body, "sniffbt") || strstr(body, "Commands") ||
+           strstr(body, "Started BLE") || strstr(body, "Beacon sniff")) {
             app->marauder_confirmed = true;
             app->marauder_confirmed_tick = furi_get_tick();
         }
 
-        if(strstr(latest, "not supported") || strstr(latest, "Index not in range")) {
+        if(strstr(body, "not supported") || strstr(body, "Index not in range")) {
             app->marauder_state = MarauderError;
             continue;
         }
 
         if(app->mode == SweepModeWifi) {
             furi_mutex_acquire(app->mutex, FuriWaitForever);
-            if(parse_wifi_line(app, latest)) {
+            if(parse_wifi_line(app, body)) {
                 if(app->wifi_window_observations < UINT16_MAX)
                     app->wifi_window_observations++;
                 app->marauder_confirmed = true;
@@ -1593,9 +1665,13 @@ static void process_uart_lines(App* app) {
             furi_mutex_release(app->mutex);
         } else if(app->mode == SweepModeBle) {
             furi_mutex_acquire(app->mutex, FuriWaitForever);
-            if(parse_ble_line(app, latest)) {
-                if(app->ble_window_observations < UINT16_MAX)
-                    app->ble_window_observations++;
+            uint8_t n_found = parse_ble_line(app, body);
+            if(n_found > 0) {
+                if(app->ble_window_observations < UINT16_MAX - n_found)
+                    app->ble_window_observations =
+                        (uint16_t)(app->ble_window_observations + n_found);
+                else
+                    app->ble_window_observations = UINT16_MAX;
                 app->marauder_confirmed = true;
                 app->marauder_confirmed_tick = furi_get_tick();
                 app->ble_strongest = -127;
@@ -1649,7 +1725,7 @@ static void process_uart_lines(App* app) {
 /* ================================================================== */
 /* SubGHz radio — BFFB external CC1101 (SPI) preferred, else internal  */
 /* BFFB wiki: dual CC1101 on Flipper SPI; top switch 400 vs 900 MHz;   */
-/* bottom switch ESP32 for CC1101 access. Momentum: cc1101_ext.        */
+/* bottom SW: nRF24 vs CC1101 (CC1101 side = wiki "ESP32 pos").        */
 /* ================================================================== */
 static void radio_otg_on(App* app) {
     if(!furi_hal_power_is_otg_enabled()) {
@@ -2581,7 +2657,7 @@ static void draw_wifi_tab(Canvas* canvas, App* app) {
     if(!app->serial) {
         canvas_set_font(canvas, FontKeyboard);
         canvas_draw_str(canvas, 2, 30, "No UART — attach BFFB");
-        canvas_draw_str(canvas, 2, 42, "ESP32 switch for Marauder");
+        canvas_draw_str(canvas, 2, 42, "bottom SW: CC1101 not nRF");
         canvas_draw_str(canvas, 2, 63, "absence not proven");
         return;
     }
@@ -2610,7 +2686,7 @@ static void draw_wifi_tab(Canvas* canvas, App* app) {
         canvas_set_font(canvas, FontSecondary);
         canvas_draw_str(canvas, 2, 28, "Waiting for Marauder");
         canvas_set_font(canvas, FontKeyboard);
-        canvas_draw_str(canvas, 2, 42, "ESP32 on; bottom switch");
+        canvas_draw_str(canvas, 2, 42, "SW: CC1101 side (not nRF)");
         snprintf(buf, sizeof(buf), "win %us  OK=scan", win_s);
         canvas_draw_str(canvas, 2, 63, buf);
         return;
@@ -2666,7 +2742,7 @@ static void draw_ble_tab(Canvas* canvas, App* app) {
     if(!app->serial) {
         canvas_set_font(canvas, FontKeyboard);
         canvas_draw_str(canvas, 2, 30, "No UART — attach BFFB");
-        canvas_draw_str(canvas, 2, 42, "ESP32 switch for Marauder");
+        canvas_draw_str(canvas, 2, 42, "bottom SW: CC1101 not nRF");
         canvas_draw_str(canvas, 2, 63, "absence not proven");
         return;
     }
@@ -2695,7 +2771,7 @@ static void draw_ble_tab(Canvas* canvas, App* app) {
         canvas_set_font(canvas, FontSecondary);
         canvas_draw_str(canvas, 2, 28, "Waiting for Marauder");
         canvas_set_font(canvas, FontKeyboard);
-        canvas_draw_str(canvas, 2, 42, "ESP32 on; bottom switch");
+        canvas_draw_str(canvas, 2, 42, "SW: CC1101 side (not nRF)");
         snprintf(buf, sizeof(buf), "win %us  OK=scan", win_s);
         canvas_draw_str(canvas, 2, 63, buf);
         return;
