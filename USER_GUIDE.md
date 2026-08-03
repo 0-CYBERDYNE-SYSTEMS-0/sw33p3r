@@ -85,13 +85,13 @@ TX is intentionally harder to activate because it radiates RF energy.
 
 1. Entering TX automatically preloads a fresh qualified RF candidate when one
    exists; otherwise it uses the selected safe preset.
-2. On external radio with **ExtBand AUTO**, TX is blocked until you set
-   **400** or **900** (Settings → Radio → ExtBand, or **Long Left/Right** on
-   the TX tab while disarmed).
-3. **Up/Down** chooses a frequency preset while disarmed or armed.
-4. **Short OK** performs preflight and arms. Arming emits no RF.
-5. **Long OK** confirms a bounded 1–10 second carrier test.
-6. **Back** disarms/stops; leaving the tab also stops and disarms.
+2. **Up/Down** chooses among 12 presets spanning ~300 / ~400 / ~900 MHz.
+   On BFFB external radio, ExtBand **auto-follows** 400 vs 900 presets.
+   **Flip the board top switch** to match the on-screen `sw:400` / `sw:900`.
+   ~300 MHz presets need the **internal** radio (not the dual external path).
+3. **Short OK** performs preflight and arms. Arming emits no RF.
+4. **Long OK** confirms a bounded 1–10 second carrier test.
+5. **Back** disarms/stops; leaving the tab also stops and disarms.
    Refusal reasons (band, expired candidate, real region table) stay on DISARMED.
    Flipper region `--` (unprovisioned) is **not** a full TX ban; radio + ExtBand
    still apply. A provisioned region that forbids a frequency still blocks it.
