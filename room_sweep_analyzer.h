@@ -12,6 +12,9 @@
 #define ROOM_SWEEP_ANALYZER_HISTORY 48U
 #define ROOM_SWEEP_ANALYZER_FLOOR_DBM (-110)
 #define ROOM_SWEEP_ANALYZER_CEIL_DBM (-30)
+/* After this age, meter starts fading; at DEAD_MS it is empty (-127). */
+#define ROOM_SWEEP_ANALYZER_STALE_MS 2000U
+#define ROOM_SWEEP_ANALYZER_DEAD_MS 6000U
 
 typedef enum {
     RoomSweepAnalyzerTrendStable = 0,
@@ -114,9 +117,12 @@ static inline void room_sweep_analyzer_push(RoomSweepAnalyzerState* s, int rssi)
     s->hist_head = (uint8_t)((s->hist_head + 1U) % ROOM_SWEEP_ANALYZER_HISTORY);
     if(s->hist_count < ROOM_SWEEP_ANALYZER_HISTORY) s->hist_count++;
     s->live_rssi = sample;
+    /* Empty / silent samples clear "has signal" so UI can show zero honestly. */
     s->has_signal = sample > ROOM_SWEEP_ANALYZER_FLOOR_DBM;
-    if(s->peak_rssi < sample) s->peak_rssi = sample;
-    if(s->trough_rssi == 0 || sample < s->trough_rssi) s->trough_rssi = sample;
+    if(sample > ROOM_SWEEP_ANALYZER_FLOOR_DBM) {
+        if(s->peak_rssi < sample) s->peak_rssi = sample;
+        if(s->trough_rssi == 0 || sample < s->trough_rssi) s->trough_rssi = sample;
+    }
     s->trend = room_sweep_analyzer_compute_trend(s);
 }
 
@@ -160,4 +166,29 @@ static inline int room_sweep_analyzer_activity_to_rssi(uint8_t activity) {
     int r = ROOM_SWEEP_ANALYZER_FLOOR_DBM +
             ((int)activity * (ROOM_SWEEP_ANALYZER_CEIL_DBM - ROOM_SWEEP_ANALYZER_FLOOR_DBM)) / 255;
     return r;
+}
+
+/*
+ * Age a held RSSI sample so the meter can fall to empty when the radio
+ * stops reporting (walk out of range / scan gap). Fresh samples pass through.
+ * age_ms = now - last_seen.
+ */
+static inline int room_sweep_analyzer_aged_rssi(int rssi, uint32_t age_ms) {
+    if(rssi < -127) rssi = -127;
+    if(rssi > 0) rssi = 0;
+    if(age_ms < ROOM_SWEEP_ANALYZER_STALE_MS) return rssi;
+    if(age_ms >= ROOM_SWEEP_ANALYZER_DEAD_MS) return -127;
+    /* Linear fade from last rssi → -127 over STALE..DEAD. */
+    uint32_t span = ROOM_SWEEP_ANALYZER_DEAD_MS - ROOM_SWEEP_ANALYZER_STALE_MS;
+    uint32_t t = age_ms - ROOM_SWEEP_ANALYZER_STALE_MS;
+    int delta = -127 - rssi;
+    return rssi + (int)(((int32_t)delta * (int32_t)t) / (int32_t)span);
+}
+
+static inline bool room_sweep_analyzer_is_stale(uint32_t age_ms) {
+    return age_ms >= ROOM_SWEEP_ANALYZER_STALE_MS;
+}
+
+static inline bool room_sweep_analyzer_is_dead(uint32_t age_ms) {
+    return age_ms >= ROOM_SWEEP_ANALYZER_DEAD_MS;
 }
