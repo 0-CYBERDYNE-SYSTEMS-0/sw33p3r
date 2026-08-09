@@ -43,6 +43,10 @@ echo "== host nRF24 survey state =="
 cc -std=c11 -Wall -Wextra -Werror -I. tests/test_nrf24_state.c -o /tmp/room_sweep_nrf24_state_test
 /tmp/room_sweep_nrf24_state_test
 
+echo "== host analyzer / proximity meter =="
+cc -std=c11 -Wall -Wextra -Werror -I. tests/test_analyzer_state.c -o /tmp/room_sweep_analyzer_test
+/tmp/room_sweep_analyzer_test
+
 if [[ -f tests/test_scan_logic.c ]]; then
   echo "== host scan/GPS helpers =="
   cc -std=c11 -Wall -Wextra -Werror -I. tests/test_scan_logic.c -o /tmp/test_scan_logic
