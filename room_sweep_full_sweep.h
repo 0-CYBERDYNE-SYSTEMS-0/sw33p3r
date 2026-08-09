@@ -6,7 +6,7 @@
 /*
  * Host-testable full-room-sweep phase machine.
  * Detect-only order: RF → Wi-Fi → BLE → nRF24 → GPS → done.
- * Never arms TX.
+ * Never arms TX. Every phase has a hard wall-clock timeout.
  */
 
 typedef enum {
@@ -34,6 +34,14 @@ typedef struct {
 #define ROOM_SWEEP_FULL_BIT_ALL \
     (ROOM_SWEEP_FULL_BIT_RF | ROOM_SWEEP_FULL_BIT_WIFI | ROOM_SWEEP_FULL_BIT_BLE | \
      ROOM_SWEEP_FULL_BIT_NRF24 | ROOM_SWEEP_FULL_BIT_GPS)
+
+/* Hard per-phase ceilings (ms). GPS always ends by this; no infinite wait. */
+#define ROOM_SWEEP_FULL_RF_MS 10000U
+#define ROOM_SWEEP_FULL_WIFI_MS 15000U
+#define ROOM_SWEEP_FULL_BLE_MS 15000U
+#define ROOM_SWEEP_FULL_NRF24_MS 12000U
+#define ROOM_SWEEP_FULL_GPS_MS 8000U
+#define ROOM_SWEEP_FULL_GPS_MIN_MS 2000U /* earliest exit if a fix/sentence exists */
 
 static inline void room_sweep_full_sweep_init(RoomSweepFullSweepState* s) {
     if(!s) return;
@@ -65,6 +73,43 @@ static inline uint8_t room_sweep_full_sweep_bit_for_phase(RoomSweepFullPhase pha
     default:
         return 0;
     }
+}
+
+static inline uint32_t room_sweep_full_sweep_phase_limit_ms(RoomSweepFullPhase phase) {
+    switch(phase) {
+    case RoomSweepFullRf:
+        return ROOM_SWEEP_FULL_RF_MS;
+    case RoomSweepFullWifi:
+        return ROOM_SWEEP_FULL_WIFI_MS;
+    case RoomSweepFullBle:
+        return ROOM_SWEEP_FULL_BLE_MS;
+    case RoomSweepFullNrf24:
+        return ROOM_SWEEP_FULL_NRF24_MS;
+    case RoomSweepFullGps:
+        return ROOM_SWEEP_FULL_GPS_MS;
+    default:
+        return ROOM_SWEEP_FULL_GPS_MS;
+    }
+}
+
+/* Hard ceiling: always true when elapsed hits the phase limit. */
+static inline bool room_sweep_full_sweep_hard_timeout(
+    RoomSweepFullPhase phase,
+    uint32_t elapsed_ms) {
+    return elapsed_ms >= room_sweep_full_sweep_phase_limit_ms(phase);
+}
+
+/*
+ * GPS may finish early after min dwell when any useful NMEA/fix exists.
+ * Still always forced done at hard timeout.
+ */
+static inline bool room_sweep_full_sweep_gps_ready(
+    uint32_t elapsed_ms,
+    bool has_fix,
+    bool has_sentences) {
+    if(room_sweep_full_sweep_hard_timeout(RoomSweepFullGps, elapsed_ms)) return true;
+    if(elapsed_ms >= ROOM_SWEEP_FULL_GPS_MIN_MS && (has_fix || has_sentences)) return true;
+    return false;
 }
 
 static inline RoomSweepFullPhase room_sweep_full_sweep_next_after(RoomSweepFullPhase phase) {

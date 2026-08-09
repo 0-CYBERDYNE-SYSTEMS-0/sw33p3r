@@ -61,6 +61,22 @@ int main(void) {
         room_sweep_spi_path_step(RoomSweepSpiPathCc1101) == RoomSweepSpiPathNrf24,
         "path step toggles");
 
+    check(
+        room_sweep_full_sweep_phase_limit_ms(RoomSweepFullGps) == ROOM_SWEEP_FULL_GPS_MS,
+        "GPS has hard limit");
+    check(
+        !room_sweep_full_sweep_gps_ready(1000, false, false),
+        "GPS not ready at 1s with no data");
+    check(
+        room_sweep_full_sweep_gps_ready(ROOM_SWEEP_FULL_GPS_MIN_MS, true, false),
+        "GPS early exit on fix after min dwell");
+    check(
+        room_sweep_full_sweep_gps_ready(ROOM_SWEEP_FULL_GPS_MS, false, false),
+        "GPS hard timeout with zero data still finishes");
+    check(
+        room_sweep_full_sweep_hard_timeout(RoomSweepFullGps, ROOM_SWEEP_FULL_GPS_MS),
+        "hard timeout helper matches GPS limit");
+
     printf("RESULT: %s (%d failure(s))\n", failures ? "FAIL" : "ALL PASS", failures);
     return failures ? 1 : 0;
 }
