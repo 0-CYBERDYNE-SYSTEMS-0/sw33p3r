@@ -9,7 +9,7 @@
 
 #define LOG_DIR APP_DATA_PATH("")
 #define SESSION_PATH_MAX 96U
-#define REPORT_BUFFER_SIZE 1536U
+#define REPORT_BUFFER_SIZE 2048U
 #define MIN_FREE_SPACE (1024U * 1024U)
 #define SYNC_INTERVAL_MS 5000U
 #define SYNC_INTERVAL_BYTES 4096U
@@ -26,11 +26,14 @@ typedef struct {
     RoomSweepRecordState record;
     RoomSweepRecordIdentifierMap identifiers;
     RoomSweepReportState report;
-    uint32_t observation_count[4];
-    uint32_t scan_windows[2];
-    int strongest_rssi[3];
-    uint32_t strongest_freq[3];
-    char strongest_id[3][16];
+    uint32_t observation_count[5]; /* RF, WIFI, BLE, GPS, NRF24 */
+    uint32_t scan_windows[3]; /* WIFI, BLE, NRF24 */
+    int strongest_rssi[4]; /* RF, WIFI, BLE, NRF24 */
+    uint32_t strongest_freq[4];
+    char strongest_id[4][16];
+    uint32_t nrf_active_channels;
+    uint8_t nrf_top_channel;
+    bool full_sweep_completed;
     char session_path[SESSION_PATH_MAX];
     char uart_path[SESSION_PATH_MAX];
     char report_path[SESSION_PATH_MAX];
@@ -177,6 +180,8 @@ static void report_sensor_for_source(const char* source) {
         room_sweep_report_sensor_confirmed(&s_log.report, RoomSweepReportSensorBle);
     else if(strcmp(source, "GPS") == 0)
         room_sweep_report_sensor_confirmed(&s_log.report, RoomSweepReportSensorGps);
+    else if(strcmp(source, "NRF24") == 0)
+        room_sweep_report_sensor_confirmed(&s_log.report, RoomSweepReportSensorNrf24);
 }
 
 static int sensor_index(const char* source) {
@@ -185,6 +190,7 @@ static int sensor_index(const char* source) {
     if(strcmp(source, "WIFI") == 0) return 1;
     if(strcmp(source, "BLE") == 0) return 2;
     if(strcmp(source, "GPS") == 0) return 3;
+    if(strcmp(source, "NRF24") == 0) return 4;
     return -1;
 }
 
@@ -256,7 +262,10 @@ bool session_log_begin(Storage* storage) {
     room_sweep_record_identifier_map_init(&s_log.identifiers);
     room_sweep_report_init(&s_log.report);
     room_sweep_report_set_gps_omitted(&s_log.report);
-    for(size_t i = 0; i < 3; i++) s_log.strongest_rssi[i] = -127;
+    for(size_t i = 0; i < 4; i++) s_log.strongest_rssi[i] = -127;
+    s_log.nrf_active_channels = 0;
+    s_log.nrf_top_channel = 0;
+    s_log.full_sweep_completed = false;
     if(!room_sweep_record_state_begin(&s_log.record)) return false;
 
     s_log.session_file = storage_file_alloc(storage);
@@ -374,16 +383,31 @@ bool session_log_write_event(const SessionLogEvent* event) {
         strcmp(event_clean, "snapshot") == 0) &&
        index >= 0) {
         s_log.observation_count[index]++;
-        if(index < 3 && event->rssi > s_log.strongest_rssi[index]) {
-            s_log.strongest_rssi[index] = event->rssi;
-            s_log.strongest_freq[index] = event->freq_hz;
-            strncpy(s_log.strongest_id[index], id_ref, sizeof(s_log.strongest_id[index]) - 1U);
+        /* RF=0 WIFI=1 BLE=2 NRF24=4 map to strongest slots 0..3 */
+        int strong_i = (index == 4) ? 3 : (index < 3 ? index : -1);
+        if(strong_i >= 0 && event->rssi > s_log.strongest_rssi[strong_i]) {
+            s_log.strongest_rssi[strong_i] = event->rssi;
+            s_log.strongest_freq[strong_i] = event->freq_hz;
+            strncpy(
+                s_log.strongest_id[strong_i],
+                id_ref,
+                sizeof(s_log.strongest_id[strong_i]) - 1U);
+        }
+        if(index == 4) {
+            if(event->channel > 0 || event->count > 0) {
+                if(event->count > s_log.nrf_active_channels)
+                    s_log.nrf_active_channels = event->count;
+                if(event->channel != 0) s_log.nrf_top_channel = event->channel;
+            }
         }
     }
     if(strcmp(event_clean, "scan_start") == 0 && index == 1)
         s_log.scan_windows[0]++;
     else if(strcmp(event_clean, "scan_start") == 0 && index == 2)
         s_log.scan_windows[1]++;
+    else if(strcmp(event_clean, "scan_start") == 0 && index == 4)
+        s_log.scan_windows[2]++;
+    if(strcmp(event_clean, "full_sweep_done") == 0) s_log.full_sweep_completed = true;
     if(strcmp(event_clean, "observation") == 0 || strcmp(event_clean, "snapshot") == 0)
         report_sensor_for_source(source_clean);
     if(strcmp(source_clean, "TX") == 0) {
@@ -417,6 +441,7 @@ void session_log_note_sensor_unavailable(uint8_t sensor_mask) {
         RoomSweepReportSensorWifi,
         RoomSweepReportSensorBle,
         RoomSweepReportSensorGps,
+        RoomSweepReportSensorNrf24,
     };
     for(size_t i = 0; i < sizeof(sensors) / sizeof(sensors[0]); i++) {
         if(sensor_mask & (uint8_t)sensors[i])
@@ -428,6 +453,23 @@ static bool write_report(void) {
     if(!s_log.storage || !s_log.report_path[0]) return false;
     char report[REPORT_BUFFER_SIZE];
     size_t used = room_sweep_report_format(&s_log.report, report, sizeof(report));
+    RoomSweepReportFindings findings;
+    room_sweep_report_findings_init(&findings);
+    findings.rf_observations = s_log.observation_count[0];
+    findings.rf_strongest_rssi = s_log.strongest_rssi[0];
+    findings.rf_strongest_hz = s_log.strongest_freq[0];
+    findings.wifi_observations = s_log.observation_count[1];
+    findings.wifi_windows = s_log.scan_windows[0];
+    findings.wifi_strongest_rssi = s_log.strongest_rssi[1];
+    findings.ble_observations = s_log.observation_count[2];
+    findings.ble_windows = s_log.scan_windows[1];
+    findings.ble_strongest_rssi = s_log.strongest_rssi[2];
+    findings.nrf_observations = s_log.observation_count[4];
+    findings.nrf_active_channels = s_log.nrf_active_channels;
+    findings.nrf_top_channel = s_log.nrf_top_channel;
+    findings.gps_snapshots = s_log.observation_count[3];
+    findings.full_sweep_completed = s_log.full_sweep_completed;
+    used = room_sweep_report_append_findings(&findings, report, sizeof(report), used);
     bool uart_exists = storage_file_exists(s_log.storage, s_log.uart_path);
     room_sweep_report_append(
         report,
@@ -441,61 +483,11 @@ static bool write_report(void) {
         (unsigned long)s_log.record.records_written,
         (unsigned long)s_log.record.bytes_written,
         (unsigned long)s_log.record.dropped_records);
-    if(s_log.observation_count[0] > 0) {
-        room_sweep_report_append(
-            report,
-            sizeof(report),
-            &used,
-            "RF: %lu observations; strongest %ddBm at %s, tuned %luHz.\n",
-            (unsigned long)s_log.observation_count[0],
-            s_log.strongest_rssi[0],
-            s_log.strongest_id[0],
-            (unsigned long)s_log.strongest_freq[0]);
-    } else {
-        room_sweep_report_append(report, sizeof(report), &used, "RF: no recorded observation.\n");
-    }
-    if(s_log.observation_count[1] > 0) {
-        room_sweep_report_append(
-            report,
-            sizeof(report),
-            &used,
-            "Wi-Fi: %lu observations in %lu scan windows; strongest %ddBm at %s.\n",
-            (unsigned long)s_log.observation_count[1],
-            (unsigned long)s_log.scan_windows[0],
-            s_log.strongest_rssi[1],
-            s_log.strongest_id[1]);
-    } else {
-        room_sweep_report_append(
-            report,
-            sizeof(report),
-            &used,
-            "Wi-Fi: no recorded AP beacon in %lu scan windows.\n",
-            (unsigned long)s_log.scan_windows[0]);
-    }
-    if(s_log.observation_count[2] > 0) {
-        room_sweep_report_append(
-            report,
-            sizeof(report),
-            &used,
-            "BLE: %lu observations in %lu scan windows; strongest %ddBm at %s.\n",
-            (unsigned long)s_log.observation_count[2],
-            (unsigned long)s_log.scan_windows[1],
-            s_log.strongest_rssi[2],
-            s_log.strongest_id[2]);
-    } else {
-        room_sweep_report_append(
-            report,
-            sizeof(report),
-            &used,
-            "BLE: no recorded advertisement in %lu scan windows.\n",
-            (unsigned long)s_log.scan_windows[1]);
-    }
     room_sweep_report_append(
         report,
         sizeof(report),
         &used,
-        "GPS: %lu snapshots. Repeated observation counts and full fields are in the CSV.\n",
-        (unsigned long)s_log.observation_count[3]);
+        "Detail CSV holds per-event fields. This Room Report is the plain summary.\n");
     File* report_file = storage_file_alloc(s_log.storage);
     if(!report_file) return false;
     bool opened = storage_file_open(

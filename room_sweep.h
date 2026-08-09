@@ -13,6 +13,7 @@ typedef enum {
     SweepModeRF,    // Sub-GHz RSSI (survey / band sweep / peak refine)
     SweepModeWifi,  // Marauder WiFi AP scan over UART
     SweepModeBle,   // Marauder BLE sniff over UART
+    SweepModeNrf24, // BFFB nRF24 RPD channel survey (detect-only)
     SweepModeGps,   // Passive GPS NMEA listener
     SweepModeTx,    // Dedicated TX tab (safety-gated)
     SweepModeInfo,  // Live capability / status card

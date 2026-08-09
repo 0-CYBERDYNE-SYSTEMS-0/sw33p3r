@@ -1,0 +1,52 @@
+[
+  {
+    "category": "functional",
+    "description": "Plain-English Room Report with findings summary and coverage checklist (RF/WiFi/BLE/GPS/nRF24)",
+    "steps": [
+      "Extend room_sweep_report findings API",
+      "Host test asserts readable sections and activity level",
+      "session_log write_report emits Room Report body"
+    ],
+    "passes": true
+  },
+  {
+    "category": "functional",
+    "description": "Full-room-sweep sequencer (RF then WiFi then BLE then nRF24 then GPS) host-tested",
+    "steps": [
+      "room_sweep_full_sweep.h phase machine",
+      "Host tests for advance/abort/skip",
+      "Settings FullSweep starts sequencer"
+    ],
+    "passes": true
+  },
+  {
+    "category": "functional",
+    "description": "SPI path policy: nRF24 selected forces internal CC1101 for Sub-GHz",
+    "steps": [
+      "room_sweep_radio_path.h decision helper",
+      "Host tests",
+      "radio_open respects path"
+    ],
+    "passes": true
+  },
+  {
+    "category": "functional",
+    "description": "nRF24 detect-only channel survey (RPD RX) with tab UI and session events",
+    "steps": [
+      "nrf24 state header + SPI survey module",
+      "Host tests for channel scoring",
+      "SweepModeNrf24 tab; no jam/block TX modes"
+    ],
+    "passes": true
+  },
+  {
+    "category": "verification",
+    "description": "./init.sh host tests + ufbt build green",
+    "steps": [
+      "Run ./init.sh",
+      "All suites PASS",
+      "FAP builds"
+    ],
+    "passes": true
+  }
+]

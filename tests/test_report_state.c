@@ -20,25 +20,58 @@ static void check_contains(const char* report, const char* text, const char* mes
 
 int main(void) {
     RoomSweepReportState state;
-    char report[1024];
+    char report[2048];
 
     room_sweep_report_init(&state);
     room_sweep_report_sensor_confirmed(&state, RoomSweepReportSensorRf);
     room_sweep_report_sensor_confirmed(&state, RoomSweepReportSensorWifi);
     room_sweep_report_sensor_confirmed(&state, RoomSweepReportSensorBle);
     room_sweep_report_sensor_confirmed(&state, RoomSweepReportSensorGps);
+    room_sweep_report_sensor_confirmed(&state, RoomSweepReportSensorNrf24);
     room_sweep_report_set_gps_included(&state);
     room_sweep_report_set_tx(&state, RoomSweepReportTxStarted);
     size_t length = room_sweep_report_format(&state, report, sizeof(report));
     check(room_sweep_report_is_clean(&state), "clean state stays clean");
     check(length > 0, "clean report is non-empty");
+    check_contains(report, "ROOM REPORT", "title is plain Room Report");
     check_contains(report, "Status: COMPLETE", "complete file status is plain English");
     check_contains(report, "Coverage: FULL", "full sensor coverage is explicit");
-    check_contains(report, "Sensors confirmed: RF, Wi-Fi, BLE, GPS", "confirmed sensors are listed");
+    check_contains(
+        report,
+        "Sensors confirmed: RF, Wi-Fi, BLE, GPS, nRF24",
+        "confirmed sensors include nRF24");
     check_contains(report, "unavailable: none", "no unavailable sensors are explicit");
     check_contains(report, "not confirmed: none", "no unconfirmed sensors are explicit");
     check_contains(report, "TX: started", "started TX is explicit");
     check_contains(report, "GPS: included", "included GPS is explicit");
+    check_contains(report, "nRF24 RPD is channel activity only", "nRF24 limitation is explicit");
+
+    RoomSweepReportFindings findings;
+    room_sweep_report_findings_init(&findings);
+    findings.rf_observations = 4;
+    findings.rf_strongest_rssi = -55;
+    findings.rf_strongest_hz = 433920000UL;
+    findings.wifi_observations = 2;
+    findings.wifi_windows = 1;
+    findings.wifi_strongest_rssi = -60;
+    findings.ble_observations = 3;
+    findings.ble_windows = 1;
+    findings.ble_strongest_rssi = -70;
+    findings.nrf_active_channels = 2;
+    findings.nrf_top_channel = 40;
+    findings.nrf_observations = 5;
+    findings.gps_snapshots = 1;
+    findings.full_sweep_completed = true;
+    check(
+        room_sweep_report_activity(&findings) == RoomSweepReportActivityBusy,
+        "many hits rate as busy");
+    size_t used = length;
+    used = room_sweep_report_append_findings(&findings, report, sizeof(report), used);
+    check(used > length, "findings extend the report");
+    check_contains(report, "Summary: This room looked busy", "summary is plain English");
+    check_contains(report, "Full room sweep: finished", "full sweep noted");
+    check_contains(report, "Sub-GHz RF: 4 hits", "RF findings line");
+    check_contains(report, "nRF24 (2.4 GHz): activity on 2 channels", "nRF24 findings line");
 
     RoomSweepReportState privacy_state;
     room_sweep_report_init(&privacy_state);
@@ -49,6 +82,16 @@ int main(void) {
     room_sweep_report_format(&privacy_state, report, sizeof(report));
     check_contains(report, "Status: COMPLETE", "an unused sensor does not invalidate the file");
     check_contains(report, "Coverage: PARTIAL", "unconfirmed sensor coverage is not called full");
+
+    /* Mark nRF unavailable; confirm the rest → FULL. */
+    RoomSweepReportState core;
+    room_sweep_report_init(&core);
+    room_sweep_report_sensor_confirmed(&core, RoomSweepReportSensorRf);
+    room_sweep_report_sensor_confirmed(&core, RoomSweepReportSensorWifi);
+    room_sweep_report_sensor_confirmed(&core, RoomSweepReportSensorBle);
+    room_sweep_report_sensor_confirmed(&core, RoomSweepReportSensorGps);
+    room_sweep_report_sensor_unavailable(&core, RoomSweepReportSensorNrf24);
+    check(room_sweep_report_coverage_full(&core), "FULL when only unavailable sensors are missing");
 
     RoomSweepReportState tx_state;
     room_sweep_report_init(&tx_state);
