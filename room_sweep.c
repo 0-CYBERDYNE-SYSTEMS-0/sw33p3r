@@ -2796,8 +2796,10 @@ static void toggle_analyzer_view(App* app) {
             break;
         }
         app->analyzer_last_push_tick = 0;
-        if(app->sound_on) notification_message(app->notif, &seq_test_beep);
     }
+    /* Always pulse so the operator knows Long-Left registered (sound may be off). */
+    notification_message(app->notif, &seq_test_beep);
+    notification_message(app->notif, &seq_test_vibro);
 }
 
 static void draw_scanner_analyzer(Canvas* canvas, App* app) {
@@ -3976,14 +3978,19 @@ static void draw_cb(Canvas* canvas, void* ctx) {
         canvas_set_color(canvas, ColorBlack);
     }
 
-    /* Tab strip (y 0..3) — 7 tabs fit at 18 px */
-    canvas_draw_line(canvas, 0, 0, 127, 0);
+    /* Tab strip with 2-char labels so nR is discoverable (7 tabs). */
+    static const char* tab_labels[] = {"RF", "Wi", "BT", "nR", "GP", "TX", "i"};
+    canvas_set_font(canvas, FontKeyboard);
     for(int t = 0; t < SweepModeCount; t++) {
         uint8_t x = (uint8_t)(1 + t * 18);
         if(t == (int)app->mode) {
-            canvas_draw_box(canvas, x, 1, 17, 3);
+            canvas_draw_box(canvas, x, 0, 17, 7);
+            canvas_set_color(canvas, ColorWhite);
+            canvas_draw_str(canvas, (uint8_t)(x + 3), 6, tab_labels[t]);
+            canvas_set_color(canvas, ColorBlack);
         } else {
-            canvas_draw_frame(canvas, x, 1, 17, 3);
+            canvas_draw_frame(canvas, x, 0, 17, 7);
+            canvas_draw_str(canvas, (uint8_t)(x + 3), 6, tab_labels[t]);
         }
     }
 
@@ -4793,9 +4800,12 @@ int32_t room_sweep_app(void* p) {
             navigate_tab(app, input_action == RoomSweepInputNavigateNext);
             continue;
         }
-        /* Long Left: toggle visual analyzer on RF/WiFi/BLE/nRF24 */
-        if(input_action == RoomSweepInputAlternatePrev &&
-           mode_supports_analyzer(app->mode)) {
+        /* Long Left: toggle visual analyzer on RF/WiFi/BLE/nRF24.
+         * nRF24 also accepts Long OK (no lock action on that tab). */
+        if(mode_supports_analyzer(app->mode) &&
+           (input_action == RoomSweepInputAlternatePrev ||
+            (app->mode == SweepModeNrf24 &&
+             input_action == RoomSweepInputSecondary))) {
             toggle_analyzer_view(app);
             continue;
         }
