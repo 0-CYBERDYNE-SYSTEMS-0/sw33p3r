@@ -1,8 +1,8 @@
-/* Room Sweep v3.2 — multi-tab wireless assessment tool
- * Tabs: RF (survey/sweep/peak) | WiFi | BLE | GPS | TX | Info
- * RF prefers BFFB external CC1101 (cc1101_ext) via subghz_devices;
- * falls back to Flipper internal CC1101. WiFi/BLE/GPS via Marauder UART.
- * Momentum mntm-012, API 87.1.
+/* Room Sweep v3.3 — multi-tab wireless assessment tool
+ * Tabs: RF | WiFi | BLE | nRF24 | GPS | TX | Info
+ * RF: BFFB external CC1101 when SPI path is CC1101; internal when nRF24 path.
+ * nRF24: RPD detect-only on external SPI. WiFi/BLE/GPS via Marauder UART.
+ * Momentum mntm-012, API 87.1. No jam/block modes.
  */
 #include <furi.h>
 #include <gui/gui.h>
@@ -32,6 +32,10 @@
 #include "room_sweep_settings.h"
 #include "room_sweep_gps_state.h"
 #include "room_sweep_wireless.h"
+#include "room_sweep_full_sweep.h"
+#include "room_sweep_radio_path.h"
+#include "room_sweep_nrf24_state.h"
+#include "nrf24_survey.h"
 #include "session_log.h"
 #include "nmea.h"
 #include <storage/storage.h>
@@ -314,6 +318,16 @@ typedef struct {
     uint8_t tx_duration_s;       /* 1-10 seconds, default 3 */
     volatile uint32_t tx_remaining_ms;
 
+    /* BFFB SPI mux preference + nRF24 detect-only survey */
+    RoomSweepSpiPath spi_path;
+    RoomSweepNrf24State nrf24;
+    bool nrf24_bus_open;
+    uint32_t nrf24_last_step_tick;
+
+    /* Full room sweep sequencer (Settings → FullSweep) */
+    RoomSweepFullSweepState full_sweep;
+    uint32_t full_sweep_phase_started_tick;
+
     /* Settings overlay */
     bool settings_active;
     uint8_t settings_sel;
@@ -347,18 +361,20 @@ static const uint32_t tx_freq_presets[TX_FREQ_PRESET_COUNT] = {
 };
 
 /* Settings menu aliases (host-tested indices in room_sweep_settings.h) */
-#define SET_SOUND    RoomSweepSetSound
-#define SET_VIBRO    RoomSweepSetVibro
-#define SET_RESCAN   RoomSweepSetRescan
-#define SET_SCANWIN  RoomSweepSetScanWin
-#define SET_LOG      RoomSweepSetRecord
-#define SET_EXTBAND  RoomSweepSetExtBand
-#define SET_GPSSRC   RoomSweepSetGpsSrc
-#define SET_GPSLOG   RoomSweepSetGpsLog
-#define SET_BASELINE RoomSweepSetBaseline
-#define SET_DUMP     RoomSweepSetDump
-#define SET_TXDUR    RoomSweepSetTxDur
-#define SET_COUNT    RoomSweepSetCount
+#define SET_SOUND     RoomSweepSetSound
+#define SET_VIBRO     RoomSweepSetVibro
+#define SET_RESCAN    RoomSweepSetRescan
+#define SET_SCANWIN   RoomSweepSetScanWin
+#define SET_LOG       RoomSweepSetRecord
+#define SET_EXTBAND   RoomSweepSetExtBand
+#define SET_SPIPATH   RoomSweepSetSpiPath
+#define SET_GPSSRC    RoomSweepSetGpsSrc
+#define SET_GPSLOG    RoomSweepSetGpsLog
+#define SET_BASELINE  RoomSweepSetBaseline
+#define SET_DUMP      RoomSweepSetDump
+#define SET_TXDUR     RoomSweepSetTxDur
+#define SET_FULLSWEEP RoomSweepSetFullSweep
+#define SET_COUNT     RoomSweepSetCount
 
 #define RESCAN_INTERVAL_MS 5000
 #define GPS_STALE_TIMEOUT_MS 5000
@@ -460,6 +476,7 @@ static const char* mode_record_text(SweepMode mode) {
     case SweepModeRF: return "RF";
     case SweepModeWifi: return "WIFI";
     case SweepModeBle: return "BLE";
+    case SweepModeNrf24: return "NRF24";
     case SweepModeGps: return "GPS";
     case SweepModeTx: return "TX";
     case SweepModeInfo: return "INFO";
@@ -471,6 +488,7 @@ static const char* record_mode_for_source(const char* source, SweepMode current)
     if(source && strcmp(source, "RF") == 0) return "RF";
     if(source && strcmp(source, "WIFI") == 0) return "WIFI";
     if(source && strcmp(source, "BLE") == 0) return "BLE";
+    if(source && strcmp(source, "NRF24") == 0) return "NRF24";
     if(source && strcmp(source, "GPS") == 0) return "GPS";
     if(source && strcmp(source, "TX") == 0) return "TX";
     return mode_record_text(current);
@@ -1750,18 +1768,22 @@ static bool radio_open(App* app) {
 
     subghz_devices_init();
 
-    /* Prefer external SPI CC1101 (BFFB dual modules / Flux Capacitor / etc.) */
-    radio_otg_on(app);
-    const SubGhzDevice* ext = subghz_devices_get_by_name(SUBGHZ_DEVICE_CC1101_EXT_NAME);
-    if(ext && subghz_devices_is_connect(ext)) {
-        if(subghz_devices_begin(ext)) {
-            app->radio = ext;
-            app->radio_path = RadioPathExternal;
+    /* nRF24 SPI path owns external bus — Sub-GHz uses internal CC1101 only. */
+    bool allow_ext = room_sweep_external_cc1101_allowed(app->spi_path);
+
+    if(allow_ext) {
+        radio_otg_on(app);
+        const SubGhzDevice* ext = subghz_devices_get_by_name(SUBGHZ_DEVICE_CC1101_EXT_NAME);
+        if(ext && subghz_devices_is_connect(ext)) {
+            if(subghz_devices_begin(ext)) {
+                app->radio = ext;
+                app->radio_path = RadioPathExternal;
+            }
         }
     }
 
     if(!app->radio) {
-        radio_otg_off(app);
+        if(allow_ext) radio_otg_off(app);
         const SubGhzDevice* inter = subghz_devices_get_by_name(SUBGHZ_DEVICE_CC1101_INT_NAME);
         if(inter) {
             app->radio = inter;
@@ -2335,6 +2357,21 @@ static void feedback_tick(App* app) {
         use_rssi_geiger = true;
         led_from_rssi(app->notif, peak, blink_phase);
         break;
+    case SweepModeNrf24: {
+        float nrf_peak = -120.0f;
+        if(app->nrf24.phase == RoomSweepNrf24Scanning) {
+            nrf_peak = -90.0f + (float)(app->nrf24.channel % 40);
+        } else if(app->nrf24.top_hits[0] > 0) {
+            nrf_peak = -100.0f + (float)app->nrf24.top_hits[0] * 4.0f;
+            if(nrf_peak > -40.0f) nrf_peak = -40.0f;
+        }
+        peak = nrf_peak;
+        alerting = app->nrf24.top_hits[0] > 0 ||
+                   app->nrf24.phase == RoomSweepNrf24Scanning;
+        use_rssi_geiger = true;
+        led_from_rssi(app->notif, peak, blink_phase);
+        break;
+    }
     case SweepModeGps: {
         gps_mode = true;
         furi_mutex_acquire(app->gps_mutex, FuriWaitForever);
@@ -2978,6 +3015,160 @@ static void draw_gps_tab(Canvas* canvas, App* app) {
 }
 
 /* ================================================================== */
+/* nRF24 RPD survey (detect-only)                                      */
+/* ================================================================== */
+static void nrf24_stop_survey(App* app) {
+    if(!app) return;
+    if(app->nrf24.phase == RoomSweepNrf24Scanning) room_sweep_nrf24_stop(&app->nrf24);
+    if(app->nrf24_bus_open) {
+        nrf24_survey_end();
+        app->nrf24_bus_open = false;
+    }
+}
+
+static bool nrf24_start_survey(App* app) {
+    if(!app) return false;
+    if(!room_sweep_nrf24_spi_selected(app->spi_path)) {
+        room_sweep_nrf24_set_present(&app->nrf24, false);
+        app->nrf24.phase = RoomSweepNrf24Error;
+        if(app->session_log_on) {
+            session_log_note_sensor_unavailable((uint8_t)RoomSweepReportSensorNrf24);
+        }
+        return false;
+    }
+    nrf24_stop_survey(app);
+    if(!nrf24_survey_begin(&app->nrf24)) {
+        if(app->session_log_on) {
+            session_log_note_sensor_unavailable((uint8_t)RoomSweepReportSensorNrf24);
+        }
+        return false;
+    }
+    app->nrf24_bus_open = true;
+    app->nrf24_last_step_tick = furi_get_tick();
+    if(app->session_log_on) {
+        SessionLogEvent ev = {
+            .event = "scan_start",
+            .source = "NRF24",
+            .mode = "NRF24",
+            .submode = "rpd",
+            .id = "-",
+            .rssi = 0,
+            .detail = "rpd_channel_survey",
+        };
+        session_log_write_event(&ev);
+    }
+    return true;
+}
+
+static void nrf24_finish_and_log(App* app) {
+    if(!app) return;
+    bool just_closed = false;
+    if(app->nrf24_bus_open) {
+        nrf24_survey_end();
+        app->nrf24_bus_open = false;
+        just_closed = true;
+    }
+    /* Log once: only when this call closed the bus after a finished pass. */
+    if(just_closed && app->nrf24.phase == RoomSweepNrf24Done && app->session_log_on) {
+        char id[12];
+        snprintf(id, sizeof(id), "ch%u", (unsigned)app->nrf24.top_channels[0]);
+        SessionLogEvent ev = {
+            .event = "observation",
+            .source = "NRF24",
+            .mode = "NRF24",
+            .submode = "rpd",
+            .id = id,
+            .rssi = app->nrf24.top_hits[0] > 0 ? (int)app->nrf24.top_hits[0] : 0,
+            .channel = app->nrf24.top_channels[0],
+            .count = app->nrf24.active_channels,
+            .detail = "rpd_pass",
+        };
+        session_log_write_event(&ev);
+        SessionLogEvent end = {
+            .event = "scan_end",
+            .source = "NRF24",
+            .mode = "NRF24",
+            .submode = "rpd",
+            .id = "-",
+            .detail = "done",
+        };
+        session_log_write_event(&end);
+    }
+}
+
+static void draw_nrf24_tab(Canvas* canvas, App* app) {
+    canvas_set_font(canvas, FontSecondary);
+    canvas_draw_str(canvas, 1, 12, "nRF24 2.4G RX");
+
+    canvas_set_font(canvas, FontKeyboard);
+    char buf[40];
+    snprintf(
+        buf,
+        sizeof(buf),
+        "SPI:%s %s",
+        room_sweep_spi_path_label(app->spi_path),
+        room_sweep_nrf24_phase_label(app->nrf24.phase));
+    canvas_draw_str(canvas, 1, 22, buf);
+
+    if(!room_sweep_nrf24_spi_selected(app->spi_path)) {
+        canvas_draw_str(canvas, 1, 34, "Set SPI path nRF24");
+        canvas_draw_str(canvas, 1, 44, "BFFB bottom=down");
+        canvas_draw_str(canvas, 1, 54, "SubGHz uses INT");
+        canvas_draw_str(canvas, 1, 63, "OK=hint only");
+        return;
+    }
+
+    if(app->nrf24.phase == RoomSweepNrf24Error ||
+       (app->nrf24.present_checked && !app->nrf24.module_present)) {
+        canvas_draw_str(canvas, 1, 34, "module not seen");
+        canvas_draw_str(canvas, 1, 44, "check switch/OTG");
+        canvas_draw_str(canvas, 1, 63, "OK=retry");
+        return;
+    }
+
+    if(app->nrf24.phase == RoomSweepNrf24Scanning) {
+        snprintf(
+            buf,
+            sizeof(buf),
+            "ch %u/%u",
+            (unsigned)app->nrf24.channel,
+            (unsigned)ROOM_SWEEP_NRF24_CHANNELS);
+        canvas_draw_str(canvas, 1, 34, buf);
+        canvas_draw_str(canvas, 1, 63, "scan... Back=stop");
+        return;
+    }
+
+    snprintf(
+        buf,
+        sizeof(buf),
+        "active %u hits %lu",
+        (unsigned)app->nrf24.active_channels,
+        (unsigned long)app->nrf24.total_hits);
+    canvas_draw_str(canvas, 1, 34, buf);
+    if(app->nrf24.active_channels > 0) {
+        snprintf(
+            buf,
+            sizeof(buf),
+            "top ch%u x%u",
+            (unsigned)app->nrf24.top_channels[0],
+            (unsigned)app->nrf24.top_hits[0]);
+        canvas_draw_str(canvas, 1, 44, buf);
+        if(app->nrf24.top_hits[1] > 0) {
+            snprintf(
+                buf,
+                sizeof(buf),
+                "   ch%u x%u",
+                (unsigned)app->nrf24.top_channels[1],
+                (unsigned)app->nrf24.top_hits[1]);
+            canvas_draw_str(canvas, 1, 54, buf);
+        }
+    } else {
+        canvas_draw_str(canvas, 1, 44, "no RPD energy");
+    }
+    canvas_draw_str(canvas, 1, 63, "OK=scan (RX only)");
+}
+
+/* ================================================================== */
 /* Drawing: TX tab (safety-gated, multi-step arming)                   */
 /* ================================================================== */
 static void draw_tx_tab(Canvas* canvas, App* app) {
@@ -3135,21 +3326,23 @@ static void draw_info_tab(Canvas* canvas, App* app) {
     if(app->info_page != 0) {
         canvas_draw_str(canvas, 2, 10, "Glossary 2/2");
         canvas_draw_str(canvas, 2, 20, "WiFi=sniffbeacon BLE=sniffbt");
-        canvas_draw_str(canvas, 2, 29, "HoldLR=win 15/30/60s");
-        canvas_draw_str(canvas, 2, 38, "Record=session+report files");
-        canvas_draw_str(canvas, 2, 47, "RSSI=relative, not distance");
-        canvas_draw_str(canvas, 2, 56, "No proof of Internet telemetry");
+        canvas_draw_str(canvas, 2, 29, "nRF24=RPD RX only no jam");
+        canvas_draw_str(canvas, 2, 38, "FullSweep=all sensors");
+        canvas_draw_str(canvas, 2, 47, "Room Report=report-N.txt");
+        canvas_draw_str(canvas, 2, 56, "RSSI!=distance; no intent");
         canvas_draw_str(canvas, 2, 63, "U/D=page");
         return;
     }
 
     canvas_draw_str(canvas, 92, 10, "1/2");
 
-    snprintf(buf, sizeof(buf), "RF:%s band:%s",
-             app->radio_path == RadioPathExternal ? "EXT" :
-             app->radio_path == RadioPathInternal ? "INT" : "NONE",
-             app->ext_band == ExtBand400 ? "400" :
-             app->ext_band == ExtBand900 ? "900" : "AUTO");
+    snprintf(
+        buf,
+        sizeof(buf),
+        "RF:%s SPI:%s",
+        app->radio_path == RadioPathExternal ? "EXT" :
+        app->radio_path == RadioPathInternal ? "INT" : "NONE",
+        room_sweep_spi_path_label(app->spi_path));
     canvas_draw_str(canvas, 2, 10, buf);
 
     snprintf(buf, sizeof(buf), "Marauder:%s GPS:%s",
@@ -3222,11 +3415,13 @@ static void draw_settings(Canvas* canvas, App* app) {
         "ScanWin",
         "Record",
         "ExtBand",
+        "SPI Path",
         "GPS Src",
         "GPS Log",
         "Baseline",
         "Raw Dump",
         "TXDur",
+        "FullSweep",
     };
 
     /* Collect indices in the current group (max 4 items per group). */
@@ -3264,6 +3459,14 @@ static void draw_settings(Canvas* canvas, App* app) {
                 "%s",
                 app->ext_band == ExtBand400 ? "400" :
                 app->ext_band == ExtBand900 ? "900" : "AUTO");
+        else if(i == SET_SPIPATH)
+            snprintf(val, sizeof(val), "%s", room_sweep_spi_path_label(app->spi_path));
+        else if(i == SET_FULLSWEEP)
+            snprintf(
+                val,
+                sizeof(val),
+                "%s",
+                room_sweep_full_sweep_is_running(&app->full_sweep) ? "RUN" : "OK=");
         else if(i == SET_GPSSRC)
             snprintf(
                 val,
@@ -3302,24 +3505,38 @@ static void draw_cb(Canvas* canvas, void* ctx) {
         break;
     case SweepModeWifi: draw_wifi_tab(canvas, app); break;
     case SweepModeBle:  draw_ble_tab(canvas, app);  break;
+    case SweepModeNrf24: draw_nrf24_tab(canvas, app); break;
     case SweepModeGps:  draw_gps_tab(canvas, app);  break;
     case SweepModeTx:   draw_tx_tab(canvas, app);   break;
     case SweepModeInfo: draw_info_tab(canvas, app); break;
     default: break;
     }
 
-    /* Tab strip (y 0..3) */
-    static const char* tab_labels[] = {"RF", "Wi", "BT", "GPS", "TX", "i"};
+    /* Full-sweep banner */
+    if(room_sweep_full_sweep_is_running(&app->full_sweep)) {
+        canvas_set_font(canvas, FontKeyboard);
+        canvas_draw_box(canvas, 0, 56, 128, 8);
+        canvas_set_color(canvas, ColorWhite);
+        char fs[28];
+        snprintf(
+            fs,
+            sizeof(fs),
+            "FULL:%s",
+            room_sweep_full_sweep_phase_label(app->full_sweep.phase));
+        canvas_draw_str(canvas, 2, 63, fs);
+        canvas_set_color(canvas, ColorBlack);
+    }
+
+    /* Tab strip (y 0..3) — 7 tabs fit at 18 px */
     canvas_draw_line(canvas, 0, 0, 127, 0);
     for(int t = 0; t < SweepModeCount; t++) {
-        uint8_t x = 1 + t * 21;
+        uint8_t x = (uint8_t)(1 + t * 18);
         if(t == (int)app->mode) {
-            canvas_draw_box(canvas, x, 1, 20, 3);
+            canvas_draw_box(canvas, x, 1, 17, 3);
         } else {
-            canvas_draw_frame(canvas, x, 1, 20, 3);
+            canvas_draw_frame(canvas, x, 1, 17, 3);
         }
     }
-    UNUSED(tab_labels);
 
     /* RX/TX status (top-right, small) */
     canvas_set_font(canvas, FontKeyboard);
@@ -3378,6 +3595,9 @@ static void navigate_tab(App* app, bool next) {
         tx_stop_and_join(app);
         app->tx_state = TxDisarmed;
     }
+    if(app->mode == SweepModeNrf24) {
+        nrf24_stop_survey(app);
+    }
     furi_mutex_acquire(app->mutex, FuriWaitForever);
     app->target_kind = TargetNone;
     app->target_id[0] = '\0';
@@ -3399,6 +3619,107 @@ static void navigate_tab(App* app, bool next) {
     tx_preload_detected_frequency(app);
     update_gps_mode(app);
     marauder_start_for_mode(app);
+}
+
+/* Full-sweep: time-box each detect-only phase, then write-friendly log. */
+#define FULL_SWEEP_PHASE_MS 12000U
+
+static void full_sweep_enter_phase(App* app, RoomSweepFullPhase phase) {
+    if(!app) return;
+    app->full_sweep_phase_started_tick = furi_get_tick();
+    switch(phase) {
+    case RoomSweepFullRf:
+        app->mode = SweepModeRF;
+        app->rf_sub = RfSubSurvey;
+        if(app->serial) marauder_stop_scan(app);
+        nrf24_stop_survey(app);
+        break;
+    case RoomSweepFullWifi:
+        app->mode = SweepModeWifi;
+        nrf24_stop_survey(app);
+        marauder_start_for_mode(app);
+        break;
+    case RoomSweepFullBle:
+        app->mode = SweepModeBle;
+        nrf24_stop_survey(app);
+        marauder_start_for_mode(app);
+        break;
+    case RoomSweepFullNrf24:
+        if(app->serial) marauder_stop_scan(app);
+        app->mode = SweepModeNrf24;
+        if(room_sweep_nrf24_spi_selected(app->spi_path)) {
+            nrf24_start_survey(app);
+        } else {
+            room_sweep_nrf24_set_present(&app->nrf24, false);
+            app->nrf24.phase = RoomSweepNrf24Error;
+            if(app->session_log_on) {
+                session_log_note_sensor_unavailable((uint8_t)RoomSweepReportSensorNrf24);
+            }
+        }
+        break;
+    case RoomSweepFullGps:
+        nrf24_stop_survey(app);
+        if(app->serial) marauder_stop_scan(app);
+        app->mode = SweepModeGps;
+        update_gps_mode(app);
+        break;
+    default:
+        break;
+    }
+    update_gps_mode(app);
+}
+
+static void full_sweep_tick(App* app) {
+    if(!app || !room_sweep_full_sweep_is_running(&app->full_sweep)) return;
+    uint32_t now = furi_get_tick();
+    RoomSweepFullPhase phase = app->full_sweep.phase;
+    bool ready = false;
+    bool ok = true;
+
+    if(phase == RoomSweepFullRf) {
+        ready = (now - app->full_sweep_phase_started_tick) >= FULL_SWEEP_PHASE_MS;
+        ok = app->radio != NULL;
+    } else if(phase == RoomSweepFullWifi || phase == RoomSweepFullBle) {
+        ready = app->marauder_state == MarauderDone || app->marauder_state == MarauderError ||
+                (now - app->full_sweep_phase_started_tick) >= FULL_SWEEP_PHASE_MS;
+        ok = app->serial != NULL && app->marauder_state != MarauderError;
+        if(phase == RoomSweepFullWifi && app->wifi_count > 0) ok = true;
+        if(phase == RoomSweepFullBle && app->ble_count > 0) ok = true;
+    } else if(phase == RoomSweepFullNrf24) {
+        ready = app->nrf24.phase == RoomSweepNrf24Done ||
+                app->nrf24.phase == RoomSweepNrf24Error ||
+                (now - app->full_sweep_phase_started_tick) >= (FULL_SWEEP_PHASE_MS * 2U);
+        ok = app->nrf24.phase == RoomSweepNrf24Done && app->nrf24.module_present;
+        if(app->nrf24.phase == RoomSweepNrf24Done) nrf24_finish_and_log(app);
+    } else if(phase == RoomSweepFullGps) {
+        ready = (now - app->full_sweep_phase_started_tick) >= (FULL_SWEEP_PHASE_MS / 2U);
+        furi_mutex_acquire(app->gps_mutex, FuriWaitForever);
+        ok = app->gps.has_fix || app->gps.sentences > 0;
+        furi_mutex_release(app->gps_mutex);
+    }
+
+    if(!ready) return;
+    room_sweep_full_sweep_advance(&app->full_sweep, ok);
+    if(app->full_sweep.phase == RoomSweepFullDone) {
+        if(app->session_log_on) {
+            SessionLogEvent ev = {
+                .event = "full_sweep_done",
+                .source = "SYSTEM",
+                .mode = "INFO",
+                .submode = "full",
+                .id = "-",
+                .detail = room_sweep_full_sweep_completed_all(&app->full_sweep) ?
+                              "all_phases" :
+                              "partial",
+            };
+            session_log_write_event(&ev);
+        }
+        notification_message(app->notif, &seq_test_beep);
+        return;
+    }
+    if(room_sweep_full_sweep_is_running(&app->full_sweep)) {
+        full_sweep_enter_phase(app, app->full_sweep.phase);
+    }
 }
 
 /* ================================================================== */
@@ -3436,6 +3757,12 @@ int32_t room_sweep_app(void* p) {
     app->dump_head = 0;
     app->dump_count = 0;
     for(uint8_t i = 0; i < RF_NUM_CHANNELS; i++) app->baseline_rssi[i] = -120.0f;
+    app->spi_path = RoomSweepSpiPathCc1101;
+    room_sweep_nrf24_init(&app->nrf24);
+    app->nrf24_bus_open = false;
+    app->nrf24_last_step_tick = 0;
+    room_sweep_full_sweep_init(&app->full_sweep);
+    app->full_sweep_phase_started_tick = 0;
 
     /* TX defaults — 433.92 MHz preset index 3 in the expanded table */
     app->tx_state = TxDisarmed;
@@ -3532,6 +3859,24 @@ int32_t room_sweep_app(void* p) {
                 }
             }
             record_drain(app);
+
+            /* nRF24 RPD sample steps (main loop — SPI not in RF thread). */
+            if(app->mode == SweepModeNrf24 &&
+               app->nrf24.phase == RoomSweepNrf24Scanning && app->nrf24_bus_open) {
+                uint32_t nnow = furi_get_tick();
+                if(nnow - app->nrf24_last_step_tick >= 2U) {
+                    app->nrf24_last_step_tick = nnow;
+                    /* Burst several channels per tick to finish a pass faster. */
+                    for(uint8_t burst = 0; burst < 4; burst++) {
+                        if(nrf24_survey_sample_step(&app->nrf24, 1)) {
+                            nrf24_finish_and_log(app);
+                            break;
+                        }
+                    }
+                }
+            }
+
+            full_sweep_tick(app);
 
             if(app->serial && (app->mode == SweepModeWifi || app->mode == SweepModeBle)) {
                 uint32_t now = furi_get_tick();
@@ -3717,6 +4062,55 @@ int32_t room_sweep_app(void* p) {
                 } else if(app->settings_sel == SET_EXTBAND) {
                     apply_ext_band_pref(
                         app, (ExtBandPref)((app->ext_band + 1) % 3));
+                } else if(app->settings_sel == SET_SPIPATH) {
+                    nrf24_stop_survey(app);
+                    app->spi_path = room_sweep_spi_path_step(app->spi_path);
+                    /* Re-open Sub-GHz on the correct radio for the SPI mux. */
+                    bool had_radio = app->radio != NULL;
+                    if(had_radio) {
+                        app->sweep_running = false;
+                        app->peak_running = false;
+                        radio_close(app);
+                        radio_open(app);
+                    }
+                    record_enqueue(
+                        app,
+                        "config",
+                        "SYSTEM",
+                        "spi_path",
+                        0,
+                        0,
+                        0,
+                        room_sweep_spi_path_label(app->spi_path));
+                    notification_message(app->notif, &seq_test_beep);
+                } else if(app->settings_sel == SET_FULLSWEEP) {
+                    if(room_sweep_full_sweep_is_running(&app->full_sweep)) {
+                        room_sweep_full_sweep_abort(&app->full_sweep);
+                        nrf24_stop_survey(app);
+                        if(app->serial) marauder_stop_scan(app);
+                    } else {
+                        if(!app->session_log_on) {
+                            /* Start a session so the Room Report has data. */
+                            if(!app->storage) app->storage = furi_record_open(RECORD_STORAGE);
+                            if(session_log_begin(app->storage)) {
+                                app->session_log_on = true;
+                                app->record_ordinal = session_log_ordinal();
+                            }
+                        }
+                        room_sweep_full_sweep_start(&app->full_sweep);
+                        app->settings_active = false;
+                        full_sweep_enter_phase(app, RoomSweepFullRf);
+                        record_enqueue(
+                            app,
+                            "config",
+                            "SYSTEM",
+                            "full_sweep",
+                            0,
+                            0,
+                            0,
+                            "start detect-only room sweep");
+                        notification_message(app->notif, &seq_test_beep);
+                    }
                 } else if(app->settings_sel == SET_GPSSRC) {
                     app->gps_profile = app->gps_profile == GPS_PROFILE_BFFB ?
                                            GPS_PROFILE_EXTERNAL : GPS_PROFILE_BFFB;
@@ -4039,6 +4433,18 @@ int32_t room_sweep_app(void* p) {
             continue;
         }
 
+        if(app->mode == SweepModeNrf24) {
+            if(input_action == RoomSweepInputPrimary) {
+                if(app->nrf24.phase == RoomSweepNrf24Scanning) {
+                    nrf24_stop_survey(app);
+                    nrf24_finish_and_log(app);
+                } else {
+                    nrf24_start_survey(app);
+                }
+            }
+            continue;
+        }
+
         if(app->mode == SweepModeWifi) {
             if(input_action == RoomSweepInputAlternatePrev ||
                input_action == RoomSweepInputAlternateNext) {
@@ -4227,6 +4633,8 @@ int32_t room_sweep_app(void* p) {
     app->running = false;
     app->tx_active = false;
     app->tx_state = TxDisarmed;
+    room_sweep_full_sweep_abort(&app->full_sweep);
+    nrf24_stop_survey(app);
 
     /* Stop Marauder + GPIO GPS UARTs */
     if(app->serial) {

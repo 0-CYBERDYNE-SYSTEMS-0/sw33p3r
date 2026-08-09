@@ -15,7 +15,7 @@ static void check(int condition, const char* message) {
 }
 
 int main(void) {
-    check(RoomSweepSetCount == 11, "eleven settings items");
+    check(RoomSweepSetCount == 13, "thirteen settings items");
     check(RoomSweepSetGroupCount == 5, "five settings groups");
 
     check(
@@ -27,6 +27,12 @@ int main(void) {
     check(
         room_sweep_set_group_of(RoomSweepSetTxDur) == RoomSweepSetGroupRadio,
         "TXDur is Radio");
+    check(
+        room_sweep_set_group_of(RoomSweepSetSpiPath) == RoomSweepSetGroupRadio,
+        "SpiPath is Radio");
+    check(
+        room_sweep_set_group_of(RoomSweepSetFullSweep) == RoomSweepSetGroupSession,
+        "FullSweep is Session");
     check(
         room_sweep_set_group_of(RoomSweepSetRecord) == RoomSweepSetGroupSession,
         "Record is Session");

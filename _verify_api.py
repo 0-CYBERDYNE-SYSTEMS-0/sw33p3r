@@ -33,6 +33,14 @@ TYPE_LIKE = {
     "furi_hal_region",
 }
 
+# static inline helpers in SDK headers — compile into the FAP, not API imports.
+INLINE_OK = {
+    "furi_hal_gpio_write",
+    "furi_hal_gpio_write_port_pin",
+    "furi_hal_gpio_read",
+    "furi_hal_gpio_read_port_pin",
+}
+
 # Symbols that are plausibly real functions the app calls
 CALL_RE = re.compile(
     r'\b('
@@ -65,8 +73,8 @@ for sym, where in sorted(all_called.items()):
     st = api.get(sym)
     if st == "+":
         present.append(sym)
-    elif sym in TYPE_LIKE:
-        continue  # include-fragment / type token, ignore
+    elif sym in TYPE_LIKE or sym in INLINE_OK:
+        continue  # include-fragment / type token / static inline, ignore
     else:
         missing.append((sym, st, sorted(where)))
 

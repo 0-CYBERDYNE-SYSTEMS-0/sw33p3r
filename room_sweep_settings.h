@@ -26,11 +26,13 @@ enum {
     RoomSweepSetScanWin,
     RoomSweepSetRecord,
     RoomSweepSetExtBand,
+    RoomSweepSetSpiPath,
     RoomSweepSetGpsSrc,
     RoomSweepSetGpsLog,
     RoomSweepSetBaseline,
     RoomSweepSetDump,
     RoomSweepSetTxDur,
+    RoomSweepSetFullSweep,
     RoomSweepSetCount,
 };
 
@@ -43,6 +45,7 @@ static inline RoomSweepSetGroup room_sweep_set_group_of(uint8_t setting) {
     case RoomSweepSetScanWin:
         return RoomSweepSetGroupWireless;
     case RoomSweepSetExtBand:
+    case RoomSweepSetSpiPath:
     case RoomSweepSetTxDur:
         return RoomSweepSetGroupRadio;
     case RoomSweepSetGpsSrc:
@@ -51,6 +54,7 @@ static inline RoomSweepSetGroup room_sweep_set_group_of(uint8_t setting) {
     case RoomSweepSetRecord:
     case RoomSweepSetBaseline:
     case RoomSweepSetDump:
+    case RoomSweepSetFullSweep:
         return RoomSweepSetGroupSession;
     default:
         return RoomSweepSetGroupFeedback;

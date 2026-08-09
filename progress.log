@@ -29,3 +29,14 @@
 - Device re-verify blocked: Flipper CLI accepts USB connect banner but ignores command input
   after repeated RPC upload timeouts (infra). Physical USB re-seat needed to restore CLI/RPC.
 - Code fix: always stopscan on GPS leave and app exit (judge minor notes).
+
+## Iteration: full-sweep expansion detect-only (2026-08-09)
+- Restore point: tag/branch restore/pre-full-sweep-2026-08-09 @ 35ad4ce
+- Room Report: plain English findings + activity + nRF24 in coverage
+- FullSweep sequencer Settings item; phases RF→WiFi→BLE→nRF24→GPS
+- SPI Path setting: nRF24 forces internal CC1101; external dual blocked
+- nRF24 tab: RPD channel survey RX-only (no jam); CE=gpio_ext_pc3
+- Host: all suites PASS including test_full_sweep_state, test_nrf24_state
+- ufbt Target 7 API 87.1; FAP 88296b
+- FAP SHA-256: 0d68feab3f4e54a5de3bc5df5f6776028fdc1e10f182598b10a339c139863110
+- Device field verify deferred: nRF24 RPD with BFFB bottom switch down + OTG
