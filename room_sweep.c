@@ -35,6 +35,7 @@
 #include "room_sweep_full_sweep.h"
 #include "room_sweep_radio_path.h"
 #include "room_sweep_nrf24_state.h"
+#include "room_sweep_analyzer.h"
 #include "nrf24_survey.h"
 #include "session_log.h"
 #include "nmea.h"
@@ -327,6 +328,14 @@ typedef struct {
     /* Full room sweep sequencer (Settings → FullSweep) */
     RoomSweepFullSweepState full_sweep;
     uint32_t full_sweep_phase_started_tick;
+
+    /* Per-scanner visual analyzer (proximity / spectrum) — Long Left toggles */
+    bool analyzer_view; /* true while current scanner shows analyzer UI */
+    RoomSweepAnalyzerState analyzer_rf;
+    RoomSweepAnalyzerState analyzer_wifi;
+    RoomSweepAnalyzerState analyzer_ble;
+    RoomSweepAnalyzerState analyzer_nrf;
+    uint32_t analyzer_last_push_tick;
 
     /* Settings overlay */
     bool settings_active;
@@ -2475,6 +2484,306 @@ feedback_sound:
 }
 
 /* ================================================================== */
+/* Visual analyzer / proximity meter (shared across scanners)          */
+/* Long Left toggles; history shows closer vs farther at a glance.     */
+/* ================================================================== */
+static void draw_proximity_analyzer(
+    Canvas* canvas,
+    const char* title,
+    const char* source_line,
+    const RoomSweepAnalyzerState* an,
+    const int8_t* spectrum,
+    uint8_t spectrum_count) {
+    canvas_set_font(canvas, FontSecondary);
+    canvas_draw_str(canvas, 1, 10, title ? title : "AN");
+
+    char buf[24];
+    if(an) {
+        snprintf(buf, sizeof(buf), "%ddBm", (int)an->live_rssi);
+        uint16_t w = canvas_string_width(canvas, buf);
+        canvas_draw_str(canvas, 127 - (int)w, 10, buf);
+    }
+
+    canvas_set_font(canvas, FontKeyboard);
+    if(source_line && source_line[0]) {
+        canvas_draw_str(canvas, 1, 18, source_line);
+    }
+
+    /* Giant proximity bar (y 20..40) */
+    const uint8_t bar_x = 2, bar_y = 22, bar_w = 124, bar_h = 16;
+    canvas_draw_frame(canvas, bar_x, bar_y, bar_w, bar_h);
+    uint8_t fill = an ? room_sweep_analyzer_bar_height(an->live_rssi, (uint8_t)(bar_w - 2)) : 0;
+    if(fill > 0) {
+        canvas_draw_box(canvas, bar_x + 1, bar_y + 1, fill, (uint8_t)(bar_h - 2));
+    }
+    /* Percent + trend overlaid when strong enough to invert */
+    if(an) {
+        uint8_t pct = room_sweep_analyzer_level_pct(an->live_rssi);
+        snprintf(
+            buf,
+            sizeof(buf),
+            "%u%% %s %s",
+            (unsigned)pct,
+            room_sweep_analyzer_trend_arrow(an->trend),
+            room_sweep_analyzer_trend_text(an->trend));
+        if(fill > 60) {
+            canvas_set_color(canvas, ColorWhite);
+            canvas_draw_str(canvas, bar_x + 4, bar_y + 12, buf);
+            canvas_set_color(canvas, ColorBlack);
+        } else {
+            canvas_draw_str(canvas, bar_x + 4, bar_y + 12, buf);
+        }
+    }
+
+    /* Sparkline history (newest right) y 42..54 */
+    const uint8_t spark_y0 = 54;
+    const uint8_t spark_h = 12;
+    if(an && an->hist_count > 1) {
+        uint8_t n = an->hist_count;
+        if(n > 64) n = 64;
+        for(uint8_t i = 0; i < n; i++) {
+            /* age: oldest left → newest right */
+            uint8_t age = (uint8_t)(n - 1U - i);
+            int8_t r = room_sweep_analyzer_history_at(an, age);
+            uint8_t h = room_sweep_analyzer_bar_height(r, spark_h);
+            uint8_t x = (uint8_t)(2U + (i * 124U) / n);
+            if(h == 0) {
+                canvas_draw_dot(canvas, x, spark_y0);
+            } else {
+                canvas_draw_line(canvas, x, spark_y0, x, (uint8_t)(spark_y0 - h));
+            }
+        }
+    }
+
+    /* Optional mini spectrum strip above footer */
+    if(spectrum && spectrum_count > 0) {
+        uint8_t max_bars = spectrum_count > 42 ? 42 : spectrum_count;
+        uint8_t gap = 1;
+        uint8_t bw = (uint8_t)((126U / max_bars) > 0 ? (126U / max_bars) : 1);
+        if(bw > 3) bw = 3;
+        for(uint8_t i = 0; i < max_bars; i++) {
+            uint8_t h = room_sweep_analyzer_bar_height(spectrum[i], 8);
+            uint8_t x = (uint8_t)(1U + i * (bw + gap));
+            if(h > 0) canvas_draw_box(canvas, x, (uint8_t)(41U - h), bw, h);
+        }
+    }
+
+    canvas_set_font(canvas, FontKeyboard);
+    if(an) {
+        snprintf(
+            buf,
+            sizeof(buf),
+            "pk %d  HoldL=list",
+            (int)an->peak_rssi);
+        canvas_draw_str(canvas, 1, 63, buf);
+    } else {
+        canvas_draw_str(canvas, 1, 63, "HoldL=list");
+    }
+}
+
+static void analyzer_feed_tick(App* app) {
+    if(!app || !app->analyzer_view) return;
+    uint32_t now = furi_get_tick();
+    if(app->analyzer_last_push_tick != 0 &&
+       (now - app->analyzer_last_push_tick) < 80U) {
+        return; /* ~12.5 Hz sample for smooth meter */
+    }
+    app->analyzer_last_push_tick = now;
+
+    switch(app->mode) {
+    case SweepModeRF: {
+        int rssi = (int)app->peak_rssi;
+        if(app->target_kind == TargetRF && app->target_rssi > -127) {
+            rssi = (int)app->target_rssi;
+        }
+        room_sweep_analyzer_push(&app->analyzer_rf, rssi);
+        break;
+    }
+    case SweepModeWifi: {
+        int rssi = -120;
+        furi_mutex_acquire(app->mutex, FuriWaitForever);
+        if(app->target_kind == TargetWifi && app->target_rssi > -127) {
+            rssi = (int)app->target_rssi;
+        } else if(app->wifi_count > 0) {
+            uint8_t sel = app->wifi_scroll < app->wifi_count ? app->wifi_scroll : 0;
+            rssi = (int)app->wifi_aps[sel].rssi;
+        } else if(app->wifi_strongest > -127) {
+            rssi = (int)app->wifi_strongest;
+        }
+        furi_mutex_release(app->mutex);
+        room_sweep_analyzer_push(&app->analyzer_wifi, rssi);
+        break;
+    }
+    case SweepModeBle: {
+        int rssi = -120;
+        furi_mutex_acquire(app->mutex, FuriWaitForever);
+        if(app->target_kind == TargetBle && app->target_rssi > -127) {
+            rssi = (int)app->target_rssi;
+        } else if(app->ble_count > 0) {
+            uint8_t sel = app->ble_scroll < app->ble_count ? app->ble_scroll : 0;
+            rssi = (int)app->ble_devs[sel].rssi;
+        } else if(app->ble_strongest > -127) {
+            rssi = (int)app->ble_strongest;
+        }
+        furi_mutex_release(app->mutex);
+        room_sweep_analyzer_push(&app->analyzer_ble, rssi);
+        break;
+    }
+    case SweepModeNrf24: {
+        int rssi = -120;
+        if(app->nrf24.phase == RoomSweepNrf24Scanning) {
+            uint8_t hit = app->nrf24.hits[app->nrf24.channel];
+            rssi = room_sweep_analyzer_activity_to_rssi(hit > 0 ? (uint8_t)(hit * 40) : 0);
+        } else if(app->nrf24.top_hits[0] > 0) {
+            rssi = room_sweep_analyzer_activity_to_rssi(
+                app->nrf24.top_hits[0] > 6 ? 255 : (uint8_t)(app->nrf24.top_hits[0] * 40));
+        }
+        room_sweep_analyzer_push(&app->analyzer_nrf, rssi);
+        break;
+    }
+    default:
+        break;
+    }
+}
+
+static bool mode_supports_analyzer(SweepMode mode) {
+    return mode == SweepModeRF || mode == SweepModeWifi || mode == SweepModeBle ||
+           mode == SweepModeNrf24;
+}
+
+static void toggle_analyzer_view(App* app) {
+    if(!app || !mode_supports_analyzer(app->mode)) return;
+    app->analyzer_view = !app->analyzer_view;
+    if(app->analyzer_view) {
+        /* Fresh history when entering so trend is honest for this hunt. */
+        switch(app->mode) {
+        case SweepModeRF:
+            room_sweep_analyzer_reset(&app->analyzer_rf);
+            break;
+        case SweepModeWifi:
+            room_sweep_analyzer_reset(&app->analyzer_wifi);
+            break;
+        case SweepModeBle:
+            room_sweep_analyzer_reset(&app->analyzer_ble);
+            break;
+        case SweepModeNrf24:
+            room_sweep_analyzer_reset(&app->analyzer_nrf);
+            break;
+        default:
+            break;
+        }
+        app->analyzer_last_push_tick = 0;
+        if(app->sound_on) notification_message(app->notif, &seq_test_beep);
+    }
+}
+
+static void draw_scanner_analyzer(Canvas* canvas, App* app) {
+    char source[40];
+    source[0] = '\0';
+    int8_t spectrum[42];
+    uint8_t spectrum_n = 0;
+    const RoomSweepAnalyzerState* an = NULL;
+    const char* title = "AN";
+
+    switch(app->mode) {
+    case SweepModeRF: {
+        title = "RF AN";
+        an = &app->analyzer_rf;
+        furi_mutex_acquire(app->mutex, FuriWaitForever);
+        if(app->target_kind == TargetRF) {
+            snprintf(
+                source,
+                sizeof(source),
+                "LOCK %s",
+                app->target_id[0] ? app->target_id : "RF");
+        } else {
+            snprintf(
+                source,
+                sizeof(source),
+                "peak ch%u",
+                (unsigned)app->peak_ch);
+        }
+        spectrum_n = RF_NUM_CHANNELS > 42 ? 42 : RF_NUM_CHANNELS;
+        for(uint8_t i = 0; i < spectrum_n; i++) {
+            spectrum[i] = (int8_t)app->rssi[i];
+        }
+        furi_mutex_release(app->mutex);
+        break;
+    }
+    case SweepModeWifi: {
+        title = "Wi AN";
+        an = &app->analyzer_wifi;
+        furi_mutex_acquire(app->mutex, FuriWaitForever);
+        if(app->wifi_count > 0) {
+            uint8_t sel = app->wifi_scroll < app->wifi_count ? app->wifi_scroll : 0;
+            const char* label = app->wifi_aps[sel].ssid[0] ? app->wifi_aps[sel].ssid : "AP";
+            snprintf(source, sizeof(source), "%s", label);
+            source[18] = '\0';
+            spectrum_n = app->wifi_count > 42 ? 42 : app->wifi_count;
+            for(uint8_t i = 0; i < spectrum_n; i++) spectrum[i] = app->wifi_aps[i].rssi;
+        } else {
+            snprintf(source, sizeof(source), "no AP yet");
+        }
+        furi_mutex_release(app->mutex);
+        break;
+    }
+    case SweepModeBle: {
+        title = "BT AN";
+        an = &app->analyzer_ble;
+        furi_mutex_acquire(app->mutex, FuriWaitForever);
+        if(app->ble_count > 0) {
+            uint8_t sel = app->ble_scroll < app->ble_count ? app->ble_scroll : 0;
+            const char* label = app->ble_devs[sel].name[0] ? app->ble_devs[sel].name :
+                                app->ble_devs[sel].mac[0]  ? app->ble_devs[sel].mac :
+                                                             "dev";
+            snprintf(source, sizeof(source), "%s", label);
+            source[18] = '\0';
+            spectrum_n = app->ble_count > 42 ? 42 : app->ble_count;
+            for(uint8_t i = 0; i < spectrum_n; i++) spectrum[i] = app->ble_devs[i].rssi;
+        } else {
+            snprintf(source, sizeof(source), "no BLE yet");
+        }
+        furi_mutex_release(app->mutex);
+        break;
+    }
+    case SweepModeNrf24: {
+        title = "nR AN";
+        an = &app->analyzer_nrf;
+        if(app->nrf24.active_channels > 0) {
+            snprintf(
+                source,
+                sizeof(source),
+                "top ch%u x%u",
+                (unsigned)app->nrf24.top_channels[0],
+                (unsigned)app->nrf24.top_hits[0]);
+        } else if(app->nrf24.phase == RoomSweepNrf24Scanning) {
+            snprintf(source, sizeof(source), "scan ch%u", (unsigned)app->nrf24.channel);
+        } else {
+            snprintf(source, sizeof(source), "2.4G RPD");
+        }
+        /* Compress 126 channels into 42 bars (max of 3). */
+        spectrum_n = 42;
+        for(uint8_t i = 0; i < 42; i++) {
+            uint8_t best = 0;
+            for(uint8_t k = 0; k < 3; k++) {
+                uint16_t ch = (uint16_t)i * 3U + k;
+                if(ch < ROOM_SWEEP_NRF24_CHANNELS && app->nrf24.hits[ch] > best)
+                    best = app->nrf24.hits[ch];
+            }
+            spectrum[i] = (int8_t)room_sweep_analyzer_activity_to_rssi(
+                best > 6 ? 255 : (uint8_t)(best * 40));
+        }
+        break;
+    }
+    default:
+        break;
+    }
+
+    draw_proximity_analyzer(
+        canvas, title, source, an, spectrum_n > 0 ? spectrum : NULL, spectrum_n);
+}
+
+/* ================================================================== */
 /* Drawing: RF Survey sub-view                                         */
 /* ================================================================== */
 static void draw_rf_survey(Canvas* canvas, App* app) {
@@ -2549,7 +2858,7 @@ static void draw_rf_survey(Canvas* canvas, App* app) {
     } else if(app->baseline_set) {
         canvas_draw_str(canvas, 1, 22, "BASE");
     }
-    if(!app->rf_alert) canvas_draw_str(canvas, 44, 22, "U/D mode HoldOK lock");
+    if(!app->rf_alert) canvas_draw_str(canvas, 40, 22, "U/D HoldL=AN HoldOK");
     if(app->rf_alert) {
         canvas_set_font(canvas, FontSecondary);
         const char* sig = "SIGNAL!";
@@ -2612,7 +2921,7 @@ static void draw_rf_sweep(Canvas* canvas, App* app) {
         }
 
         canvas_set_font(canvas, FontKeyboard);
-        canvas_draw_str(canvas, 2, 62, "U/D mode OK run HoldLR band");
+        canvas_draw_str(canvas, 2, 62, "U/D OK HoldL=AN HoldR band");
     }
 }
 
@@ -2763,7 +3072,7 @@ static void draw_wifi_tab(Canvas* canvas, App* app) {
     canvas_draw_str(canvas, 2, 35, buf);
     canvas_draw_str(canvas, 2, 44, ap.bssid[0] ? ap.bssid : "no ID (grouped)");
     canvas_draw_str(canvas, 2, 53, "beacon heard");
-    snprintf(buf, sizeof(buf), "U/D HoldLR %us OK Hold=lock", win_s);
+    snprintf(buf, sizeof(buf), "U/D HoldL=AN HoldR %us", win_s);
     canvas_draw_str(canvas, 2, 63, buf);
 }
 
@@ -2848,7 +3157,7 @@ static void draw_ble_tab(Canvas* canvas, App* app) {
     canvas_draw_str(canvas, 2, 35, buf);
     canvas_draw_str(canvas, 2, 44, dev.mac[0] ? dev.mac : "no ID (grouped)");
     canvas_draw_str(canvas, 2, 53, "advertisement heard");
-    snprintf(buf, sizeof(buf), "U/D HoldLR %us OK Hold=lock", win_s);
+    snprintf(buf, sizeof(buf), "U/D HoldL=AN HoldR %us", win_s);
     canvas_draw_str(canvas, 2, 63, buf);
 }
 
@@ -3165,7 +3474,7 @@ static void draw_nrf24_tab(Canvas* canvas, App* app) {
     } else {
         canvas_draw_str(canvas, 1, 44, "no RPD energy");
     }
-    canvas_draw_str(canvas, 1, 63, "OK=scan (RX only)");
+    canvas_draw_str(canvas, 1, 63, "OK=scan HoldL=AN");
 }
 
 /* ================================================================== */
@@ -3326,8 +3635,8 @@ static void draw_info_tab(Canvas* canvas, App* app) {
     if(app->info_page != 0) {
         canvas_draw_str(canvas, 2, 10, "Glossary 2/2");
         canvas_draw_str(canvas, 2, 20, "WiFi=sniffbeacon BLE=sniffbt");
-        canvas_draw_str(canvas, 2, 29, "nRF24=RPD RX only no jam");
-        canvas_draw_str(canvas, 2, 38, "FullSweep=all sensors");
+        canvas_draw_str(canvas, 2, 29, "HoldL=analyzer CLOSER/FARTHER");
+        canvas_draw_str(canvas, 2, 38, "nRF24=RPD RX; FullSweep=all");
         canvas_draw_str(canvas, 2, 47, "Room Report=report-N.txt");
         canvas_draw_str(canvas, 2, 56, "RSSI!=distance; no intent");
         canvas_draw_str(canvas, 2, 63, "U/D=page");
@@ -3497,19 +3806,36 @@ static void draw_cb(Canvas* canvas, void* ctx) {
     App* app = ctx;
     canvas_clear(canvas);
 
-    switch(app->mode) {
-    case SweepModeRF:
-        if(app->rf_sub == RfSubSurvey) draw_rf_survey(canvas, app);
-        else if(app->rf_sub == RfSubSweep) draw_rf_sweep(canvas, app);
-        else draw_rf_peak(canvas, app);
-        break;
-    case SweepModeWifi: draw_wifi_tab(canvas, app); break;
-    case SweepModeBle:  draw_ble_tab(canvas, app);  break;
-    case SweepModeNrf24: draw_nrf24_tab(canvas, app); break;
-    case SweepModeGps:  draw_gps_tab(canvas, app);  break;
-    case SweepModeTx:   draw_tx_tab(canvas, app);   break;
-    case SweepModeInfo: draw_info_tab(canvas, app); break;
-    default: break;
+    if(app->analyzer_view && mode_supports_analyzer(app->mode)) {
+        draw_scanner_analyzer(canvas, app);
+    } else {
+        switch(app->mode) {
+        case SweepModeRF:
+            if(app->rf_sub == RfSubSurvey) draw_rf_survey(canvas, app);
+            else if(app->rf_sub == RfSubSweep) draw_rf_sweep(canvas, app);
+            else draw_rf_peak(canvas, app);
+            break;
+        case SweepModeWifi:
+            draw_wifi_tab(canvas, app);
+            break;
+        case SweepModeBle:
+            draw_ble_tab(canvas, app);
+            break;
+        case SweepModeNrf24:
+            draw_nrf24_tab(canvas, app);
+            break;
+        case SweepModeGps:
+            draw_gps_tab(canvas, app);
+            break;
+        case SweepModeTx:
+            draw_tx_tab(canvas, app);
+            break;
+        case SweepModeInfo:
+            draw_info_tab(canvas, app);
+            break;
+        default:
+            break;
+        }
     }
 
     /* Full-sweep banner */
@@ -3598,6 +3924,7 @@ static void navigate_tab(App* app, bool next) {
     if(app->mode == SweepModeNrf24) {
         nrf24_stop_survey(app);
     }
+    app->analyzer_view = false;
     furi_mutex_acquire(app->mutex, FuriWaitForever);
     app->target_kind = TargetNone;
     app->target_id[0] = '\0';
@@ -3763,6 +4090,12 @@ int32_t room_sweep_app(void* p) {
     app->nrf24_last_step_tick = 0;
     room_sweep_full_sweep_init(&app->full_sweep);
     app->full_sweep_phase_started_tick = 0;
+    app->analyzer_view = false;
+    room_sweep_analyzer_init(&app->analyzer_rf);
+    room_sweep_analyzer_init(&app->analyzer_wifi);
+    room_sweep_analyzer_init(&app->analyzer_ble);
+    room_sweep_analyzer_init(&app->analyzer_nrf);
+    app->analyzer_last_push_tick = 0;
 
     /* TX defaults — 433.92 MHz preset index 3 in the expanded table */
     app->tx_state = TxDisarmed;
@@ -3877,6 +4210,7 @@ int32_t room_sweep_app(void* p) {
             }
 
             full_sweep_tick(app);
+            analyzer_feed_tick(app);
 
             if(app->serial && (app->mode == SweepModeWifi || app->mode == SweepModeBle)) {
                 uint32_t now = furi_get_tick();
@@ -4336,15 +4670,19 @@ int32_t room_sweep_app(void* p) {
             navigate_tab(app, input_action == RoomSweepInputNavigateNext);
             continue;
         }
+        /* Long Left: toggle visual analyzer on RF/WiFi/BLE/nRF24 */
+        if(input_action == RoomSweepInputAlternatePrev &&
+           mode_supports_analyzer(app->mode)) {
+            toggle_analyzer_view(app);
+            continue;
+        }
         if(app->mode == SweepModeRF && app->rf_sub == RfSubSweep &&
            !app->sweep_running &&
-           (input_action == RoomSweepInputAlternatePrev ||
-            input_action == RoomSweepInputAlternateNext)) {
+           input_action == RoomSweepInputAlternateNext) {
             app->sweep_band_idx = (uint8_t)room_sweep_cursor_step(
                 app->sweep_band_idx,
                 RF_BAND_COUNT,
-                input_action == RoomSweepInputAlternatePrev ?
-                    RoomSweepInputBrowseUp : RoomSweepInputBrowseDown);
+                RoomSweepInputBrowseDown);
             continue;
         }
 
@@ -4446,11 +4784,9 @@ int32_t room_sweep_app(void* p) {
         }
 
         if(app->mode == SweepModeWifi) {
-            if(input_action == RoomSweepInputAlternatePrev ||
-               input_action == RoomSweepInputAlternateNext) {
+            if(input_action == RoomSweepInputAlternateNext) {
                 app->scan_timeout_idx = room_sweep_scan_timeout_step(
-                    app->scan_timeout_idx,
-                    input_action == RoomSweepInputAlternateNext);
+                    app->scan_timeout_idx, true);
                 record_enqueue(
                     app,
                     "config",
@@ -4510,11 +4846,9 @@ int32_t room_sweep_app(void* p) {
         }
 
         if(app->mode == SweepModeBle) {
-            if(input_action == RoomSweepInputAlternatePrev ||
-               input_action == RoomSweepInputAlternateNext) {
+            if(input_action == RoomSweepInputAlternateNext) {
                 app->scan_timeout_idx = room_sweep_scan_timeout_step(
-                    app->scan_timeout_idx,
-                    input_action == RoomSweepInputAlternateNext);
+                    app->scan_timeout_idx, true);
                 record_enqueue(
                     app,
                     "config",
