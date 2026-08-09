@@ -333,11 +333,16 @@ typedef struct {
 
     /* Per-scanner visual analyzer (proximity / spectrum) — Long Left toggles */
     bool analyzer_view; /* true while current scanner shows analyzer UI */
+    uint8_t analyzer_ui_page; /* 0=hunt meter, 1=field/spectrum */
     RoomSweepAnalyzerState analyzer_rf;
     RoomSweepAnalyzerState analyzer_wifi;
     RoomSweepAnalyzerState analyzer_ble;
     RoomSweepAnalyzerState analyzer_nrf;
     uint32_t analyzer_last_push_tick;
+
+    /* WiFi/BLE main-tab pages: 0=detail, 1=list (Hold Right) */
+    uint8_t wifi_ui_page;
+    uint8_t ble_ui_page;
 
     /* Settings overlay */
     bool settings_active;
@@ -2489,32 +2494,32 @@ feedback_sound:
 /* Visual analyzer / proximity meter — dense monochrome HUD            */
 /* Long Left toggles; history + segments + scan-line for hunt feedback */
 /* ================================================================== */
-static void draw_hud_bracket(
+/* Clip text to max pixel width (FontKeyboard / Secondary already set). */
+static void draw_str_clip(
     Canvas* canvas,
     uint8_t x,
     uint8_t y,
-    uint8_t w,
-    uint8_t h,
-    uint8_t arm) {
-    /* Four corner ticks — tactical frame without full box clutter. */
-    canvas_draw_line(canvas, x, y, (uint8_t)(x + arm), y);
-    canvas_draw_line(canvas, x, y, x, (uint8_t)(y + arm));
-    canvas_draw_line(canvas, (uint8_t)(x + w - 1), y, (uint8_t)(x + w - 1 - arm), y);
-    canvas_draw_line(canvas, (uint8_t)(x + w - 1), y, (uint8_t)(x + w - 1), (uint8_t)(y + arm));
-    canvas_draw_line(canvas, x, (uint8_t)(y + h - 1), (uint8_t)(x + arm), (uint8_t)(y + h - 1));
-    canvas_draw_line(canvas, x, (uint8_t)(y + h - 1), x, (uint8_t)(y + h - 1 - arm));
-    canvas_draw_line(
-        canvas,
-        (uint8_t)(x + w - 1),
-        (uint8_t)(y + h - 1),
-        (uint8_t)(x + w - 1 - arm),
-        (uint8_t)(y + h - 1));
-    canvas_draw_line(
-        canvas,
-        (uint8_t)(x + w - 1),
-        (uint8_t)(y + h - 1),
-        (uint8_t)(x + w - 1),
-        (uint8_t)(y + h - 1 - arm));
+    const char* text,
+    uint8_t max_px) {
+    if(!canvas || !text || max_px < 6) return;
+    char buf[28];
+    size_t n = 0;
+    while(text[n] != '\0' && n + 1U < sizeof(buf)) {
+        buf[n] = text[n];
+        n++;
+        buf[n] = '\0';
+        if(canvas_string_width(canvas, buf) > max_px) {
+            if(n >= 2) {
+                buf[n - 1] = '\0';
+                if(n >= 3) {
+                    buf[n - 2] = '.';
+                    buf[n - 3] = '.';
+                }
+            }
+            break;
+        }
+    }
+    canvas_draw_str(canvas, x, y, buf);
 }
 
 static void draw_segmented_meter(
@@ -2573,136 +2578,108 @@ static void draw_proximity_analyzer(
     uint8_t spectrum_count) {
     uint8_t phase = app ? (uint8_t)(app->tick_count & 0xFFU) : 0;
     bool blink = app && ((app->tick_count / 4U) & 1U);
-    char buf[48];
-
-    /* Outer tactical frame — below compact tab strip (y0..5). */
-    draw_hud_bracket(canvas, 0, 7, 128, 56, 4);
-
-    /* Top status strip — inverted when signal is hot */
+    uint8_t page = app ? (app->analyzer_ui_page & 1U) : 0;
+    char buf[40];
     uint8_t pct = an ? room_sweep_analyzer_level_pct(an->live_rssi) : 0;
-    bool hot = an && pct >= 70;
     bool closer = an && an->trend == RoomSweepAnalyzerTrendCloser;
-    if(hot && blink) {
-        canvas_draw_box(canvas, 2, 8, 124, 8);
-        canvas_set_color(canvas, ColorWhite);
-    }
-    canvas_set_font(canvas, FontKeyboard);
-    snprintf(
-        buf,
-        sizeof(buf),
-        "[%s]",
-        title ? title : "AN");
-    canvas_draw_str(canvas, 3, 15, buf);
-    if(an) {
-        snprintf(buf, sizeof(buf), "%+03d", (int)an->live_rssi);
-        canvas_draw_str(canvas, 52, 15, buf);
-        snprintf(buf, sizeof(buf), "%02u", (unsigned)pct);
-        canvas_draw_str(canvas, 88, 15, buf);
-        canvas_draw_str(canvas, 104, 15, "PCT");
-    }
-    if(hot && blink) canvas_set_color(canvas, ColorBlack);
+    bool farther = an && an->trend == RoomSweepAnalyzerTrendFarther;
 
-    /* Source / target line with chevrons */
-    canvas_set_font(canvas, FontKeyboard);
-    if(source_line && source_line[0]) {
-        snprintf(buf, sizeof(buf), ">>%s", source_line);
-        buf[22] = '\0';
-        canvas_draw_str(canvas, 3, 20, buf);
-    } else {
-        canvas_draw_str(canvas, 3, 20, ">>SCAN");
-    }
+    /* --- Page 0: HUNT (meter only — no spectrum clutter) --- */
+    if(page == 0) {
+        canvas_set_font(canvas, FontKeyboard);
+        /* Row1: mode tag + live dBm (no PCT + CLOSER pile-up) */
+        snprintf(buf, sizeof(buf), "%s", title ? title : "AN");
+        canvas_draw_str(canvas, 2, 14, buf);
+        if(an) {
+            snprintf(buf, sizeof(buf), "%+ddBm", (int)an->live_rssi);
+            uint16_t w = canvas_string_width(canvas, buf);
+            canvas_draw_str(canvas, (uint8_t)(126 - w), 14, buf);
+        }
 
-    /* Trend badge (right of source) */
-    if(an) {
-        const char* tr = room_sweep_analyzer_trend_text(an->trend);
-        if(closer && blink) {
-            uint16_t tw = canvas_string_width(canvas, tr);
-            canvas_draw_box(canvas, (uint8_t)(126 - tw - 4), 14, (uint8_t)(tw + 3), 8);
-            canvas_set_color(canvas, ColorWhite);
-            canvas_draw_str(canvas, (uint8_t)(126 - tw - 2), 20, tr);
+        /* Row2: selected source only (clipped) */
+        canvas_set_font(canvas, FontSecondary);
+        draw_str_clip(
+            canvas, 2, 26, (source_line && source_line[0]) ? source_line : "(none)", 120);
+
+        /* Giant meter */
+        uint8_t fill = an ? room_sweep_analyzer_bar_height(an->live_rssi, 118) : 0;
+        draw_segmented_meter(canvas, 3, 30, 122, 14, fill, phase);
+
+        /* Trend on its own row under meter */
+        canvas_set_font(canvas, FontKeyboard);
+        if(closer) {
+            if(blink) {
+                canvas_draw_box(canvas, 2, 46, 60, 9);
+                canvas_set_color(canvas, ColorWhite);
+            }
+            canvas_draw_str(canvas, 4, 53, "^ CLOSER");
             canvas_set_color(canvas, ColorBlack);
+        } else if(farther) {
+            canvas_draw_str(canvas, 4, 53, "v FARTHER");
         } else {
-            uint16_t tw = canvas_string_width(canvas, tr);
-            canvas_draw_str(canvas, (uint8_t)(126 - tw), 20, tr);
+            canvas_draw_str(canvas, 4, 53, "= STABLE");
         }
+        snprintf(buf, sizeof(buf), "%u%%", (unsigned)pct);
+        canvas_draw_str(canvas, 90, 53, buf);
+
+        /* Mini sparkline only (no second spectrum) */
+        if(an && an->hist_count > 2) {
+            uint8_t n = an->hist_count;
+            if(n > 48) n = 48;
+            for(uint8_t i = 0; i < n; i++) {
+                uint8_t age = (uint8_t)(n - 1U - i);
+                int8_t r = room_sweep_analyzer_history_at(an, age);
+                uint8_t h = room_sweep_analyzer_bar_height(r, 5);
+                uint8_t x = (uint8_t)(2U + (i * 124U) / n);
+                canvas_draw_dot(canvas, x, (uint8_t)(59 - h));
+            }
+        }
+
+        canvas_draw_box(canvas, 0, 60, 128, 4);
+        canvas_set_color(canvas, ColorWhite);
+        canvas_set_font(canvas, FontKeyboard);
+        canvas_draw_str(canvas, 2, 63, "L=list R=field  U/D=sel");
+        canvas_set_color(canvas, ColorBlack);
+        return;
     }
 
-    /* Segmented proximity rail */
-    uint8_t fill = an ? room_sweep_analyzer_bar_height(an->live_rssi, 120) : 0;
-    draw_segmented_meter(canvas, 3, 22, 122, 12, fill, phase);
+    /* --- Page 1: FIELD (spectrum / neighbor bars) --- */
+    canvas_set_font(canvas, FontKeyboard);
+    snprintf(buf, sizeof(buf), "%s FIELD", title ? title : "AN");
+    canvas_draw_str(canvas, 2, 14, buf);
+    if(an) {
+        snprintf(buf, sizeof(buf), "%+d", (int)an->live_rssi);
+        canvas_draw_str(canvas, 100, 14, buf);
+    }
+    canvas_set_font(canvas, FontSecondary);
+    draw_str_clip(
+        canvas, 2, 24, (source_line && source_line[0]) ? source_line : "(none)", 124);
 
-    /* Spectrum field with scan sweep line */
-    const uint8_t spec_y0 = 36;
-    const uint8_t spec_h = 10;
-    canvas_draw_frame(canvas, 3, (uint8_t)(spec_y0 - 1), 122, (uint8_t)(spec_h + 2));
+    const uint8_t spec_y0 = 30;
+    const uint8_t spec_h = 24;
+    canvas_draw_frame(canvas, 2, (uint8_t)(spec_y0 - 1), 124, (uint8_t)(spec_h + 2));
     if(spectrum && spectrum_count > 0) {
-        uint8_t max_bars = spectrum_count > 48 ? 48 : spectrum_count;
-        uint8_t bw = 2;
+        uint8_t max_bars = spectrum_count > 40 ? 40 : spectrum_count;
         uint8_t gap = 1;
-        if(max_bars * (bw + gap) > 118) {
-            bw = 1;
-            gap = 1;
-        }
+        uint8_t bw = (uint8_t)((120U / max_bars) > 0 ? (120U / max_bars) : 1);
+        if(bw > 4) bw = 4;
         for(uint8_t i = 0; i < max_bars; i++) {
             uint8_t h = room_sweep_analyzer_bar_height(spectrum[i], spec_h);
-            uint8_t x = (uint8_t)(5U + i * (bw + gap));
-            if(x >= 123) break;
-            if(h == 0) {
-                canvas_draw_dot(canvas, x, (uint8_t)(spec_y0 + spec_h - 1));
-            } else {
-                canvas_draw_box(canvas, x, (uint8_t)(spec_y0 + spec_h - h), bw, h);
-            }
+            uint8_t x = (uint8_t)(4U + i * (bw + gap));
+            if(x + bw >= 124) break;
+            if(h > 0) canvas_draw_box(canvas, x, (uint8_t)(spec_y0 + spec_h - h), bw, h);
         }
-        /* Animated scan cursor */
-        uint8_t scan_x = (uint8_t)(5U + ((phase * 3U) % 116U));
-        canvas_draw_line(canvas, scan_x, spec_y0, scan_x, (uint8_t)(spec_y0 + spec_h - 1));
-        canvas_draw_box(canvas, (uint8_t)(scan_x > 0 ? scan_x - 1 : scan_x), (uint8_t)(spec_y0 - 2), 3, 2);
+        uint8_t scan_x = (uint8_t)(4U + ((phase * 3U) % 118U));
+        canvas_draw_line(canvas, scan_x, spec_y0, scan_x, (uint8_t)(spec_y0 + spec_h));
     } else {
         canvas_set_font(canvas, FontKeyboard);
-        canvas_draw_str(canvas, 40, 44, "NO SPECTRUM");
+        canvas_draw_str(canvas, 36, 44, "no field data");
     }
 
-    /* History waveform (newest right) */
-    const uint8_t wave_y0 = 55;
-    canvas_draw_line(canvas, 4, wave_y0, 124, wave_y0);
-    if(an && an->hist_count > 2) {
-        uint8_t n = an->hist_count;
-        if(n > 60) n = 60;
-        int8_t prev_h = -1;
-        for(uint8_t i = 0; i < n; i++) {
-            uint8_t age = (uint8_t)(n - 1U - i);
-            int8_t r = room_sweep_analyzer_history_at(an, age);
-            uint8_t h = room_sweep_analyzer_bar_height(r, 7);
-            uint8_t x = (uint8_t)(4U + (i * 120U) / n);
-            if(prev_h >= 0) {
-                canvas_draw_line(
-                    canvas,
-                    (uint8_t)(x > 1 ? x - (120U / n) : x),
-                    (uint8_t)(wave_y0 - (uint8_t)prev_h),
-                    x,
-                    (uint8_t)(wave_y0 - h));
-            }
-            canvas_draw_dot(canvas, x, (uint8_t)(wave_y0 - h));
-            prev_h = (int8_t)h;
-        }
-    }
-
-    /* Footer strip */
     canvas_set_font(canvas, FontKeyboard);
     canvas_draw_box(canvas, 0, 57, 128, 7);
     canvas_set_color(canvas, ColorWhite);
-    if(an) {
-        snprintf(
-            buf,
-            sizeof(buf),
-            "PK%+d %s HoldL:LIST",
-            (int)an->peak_rssi,
-            an->has_signal ? (closer ? "TRK" : "LIVE") : "----");
-        canvas_draw_str(canvas, 2, 63, buf);
-        if(blink && pct > 40) canvas_draw_box(canvas, 122, 58, 4, 5);
-    } else {
-        canvas_draw_str(canvas, 2, 63, "HoldL:LIST");
-    }
+    canvas_draw_str(canvas, 2, 63, "L=list R=hunt  bars=peers");
     canvas_set_color(canvas, ColorBlack);
 }
 
@@ -2780,6 +2757,7 @@ static void toggle_analyzer_view(App* app) {
     if(!app || !mode_supports_analyzer(app->mode)) return;
     app->analyzer_view = !app->analyzer_view;
     if(app->analyzer_view) {
+        app->analyzer_ui_page = 0; /* always enter on hunt page */
         /* Fresh history when entering so trend is honest for this hunt. */
         switch(app->mode) {
         case SweepModeRF:
@@ -3119,50 +3097,53 @@ static void draw_rf_peak(Canvas* canvas, App* app) {
 }
 
 /* ================================================================== */
-/* Drawing: WiFi tab (meter + parsed AP list)                          */
+/* Drawing: WiFi tab — detail (0) / list (1); Hold R flips page        */
 /* ================================================================== */
 static void draw_wifi_tab(Canvas* canvas, App* app) {
-    canvas_set_font(canvas, FontSecondary);
-    canvas_draw_str(canvas, 1, 15, "WiFi");
-
-    char buf[48];
+    char buf[40];
     uint8_t win_s = room_sweep_scan_timeout_seconds(app->scan_timeout_idx);
+    uint8_t page = app->wifi_ui_page & 1U;
 
     if(!app->serial) {
+        canvas_set_font(canvas, FontSecondary);
+        canvas_draw_str(canvas, 2, 16, "WiFi");
         canvas_set_font(canvas, FontKeyboard);
         canvas_draw_str(canvas, 2, 30, "No UART — attach BFFB");
-        canvas_draw_str(canvas, 2, 42, "power 5V/OTG; check UART");
-        canvas_draw_str(canvas, 2, 63, "absence not proven");
+        canvas_draw_str(canvas, 2, 42, "power 5V/OTG");
+        canvas_draw_str(canvas, 2, 63, "OK unused");
         return;
     }
-
-    canvas_set_font(canvas, FontKeyboard);
-    const char* state = !app->marauder_confirmed &&
-                                (uint32_t)(furi_get_tick() - app->marauder_probe_tick) >= 5000U ?
-                            "no response" :
-                        !app->marauder_confirmed ? "UART open" :
-                        app->marauder_state == MarauderScanning ? "scan..." :
-                        app->marauder_state == MarauderDone ? "done" :
-                        app->marauder_state == MarauderError ? "ERR" : "idle";
-    canvas_draw_str(canvas, 127 - canvas_string_width(canvas, state), 15, state);
 
     furi_mutex_acquire(app->mutex, FuriWaitForever);
     uint8_t count = app->wifi_count;
     uint16_t window_observations = app->wifi_window_observations;
-    uint16_t table_full = app->wifi_window_table_full;
     uint8_t selected = app->wifi_scroll < count ? app->wifi_scroll : 0;
     WifiAp ap = count > 0 ? app->wifi_aps[selected] : (WifiAp){0};
     bool locked = count > 0 && app->target_kind == TargetWifi &&
                   ((ap.bssid[0] && strcmp(app->target_id, ap.bssid) == 0) ||
                    strcmp(app->target_id, ap.ssid) == 0);
     furi_mutex_release(app->mutex);
+
+    const char* st =
+        !app->marauder_confirmed ? "wait" :
+        app->marauder_state == MarauderScanning ? "scan" :
+        app->marauder_state == MarauderDone     ? "done" :
+        app->marauder_state == MarauderError    ? "ERR" :
+                                                 "idle";
+
+    /* Header: one short line only */
+    canvas_set_font(canvas, FontKeyboard);
+    snprintf(buf, sizeof(buf), "Wi %s %u/%u%s", st, count ? selected + 1U : 0, count, locked ? " L" : "");
+    canvas_draw_str(canvas, 2, 14, buf);
+    snprintf(buf, sizeof(buf), "%us", win_s);
+    canvas_draw_str(canvas, 110, 14, buf);
+
     if(!app->marauder_confirmed) {
         canvas_set_font(canvas, FontSecondary);
-        canvas_draw_str(canvas, 2, 28, "Waiting for Marauder");
+        canvas_draw_str(canvas, 2, 30, "Waiting Marauder");
         canvas_set_font(canvas, FontKeyboard);
-        canvas_draw_str(canvas, 2, 42, "check BFFB power/firmware");
-        snprintf(buf, sizeof(buf), "win %us  OK=scan", win_s);
-        canvas_draw_str(canvas, 2, 63, buf);
+        canvas_draw_str(canvas, 2, 44, "check BFFB power");
+        canvas_draw_str(canvas, 2, 63, "OK=scan L=AN R=page");
         return;
     }
     if(count == 0 ||
@@ -3171,83 +3152,122 @@ static void draw_wifi_tab(Canvas* canvas, App* app) {
         canvas_draw_str(
             canvas,
             2,
-            28,
+            30,
             app->marauder_state == MarauderDone ? "No AP this window" : "Listening...");
         canvas_set_font(canvas, FontKeyboard);
-        canvas_draw_str(canvas, 2, 42, "beacon only; not telemetry");
-        if(count > 0) {
-            snprintf(buf, sizeof(buf), "old:%u", count);
-            canvas_draw_str(canvas, 98, 54, buf);
-        }
-        snprintf(buf, sizeof(buf), "HoldLR %us OK=scan", win_s);
-        canvas_draw_str(canvas, 2, 63, buf);
+        canvas_draw_str(canvas, 2, 44, "beacon only");
+        canvas_draw_str(canvas, 2, 63, "OK=scan L=AN R=page");
         return;
     }
 
-    snprintf(buf, sizeof(buf), "%u/%u %s%s",
-             selected + 1U, count, locked ? "LOCK" : "",
-             table_full ? " FULL" : "");
-    canvas_draw_str(canvas, 38, 15, buf);
+    if(page == 1) {
+        /* LIST: up to 5 rows of RSSI + clipped SSID */
+        canvas_set_font(canvas, FontKeyboard);
+        uint8_t start = 0;
+        if(selected >= 4) start = (uint8_t)(selected - 3);
+        for(uint8_t row = 0; row < 5; row++) {
+            uint8_t idx = (uint8_t)(start + row);
+            if(idx >= count) break;
+            uint8_t y = (uint8_t)(24 + row * 7);
+            bool sel = (idx == selected);
+            furi_mutex_acquire(app->mutex, FuriWaitForever);
+            WifiAp row_ap = app->wifi_aps[idx];
+            furi_mutex_release(app->mutex);
+            if(sel) {
+                canvas_draw_box(canvas, 0, (uint8_t)(y - 6), 128, 8);
+                canvas_set_color(canvas, ColorWhite);
+            }
+            snprintf(buf, sizeof(buf), "%4d ", (int)row_ap.rssi);
+            canvas_draw_str(canvas, 1, y, buf);
+            draw_str_clip(
+                canvas,
+                28,
+                y,
+                row_ap.ssid[0] ? row_ap.ssid : "?",
+                96);
+            canvas_set_color(canvas, ColorBlack);
+        }
+        canvas_draw_str(canvas, 2, 63, "U/D sel OK scan L=AN R=det");
+        return;
+    }
+
+    /* DETAIL page — one selected AP, clean rows */
     canvas_set_font(canvas, FontSecondary);
     bool unidentified = !ap.bssid[0] && strcmp(ap.ssid, "Hidden/unknown") == 0;
-    canvas_draw_str(canvas, 2, 24, unidentified ? "Unidentified obs." : ap.ssid);
-    snprintf(buf, sizeof(buf), "%ddBm Ch%u age%lus n%u",
-             ap.rssi, ap.channel,
-             (unsigned long)((furi_get_tick() - ap.last_seen) / 1000U),
-             ap.observations);
+    draw_str_clip(
+        canvas, 2, 26, unidentified ? "Unidentified" : (ap.ssid[0] ? ap.ssid : "?"), 124);
+
     canvas_set_font(canvas, FontKeyboard);
-    canvas_draw_str(canvas, 2, 35, buf);
-    canvas_draw_str(canvas, 2, 44, ap.bssid[0] ? ap.bssid : "no ID (grouped)");
-    canvas_draw_str(canvas, 2, 53, "beacon heard");
-    snprintf(buf, sizeof(buf), "U/D HoldL=AN HoldR %us", win_s);
-    canvas_draw_str(canvas, 2, 63, buf);
+    snprintf(
+        buf,
+        sizeof(buf),
+        "%ddBm  Ch%u  n%u",
+        (int)ap.rssi,
+        (unsigned)ap.channel,
+        (unsigned)ap.observations);
+    canvas_draw_str(canvas, 2, 38, buf);
+
+    if(ap.bssid[0]) {
+        canvas_draw_str(canvas, 2, 48, ap.bssid);
+    } else {
+        canvas_draw_str(canvas, 2, 48, "id: session ordinal");
+    }
+    canvas_draw_str(canvas, 2, 56, locked ? "LOCK on  HoldOK=unlock" : "beacon  HoldOK=lock");
+    canvas_draw_str(canvas, 2, 63, "U/D OK L=AN R=list");
 }
 
 /* ================================================================== */
-/* Drawing: BLE tab                                                    */
+/* Drawing: BLE tab — detail (0) / list (1); Hold R flips page         */
 /* ================================================================== */
 static void draw_ble_tab(Canvas* canvas, App* app) {
-    canvas_set_font(canvas, FontSecondary);
-    canvas_draw_str(canvas, 1, 15, "BLE");
-
-    char buf[48];
+    char buf[40];
     uint8_t win_s = room_sweep_scan_timeout_seconds(app->scan_timeout_idx);
+    uint8_t page = app->ble_ui_page & 1U;
 
     if(!app->serial) {
+        canvas_set_font(canvas, FontSecondary);
+        canvas_draw_str(canvas, 2, 16, "BLE");
         canvas_set_font(canvas, FontKeyboard);
         canvas_draw_str(canvas, 2, 30, "No UART — attach BFFB");
-        canvas_draw_str(canvas, 2, 42, "power 5V/OTG; check UART");
-        canvas_draw_str(canvas, 2, 63, "absence not proven");
+        canvas_draw_str(canvas, 2, 63, "OK unused");
         return;
     }
-
-    canvas_set_font(canvas, FontKeyboard);
-    const char* state = !app->marauder_confirmed &&
-                                (uint32_t)(furi_get_tick() - app->marauder_probe_tick) >= 5000U ?
-                            "no response" :
-                        !app->marauder_confirmed ? "UART open" :
-                        app->marauder_state == MarauderScanning ? "active..." :
-                        app->marauder_state == MarauderDone ? "done" :
-                        app->marauder_state == MarauderError ? "ERR" : "idle";
-    canvas_draw_str(canvas, 127 - canvas_string_width(canvas, state), 15, state);
 
     furi_mutex_acquire(app->mutex, FuriWaitForever);
     uint8_t count = app->ble_count;
     uint16_t window_observations = app->ble_window_observations;
-    uint16_t table_full = app->ble_window_table_full;
     uint8_t selected = app->ble_scroll < count ? app->ble_scroll : 0;
     BleDev dev = count > 0 ? app->ble_devs[selected] : (BleDev){0};
     bool locked = count > 0 && app->target_kind == TargetBle &&
                   ((dev.mac[0] && strcmp(app->target_id, dev.mac) == 0) ||
                    strcmp(app->target_id, dev.name) == 0);
     furi_mutex_release(app->mutex);
+
+    const char* st =
+        !app->marauder_confirmed ? "wait" :
+        app->marauder_state == MarauderScanning ? "scan" :
+        app->marauder_state == MarauderDone     ? "done" :
+        app->marauder_state == MarauderError    ? "ERR" :
+                                                 "idle";
+
+    canvas_set_font(canvas, FontKeyboard);
+    snprintf(
+        buf,
+        sizeof(buf),
+        "BT %s %u/%u%s",
+        st,
+        count ? selected + 1U : 0,
+        count,
+        locked ? " L" : "");
+    canvas_draw_str(canvas, 2, 14, buf);
+    snprintf(buf, sizeof(buf), "%us", win_s);
+    canvas_draw_str(canvas, 110, 14, buf);
+
     if(!app->marauder_confirmed) {
         canvas_set_font(canvas, FontSecondary);
-        canvas_draw_str(canvas, 2, 28, "Waiting for Marauder");
+        canvas_draw_str(canvas, 2, 30, "Waiting Marauder");
         canvas_set_font(canvas, FontKeyboard);
-        canvas_draw_str(canvas, 2, 42, "check BFFB power/firmware");
-        snprintf(buf, sizeof(buf), "win %us  OK=scan", win_s);
-        canvas_draw_str(canvas, 2, 63, buf);
+        canvas_draw_str(canvas, 2, 63, "OK=scan L=AN R=page");
         return;
     }
     if(count == 0 ||
@@ -3256,36 +3276,62 @@ static void draw_ble_tab(Canvas* canvas, App* app) {
         canvas_draw_str(
             canvas,
             2,
-            28,
+            30,
             app->marauder_state == MarauderDone ? "No BLE this window" : "Listening...");
         canvas_set_font(canvas, FontKeyboard);
-        canvas_draw_str(canvas, 2, 42, "ads only; not telemetry");
-        if(count > 0) {
-            snprintf(buf, sizeof(buf), "old:%u", count);
-            canvas_draw_str(canvas, 98, 54, buf);
-        }
-        snprintf(buf, sizeof(buf), "HoldLR %us OK=scan", win_s);
-        canvas_draw_str(canvas, 2, 63, buf);
+        canvas_draw_str(canvas, 2, 63, "OK=scan L=AN R=page");
         return;
     }
 
-    snprintf(buf, sizeof(buf), "%u/%u %s%s",
-             selected + 1U, count, locked ? "LOCK" : "",
-             table_full ? " FULL" : "");
-    canvas_draw_str(canvas, 38, 15, buf);
+    if(page == 1) {
+        canvas_set_font(canvas, FontKeyboard);
+        uint8_t start = 0;
+        if(selected >= 4) start = (uint8_t)(selected - 3);
+        for(uint8_t row = 0; row < 5; row++) {
+            uint8_t idx = (uint8_t)(start + row);
+            if(idx >= count) break;
+            uint8_t y = (uint8_t)(24 + row * 7);
+            bool sel = (idx == selected);
+            furi_mutex_acquire(app->mutex, FuriWaitForever);
+            BleDev row_dev = app->ble_devs[idx];
+            furi_mutex_release(app->mutex);
+            if(sel) {
+                canvas_draw_box(canvas, 0, (uint8_t)(y - 6), 128, 8);
+                canvas_set_color(canvas, ColorWhite);
+            }
+            snprintf(buf, sizeof(buf), "%4d ", (int)row_dev.rssi);
+            canvas_draw_str(canvas, 1, y, buf);
+            const char* lab = row_dev.name[0] ? row_dev.name :
+                              row_dev.mac[0]  ? row_dev.mac :
+                                                "?";
+            draw_str_clip(canvas, 28, y, lab, 96);
+            canvas_set_color(canvas, ColorBlack);
+        }
+        canvas_draw_str(canvas, 2, 63, "U/D sel OK scan L=AN R=det");
+        return;
+    }
+
     canvas_set_font(canvas, FontSecondary);
     bool unidentified = !dev.mac[0] && strcmp(dev.name, "Hidden/unknown") == 0;
-    canvas_draw_str(canvas, 2, 24, unidentified ? "Unidentified obs." : dev.name);
-    snprintf(buf, sizeof(buf), "%ddBm age%lus n%u",
-             dev.rssi,
-             (unsigned long)((furi_get_tick() - dev.last_seen) / 1000U),
-             dev.observations);
+    draw_str_clip(
+        canvas,
+        2,
+        26,
+        unidentified ? "Unidentified" : (dev.name[0] ? dev.name : "?"),
+        124);
+
     canvas_set_font(canvas, FontKeyboard);
-    canvas_draw_str(canvas, 2, 35, buf);
-    canvas_draw_str(canvas, 2, 44, dev.mac[0] ? dev.mac : "no ID (grouped)");
-    canvas_draw_str(canvas, 2, 53, "advertisement heard");
-    snprintf(buf, sizeof(buf), "U/D HoldL=AN HoldR %us", win_s);
-    canvas_draw_str(canvas, 2, 63, buf);
+    snprintf(
+        buf,
+        sizeof(buf),
+        "%ddBm  n%u",
+        (int)dev.rssi,
+        (unsigned)dev.observations);
+    canvas_draw_str(canvas, 2, 38, buf);
+    if(dev.mac[0]) canvas_draw_str(canvas, 2, 48, dev.mac);
+    else canvas_draw_str(canvas, 2, 48, "id: session ordinal");
+    canvas_draw_str(canvas, 2, 56, locked ? "LOCK on  HoldOK=unlock" : "adv  HoldOK=lock");
+    canvas_draw_str(canvas, 2, 63, "U/D OK L=AN R=list");
 }
 
 /* ================================================================== */
@@ -4032,8 +4078,8 @@ static void draw_cb(Canvas* canvas, void* ctx) {
         canvas_set_color(canvas, ColorBlack);
     }
 
-    /* Sound/vibro indicators (only non-RF, non-TX tabs) */
-    if(app->mode != SweepModeRF && app->mode != SweepModeTx) {
+    /* Sound/vibro: hide on analyzer (header is already dense). */
+    if(!app->analyzer_view && app->mode != SweepModeRF && app->mode != SweepModeTx) {
         canvas_draw_str(canvas, 92, 14, app->sound_on ? "S" : "s");
         canvas_draw_str(canvas, 99, 14, app->vibro_on ? "V" : "v");
     }
@@ -4283,11 +4329,14 @@ int32_t room_sweep_app(void* p) {
     app->full_sweep_done_until_tick = 0;
     app->full_sweep_report_ordinal = 0;
     app->analyzer_view = false;
+    app->analyzer_ui_page = 0;
     room_sweep_analyzer_init(&app->analyzer_rf);
     room_sweep_analyzer_init(&app->analyzer_wifi);
     room_sweep_analyzer_init(&app->analyzer_ble);
     room_sweep_analyzer_init(&app->analyzer_nrf);
     app->analyzer_last_push_tick = 0;
+    app->wifi_ui_page = 0;
+    app->ble_ui_page = 0;
 
     /* TX defaults — 433.92 MHz preset index 3 in the expanded table */
     app->tx_state = TxDisarmed;
@@ -4871,8 +4920,14 @@ int32_t room_sweep_app(void* p) {
             toggle_analyzer_view(app);
             continue;
         }
+        /* Long Right while analyzer open: hunt <-> field page. */
+        if(app->analyzer_view && mode_supports_analyzer(app->mode) &&
+           input_action == RoomSweepInputAlternateNext) {
+            app->analyzer_ui_page = (uint8_t)(1U - (app->analyzer_ui_page & 1U));
+            continue;
+        }
         if(app->mode == SweepModeRF && app->rf_sub == RfSubSweep &&
-           !app->sweep_running &&
+           !app->sweep_running && !app->analyzer_view &&
            input_action == RoomSweepInputAlternateNext) {
             app->sweep_band_idx = (uint8_t)room_sweep_cursor_step(
                 app->sweep_band_idx,
@@ -4980,17 +5035,8 @@ int32_t room_sweep_app(void* p) {
 
         if(app->mode == SweepModeWifi) {
             if(input_action == RoomSweepInputAlternateNext) {
-                app->scan_timeout_idx = room_sweep_scan_timeout_step(
-                    app->scan_timeout_idx, true);
-                record_enqueue(
-                    app,
-                    "config",
-                    "WIFI",
-                    "scan_window",
-                    0,
-                    0,
-                    0,
-                    "window duration changed");
+                /* Hold R = detail/list page (scan window: Settings → ScanWin). */
+                app->wifi_ui_page = (uint8_t)(1U - (app->wifi_ui_page & 1U));
             } else if(input_action == RoomSweepInputBrowseUp ||
                       input_action == RoomSweepInputBrowseDown) {
                 furi_mutex_acquire(app->mutex, FuriWaitForever);
@@ -5042,17 +5088,7 @@ int32_t room_sweep_app(void* p) {
 
         if(app->mode == SweepModeBle) {
             if(input_action == RoomSweepInputAlternateNext) {
-                app->scan_timeout_idx = room_sweep_scan_timeout_step(
-                    app->scan_timeout_idx, true);
-                record_enqueue(
-                    app,
-                    "config",
-                    "BLE",
-                    "scan_window",
-                    0,
-                    0,
-                    0,
-                    "window duration changed");
+                app->ble_ui_page = (uint8_t)(1U - (app->ble_ui_page & 1U));
             } else if(input_action == RoomSweepInputBrowseUp ||
                       input_action == RoomSweepInputBrowseDown) {
                 furi_mutex_acquire(app->mutex, FuriWaitForever);
