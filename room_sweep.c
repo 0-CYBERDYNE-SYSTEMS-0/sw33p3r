@@ -339,6 +339,8 @@ typedef struct {
     RoomSweepAnalyzerState analyzer_ble;
     RoomSweepAnalyzerState analyzer_nrf;
     uint32_t analyzer_last_push_tick;
+    bool analyzer_source_stale; /* last feed older than STALE_MS */
+    bool analyzer_source_dead; /* faded to empty / no row */
 
     /* WiFi/BLE main-tab pages: 0=detail, 1=list (Hold Right) */
     uint8_t wifi_ui_page;
@@ -2522,6 +2524,7 @@ static void draw_str_clip(
     canvas_draw_str(canvas, x, y, buf);
 }
 
+/* Continuous fill meter (pixel-accurate). phase reserved for hot-edge blink. */
 static void draw_segmented_meter(
     Canvas* canvas,
     uint8_t x,
@@ -2531,36 +2534,22 @@ static void draw_segmented_meter(
     uint8_t fill_px,
     uint8_t phase) {
     canvas_draw_frame(canvas, x, y, w, h);
-    /* Inner rail */
     canvas_draw_frame(canvas, (uint8_t)(x + 1), (uint8_t)(y + 1), (uint8_t)(w - 2), (uint8_t)(h - 2));
-    /* 16 segments with 1px gaps */
-    const uint8_t segs = 16;
-    uint8_t inner_w = (uint8_t)(w - 4);
-    uint8_t lit = 0;
-    if(inner_w > 0 && fill_px > 0) {
-        lit = (uint8_t)(((uint16_t)fill_px * segs + (inner_w / 2U)) / inner_w);
-        if(lit > segs) lit = segs;
-    }
-    uint8_t seg_w = (uint8_t)(inner_w / segs);
-    if(seg_w < 2) seg_w = 2;
-    for(uint8_t i = 0; i < segs; i++) {
-        uint8_t sx = (uint8_t)(x + 2 + i * seg_w);
-        if(sx + seg_w - 1U >= x + w - 2U) break;
-        if(i < lit) {
-            bool hot = i >= (segs * 3U) / 4U;
-            /* Top quartile flickers for "overdrive" look when hot. */
-            if(!hot || ((phase + i) & 1U) != 0) {
-                canvas_draw_box(
-                    canvas, sx, (uint8_t)(y + 3), (uint8_t)(seg_w - 1), (uint8_t)(h - 6));
-            } else {
-                canvas_draw_frame(
-                    canvas, sx, (uint8_t)(y + 3), (uint8_t)(seg_w - 1), (uint8_t)(h - 6));
-            }
-        } else {
-            canvas_draw_dot(canvas, (uint8_t)(sx + (seg_w / 2U)), (uint8_t)(y + h / 2U));
+    uint8_t inner_w = (uint8_t)(w > 4 ? w - 4 : 0);
+    uint8_t inner_h = (uint8_t)(h > 4 ? h - 4 : 0);
+    uint8_t fill = fill_px;
+    if(fill > inner_w) fill = inner_w;
+    if(fill > 0 && inner_h > 0) {
+        canvas_draw_box(canvas, (uint8_t)(x + 2), (uint8_t)(y + 2), fill, inner_h);
+        /* Hot tip blink when near full */
+        if(fill > (inner_w * 3U) / 4U && ((phase & 1U) != 0) && fill >= 2) {
+            canvas_set_color(canvas, ColorWhite);
+            canvas_draw_box(
+                canvas, (uint8_t)(x + 2 + fill - 2), (uint8_t)(y + 2), 2, inner_h);
+            canvas_set_color(canvas, ColorBlack);
         }
     }
-    /* Quarter tick marks on outer frame */
+    /* Quarter tick marks */
     for(uint8_t q = 1; q < 4; q++) {
         uint8_t tx = (uint8_t)(x + (w * q) / 4U);
         canvas_draw_line(canvas, tx, y, tx, (uint8_t)(y + 2));
@@ -2605,9 +2594,13 @@ static void draw_proximity_analyzer(
         uint8_t fill = an ? room_sweep_analyzer_bar_height(an->live_rssi, 118) : 0;
         draw_segmented_meter(canvas, 3, 30, 122, 14, fill, phase);
 
-        /* Trend on its own row under meter */
+        /* Trend / stale on its own row under meter */
         canvas_set_font(canvas, FontKeyboard);
-        if(closer) {
+        if(app && app->analyzer_source_dead) {
+            canvas_draw_str(canvas, 4, 53, "LOST 0%");
+        } else if(app && app->analyzer_source_stale) {
+            canvas_draw_str(canvas, 4, 53, "STALE fade");
+        } else if(closer) {
             if(blink) {
                 canvas_draw_box(canvas, 2, 46, 60, 9);
                 canvas_set_color(canvas, ColorWhite);
@@ -2619,8 +2612,10 @@ static void draw_proximity_analyzer(
         } else {
             canvas_draw_str(canvas, 4, 53, "= STABLE");
         }
-        snprintf(buf, sizeof(buf), "%u%%", (unsigned)pct);
-        canvas_draw_str(canvas, 90, 53, buf);
+        if(!(app && app->analyzer_source_dead)) {
+            snprintf(buf, sizeof(buf), "%u%%", (unsigned)pct);
+            canvas_draw_str(canvas, 90, 53, buf);
+        }
 
         /* Mini sparkline only (no second spectrum) */
         if(an && an->hist_count > 2) {
@@ -2694,51 +2689,105 @@ static void analyzer_feed_tick(App* app) {
 
     switch(app->mode) {
     case SweepModeRF: {
+        /* RF thread refreshes peak continuously; no sticky lock RSSI for meter. */
         int rssi = (int)app->peak_rssi;
-        if(app->target_kind == TargetRF && app->target_rssi > -127) {
-            rssi = (int)app->target_rssi;
+        if(app->target_kind == TargetRF && app->target_freq_hz > 0) {
+            for(uint8_t ch = 0; ch < RF_NUM_CHANNELS; ch++) {
+                if(rf_channels[ch] == app->target_freq_hz) {
+                    rssi = (int)app->rssi[ch];
+                    break;
+                }
+            }
         }
+        app->analyzer_source_stale = false;
+        app->analyzer_source_dead = (rssi <= ROOM_SWEEP_ANALYZER_FLOOR_DBM);
         room_sweep_analyzer_push(&app->analyzer_rf, rssi);
         break;
     }
     case SweepModeWifi: {
-        int rssi = -120;
+        /* Meter live table RSSI for selected/locked identity; age-out when silent. */
+        int raw = -127;
+        uint32_t last_seen = 0;
+        bool found = false;
         furi_mutex_acquire(app->mutex, FuriWaitForever);
-        if(app->target_kind == TargetWifi && app->target_rssi > -127) {
-            rssi = (int)app->target_rssi;
-        } else if(app->wifi_count > 0) {
+        if(app->target_kind == TargetWifi && app->target_id[0]) {
+            for(uint8_t i = 0; i < MAX_WIFI_APS; i++) {
+                if(!app->wifi_aps[i].valid) continue;
+                if(strcmp(app->target_id, app->wifi_aps[i].ssid) == 0 ||
+                   (app->wifi_aps[i].bssid[0] &&
+                    strcmp(app->target_id, app->wifi_aps[i].bssid) == 0)) {
+                    raw = (int)app->wifi_aps[i].rssi;
+                    last_seen = app->wifi_aps[i].last_seen;
+                    found = true;
+                    /* Keep lock display in sync with live row (identity only lock). */
+                    app->target_rssi = app->wifi_aps[i].rssi;
+                    break;
+                }
+            }
+        }
+        if(!found && app->wifi_count > 0) {
             uint8_t sel = app->wifi_scroll < app->wifi_count ? app->wifi_scroll : 0;
-            rssi = (int)app->wifi_aps[sel].rssi;
-        } else if(app->wifi_strongest > -127) {
-            rssi = (int)app->wifi_strongest;
+            raw = (int)app->wifi_aps[sel].rssi;
+            last_seen = app->wifi_aps[sel].last_seen;
+            found = app->wifi_aps[sel].valid;
         }
         furi_mutex_release(app->mutex);
+        uint32_t age = found && last_seen > 0 ? (now - last_seen) : ROOM_SWEEP_ANALYZER_DEAD_MS;
+        int rssi = found ? room_sweep_analyzer_aged_rssi(raw, age) : -127;
+        app->analyzer_source_stale = found && room_sweep_analyzer_is_stale(age);
+        app->analyzer_source_dead = !found || room_sweep_analyzer_is_dead(age);
         room_sweep_analyzer_push(&app->analyzer_wifi, rssi);
         break;
     }
     case SweepModeBle: {
-        int rssi = -120;
+        int raw = -127;
+        uint32_t last_seen = 0;
+        bool found = false;
         furi_mutex_acquire(app->mutex, FuriWaitForever);
-        if(app->target_kind == TargetBle && app->target_rssi > -127) {
-            rssi = (int)app->target_rssi;
-        } else if(app->ble_count > 0) {
+        if(app->target_kind == TargetBle && app->target_id[0]) {
+            for(uint8_t i = 0; i < MAX_BLE_DEVS; i++) {
+                if(!app->ble_devs[i].valid) continue;
+                if(strcmp(app->target_id, app->ble_devs[i].name) == 0 ||
+                   (app->ble_devs[i].mac[0] &&
+                    strcmp(app->target_id, app->ble_devs[i].mac) == 0)) {
+                    raw = (int)app->ble_devs[i].rssi;
+                    last_seen = app->ble_devs[i].last_seen;
+                    found = true;
+                    app->target_rssi = app->ble_devs[i].rssi;
+                    break;
+                }
+            }
+        }
+        if(!found && app->ble_count > 0) {
             uint8_t sel = app->ble_scroll < app->ble_count ? app->ble_scroll : 0;
-            rssi = (int)app->ble_devs[sel].rssi;
-        } else if(app->ble_strongest > -127) {
-            rssi = (int)app->ble_strongest;
+            raw = (int)app->ble_devs[sel].rssi;
+            last_seen = app->ble_devs[sel].last_seen;
+            found = app->ble_devs[sel].valid;
         }
         furi_mutex_release(app->mutex);
+        uint32_t age = found && last_seen > 0 ? (now - last_seen) : ROOM_SWEEP_ANALYZER_DEAD_MS;
+        int rssi = found ? room_sweep_analyzer_aged_rssi(raw, age) : -127;
+        app->analyzer_source_stale = found && room_sweep_analyzer_is_stale(age);
+        app->analyzer_source_dead = !found || room_sweep_analyzer_is_dead(age);
         room_sweep_analyzer_push(&app->analyzer_ble, rssi);
         break;
     }
     case SweepModeNrf24: {
-        int rssi = -120;
+        int rssi = -127;
         if(app->nrf24.phase == RoomSweepNrf24Scanning) {
             uint8_t hit = app->nrf24.hits[app->nrf24.channel];
             rssi = room_sweep_analyzer_activity_to_rssi(hit > 0 ? (uint8_t)(hit * 40) : 0);
-        } else if(app->nrf24.top_hits[0] > 0) {
+            app->analyzer_source_stale = false;
+            app->analyzer_source_dead = (hit == 0);
+        } else if(app->nrf24.phase == RoomSweepNrf24Done && app->nrf24.top_hits[0] > 0) {
+            /* Done pass: hold top briefly then dead so meter can fall. */
             rssi = room_sweep_analyzer_activity_to_rssi(
                 app->nrf24.top_hits[0] > 6 ? 255 : (uint8_t)(app->nrf24.top_hits[0] * 40));
+            app->analyzer_source_stale = true;
+            app->analyzer_source_dead = false;
+        } else {
+            app->analyzer_source_stale = false;
+            app->analyzer_source_dead = true;
         }
         room_sweep_analyzer_push(&app->analyzer_nrf, rssi);
         break;
@@ -2765,9 +2814,12 @@ static void toggle_analyzer_view(App* app) {
             break;
         case SweepModeWifi:
             room_sweep_analyzer_reset(&app->analyzer_wifi);
+            /* Kick a scan so the meter has live beacons while hunting. */
+            if(app->serial) marauder_start_for_mode(app);
             break;
         case SweepModeBle:
             room_sweep_analyzer_reset(&app->analyzer_ble);
+            if(app->serial) marauder_start_for_mode(app);
             break;
         case SweepModeNrf24:
             room_sweep_analyzer_reset(&app->analyzer_nrf);
@@ -2776,6 +2828,8 @@ static void toggle_analyzer_view(App* app) {
             break;
         }
         app->analyzer_last_push_tick = 0;
+        app->analyzer_source_stale = false;
+        app->analyzer_source_dead = true;
     }
     /* Always pulse so the operator knows Long-Left registered (sound may be off). */
     notification_message(app->notif, &seq_test_beep);
@@ -4335,6 +4389,8 @@ int32_t room_sweep_app(void* p) {
     room_sweep_analyzer_init(&app->analyzer_ble);
     room_sweep_analyzer_init(&app->analyzer_nrf);
     app->analyzer_last_push_tick = 0;
+    app->analyzer_source_stale = false;
+    app->analyzer_source_dead = true;
     app->wifi_ui_page = 0;
     app->ble_ui_page = 0;
 
@@ -4455,8 +4511,9 @@ int32_t room_sweep_app(void* p) {
 
             if(app->serial && (app->mode == SweepModeWifi || app->mode == SweepModeBle)) {
                 uint32_t now = furi_get_tick();
-                /* A bounded window completes regardless of result count. */
-                if(app->marauder_state == MarauderScanning &&
+                /* Analyzer needs continuous samples: do not stop the window while open. */
+                bool keep_alive = app->analyzer_view;
+                if(!keep_alive && app->marauder_state == MarauderScanning &&
                    (uint32_t)(now - app->last_rescan_tick) >=
                        room_sweep_scan_timeout_ms(app->scan_timeout_idx)) {
                     marauder_stop_scan(app);
@@ -4483,11 +4540,15 @@ int32_t room_sweep_app(void* p) {
                         0,
                         scan_detail);
                 }
-                if(app->auto_rescan &&
+                /* While analyzer is open, restart immediately if scan is not running. */
+                uint32_t rescan_gap = keep_alive ? 500U : RESCAN_INTERVAL_MS;
+                bool want_rescan =
+                    keep_alive || app->auto_rescan;
+                if(want_rescan &&
                    (app->marauder_state == MarauderIdle ||
                     app->marauder_state == MarauderError ||
                     app->marauder_state == MarauderDone) &&
-                   now - app->last_rescan_tick >= RESCAN_INTERVAL_MS) {
+                   now - app->last_rescan_tick >= rescan_gap) {
                     marauder_start_scan(
                         app,
                         app->mode == SweepModeWifi ? MARAUDER_CMD_WIFI : MARAUDER_CMD_BLE,
