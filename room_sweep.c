@@ -2484,101 +2484,224 @@ feedback_sound:
 }
 
 /* ================================================================== */
-/* Visual analyzer / proximity meter (shared across scanners)          */
-/* Long Left toggles; history shows closer vs farther at a glance.     */
+/* Visual analyzer / proximity meter — dense monochrome HUD            */
+/* Long Left toggles; history + segments + scan-line for hunt feedback */
 /* ================================================================== */
+static void draw_hud_bracket(
+    Canvas* canvas,
+    uint8_t x,
+    uint8_t y,
+    uint8_t w,
+    uint8_t h,
+    uint8_t arm) {
+    /* Four corner ticks — tactical frame without full box clutter. */
+    canvas_draw_line(canvas, x, y, (uint8_t)(x + arm), y);
+    canvas_draw_line(canvas, x, y, x, (uint8_t)(y + arm));
+    canvas_draw_line(canvas, (uint8_t)(x + w - 1), y, (uint8_t)(x + w - 1 - arm), y);
+    canvas_draw_line(canvas, (uint8_t)(x + w - 1), y, (uint8_t)(x + w - 1), (uint8_t)(y + arm));
+    canvas_draw_line(canvas, x, (uint8_t)(y + h - 1), (uint8_t)(x + arm), (uint8_t)(y + h - 1));
+    canvas_draw_line(canvas, x, (uint8_t)(y + h - 1), x, (uint8_t)(y + h - 1 - arm));
+    canvas_draw_line(
+        canvas,
+        (uint8_t)(x + w - 1),
+        (uint8_t)(y + h - 1),
+        (uint8_t)(x + w - 1 - arm),
+        (uint8_t)(y + h - 1));
+    canvas_draw_line(
+        canvas,
+        (uint8_t)(x + w - 1),
+        (uint8_t)(y + h - 1),
+        (uint8_t)(x + w - 1),
+        (uint8_t)(y + h - 1 - arm));
+}
+
+static void draw_segmented_meter(
+    Canvas* canvas,
+    uint8_t x,
+    uint8_t y,
+    uint8_t w,
+    uint8_t h,
+    uint8_t fill_px,
+    uint8_t phase) {
+    canvas_draw_frame(canvas, x, y, w, h);
+    /* Inner rail */
+    canvas_draw_frame(canvas, (uint8_t)(x + 1), (uint8_t)(y + 1), (uint8_t)(w - 2), (uint8_t)(h - 2));
+    /* 16 segments with 1px gaps */
+    const uint8_t segs = 16;
+    uint8_t inner_w = (uint8_t)(w - 4);
+    uint8_t lit = 0;
+    if(inner_w > 0 && fill_px > 0) {
+        lit = (uint8_t)(((uint16_t)fill_px * segs + (inner_w / 2U)) / inner_w);
+        if(lit > segs) lit = segs;
+    }
+    uint8_t seg_w = (uint8_t)(inner_w / segs);
+    if(seg_w < 2) seg_w = 2;
+    for(uint8_t i = 0; i < segs; i++) {
+        uint8_t sx = (uint8_t)(x + 2 + i * seg_w);
+        if(sx + seg_w - 1U >= x + w - 2U) break;
+        if(i < lit) {
+            bool hot = i >= (segs * 3U) / 4U;
+            /* Top quartile flickers for "overdrive" look when hot. */
+            if(!hot || ((phase + i) & 1U) != 0) {
+                canvas_draw_box(
+                    canvas, sx, (uint8_t)(y + 3), (uint8_t)(seg_w - 1), (uint8_t)(h - 6));
+            } else {
+                canvas_draw_frame(
+                    canvas, sx, (uint8_t)(y + 3), (uint8_t)(seg_w - 1), (uint8_t)(h - 6));
+            }
+        } else {
+            canvas_draw_dot(canvas, (uint8_t)(sx + (seg_w / 2U)), (uint8_t)(y + h / 2U));
+        }
+    }
+    /* Quarter tick marks on outer frame */
+    for(uint8_t q = 1; q < 4; q++) {
+        uint8_t tx = (uint8_t)(x + (w * q) / 4U);
+        canvas_draw_line(canvas, tx, y, tx, (uint8_t)(y + 2));
+        canvas_draw_line(canvas, tx, (uint8_t)(y + h - 1), tx, (uint8_t)(y + h - 3));
+    }
+}
+
 static void draw_proximity_analyzer(
     Canvas* canvas,
+    App* app,
     const char* title,
     const char* source_line,
     const RoomSweepAnalyzerState* an,
     const int8_t* spectrum,
     uint8_t spectrum_count) {
-    canvas_set_font(canvas, FontSecondary);
-    canvas_draw_str(canvas, 1, 10, title ? title : "AN");
+    uint8_t phase = app ? (uint8_t)(app->tick_count & 0xFFU) : 0;
+    bool blink = app && ((app->tick_count / 4U) & 1U);
+    char buf[28];
 
-    char buf[24];
-    if(an) {
-        snprintf(buf, sizeof(buf), "%ddBm", (int)an->live_rssi);
-        uint16_t w = canvas_string_width(canvas, buf);
-        canvas_draw_str(canvas, 127 - (int)w, 10, buf);
+    /* Outer tactical frame (content under tab strip ~y4) */
+    draw_hud_bracket(canvas, 0, 4, 128, 59, 5);
+
+    /* Top status strip — inverted when signal is hot */
+    uint8_t pct = an ? room_sweep_analyzer_level_pct(an->live_rssi) : 0;
+    bool hot = an && pct >= 70;
+    bool closer = an && an->trend == RoomSweepAnalyzerTrendCloser;
+    if(hot && blink) {
+        canvas_draw_box(canvas, 2, 5, 124, 9);
+        canvas_set_color(canvas, ColorWhite);
     }
+    canvas_set_font(canvas, FontKeyboard);
+    snprintf(
+        buf,
+        sizeof(buf),
+        "[%s]",
+        title ? title : "AN");
+    canvas_draw_str(canvas, 3, 12, buf);
+    if(an) {
+        snprintf(buf, sizeof(buf), "%+03d", (int)an->live_rssi);
+        canvas_draw_str(canvas, 52, 12, buf);
+        snprintf(buf, sizeof(buf), "%02u", (unsigned)pct);
+        canvas_draw_str(canvas, 88, 12, buf);
+        canvas_draw_str(canvas, 104, 12, "PCT");
+    }
+    if(hot && blink) canvas_set_color(canvas, ColorBlack);
 
+    /* Source / target line with chevrons */
     canvas_set_font(canvas, FontKeyboard);
     if(source_line && source_line[0]) {
-        canvas_draw_str(canvas, 1, 18, source_line);
+        snprintf(buf, sizeof(buf), ">>%s", source_line);
+        buf[22] = '\0';
+        canvas_draw_str(canvas, 3, 20, buf);
+    } else {
+        canvas_draw_str(canvas, 3, 20, ">>SCAN");
     }
 
-    /* Giant proximity bar (y 20..40) */
-    const uint8_t bar_x = 2, bar_y = 22, bar_w = 124, bar_h = 16;
-    canvas_draw_frame(canvas, bar_x, bar_y, bar_w, bar_h);
-    uint8_t fill = an ? room_sweep_analyzer_bar_height(an->live_rssi, (uint8_t)(bar_w - 2)) : 0;
-    if(fill > 0) {
-        canvas_draw_box(canvas, bar_x + 1, bar_y + 1, fill, (uint8_t)(bar_h - 2));
-    }
-    /* Percent + trend overlaid when strong enough to invert */
+    /* Trend badge (right of source) */
     if(an) {
-        uint8_t pct = room_sweep_analyzer_level_pct(an->live_rssi);
-        snprintf(
-            buf,
-            sizeof(buf),
-            "%u%% %s %s",
-            (unsigned)pct,
-            room_sweep_analyzer_trend_arrow(an->trend),
-            room_sweep_analyzer_trend_text(an->trend));
-        if(fill > 60) {
+        const char* tr = room_sweep_analyzer_trend_text(an->trend);
+        if(closer && blink) {
+            uint16_t tw = canvas_string_width(canvas, tr);
+            canvas_draw_box(canvas, (uint8_t)(126 - tw - 4), 14, (uint8_t)(tw + 3), 8);
             canvas_set_color(canvas, ColorWhite);
-            canvas_draw_str(canvas, bar_x + 4, bar_y + 12, buf);
+            canvas_draw_str(canvas, (uint8_t)(126 - tw - 2), 20, tr);
             canvas_set_color(canvas, ColorBlack);
         } else {
-            canvas_draw_str(canvas, bar_x + 4, bar_y + 12, buf);
+            uint16_t tw = canvas_string_width(canvas, tr);
+            canvas_draw_str(canvas, (uint8_t)(126 - tw), 20, tr);
         }
     }
 
-    /* Sparkline history (newest right) y 42..54 */
-    const uint8_t spark_y0 = 54;
-    const uint8_t spark_h = 12;
-    if(an && an->hist_count > 1) {
-        uint8_t n = an->hist_count;
-        if(n > 64) n = 64;
-        for(uint8_t i = 0; i < n; i++) {
-            /* age: oldest left → newest right */
-            uint8_t age = (uint8_t)(n - 1U - i);
-            int8_t r = room_sweep_analyzer_history_at(an, age);
-            uint8_t h = room_sweep_analyzer_bar_height(r, spark_h);
-            uint8_t x = (uint8_t)(2U + (i * 124U) / n);
+    /* Segmented proximity rail */
+    uint8_t fill = an ? room_sweep_analyzer_bar_height(an->live_rssi, 120) : 0;
+    draw_segmented_meter(canvas, 3, 22, 122, 12, fill, phase);
+
+    /* Spectrum field with scan sweep line */
+    const uint8_t spec_y0 = 36;
+    const uint8_t spec_h = 10;
+    canvas_draw_frame(canvas, 3, (uint8_t)(spec_y0 - 1), 122, (uint8_t)(spec_h + 2));
+    if(spectrum && spectrum_count > 0) {
+        uint8_t max_bars = spectrum_count > 48 ? 48 : spectrum_count;
+        uint8_t bw = 2;
+        uint8_t gap = 1;
+        if(max_bars * (bw + gap) > 118) {
+            bw = 1;
+            gap = 1;
+        }
+        for(uint8_t i = 0; i < max_bars; i++) {
+            uint8_t h = room_sweep_analyzer_bar_height(spectrum[i], spec_h);
+            uint8_t x = (uint8_t)(5U + i * (bw + gap));
+            if(x >= 123) break;
             if(h == 0) {
-                canvas_draw_dot(canvas, x, spark_y0);
+                canvas_draw_dot(canvas, x, (uint8_t)(spec_y0 + spec_h - 1));
             } else {
-                canvas_draw_line(canvas, x, spark_y0, x, (uint8_t)(spark_y0 - h));
+                canvas_draw_box(canvas, x, (uint8_t)(spec_y0 + spec_h - h), bw, h);
             }
         }
+        /* Animated scan cursor */
+        uint8_t scan_x = (uint8_t)(5U + ((phase * 3U) % 116U));
+        canvas_draw_line(canvas, scan_x, spec_y0, scan_x, (uint8_t)(spec_y0 + spec_h - 1));
+        canvas_draw_box(canvas, (uint8_t)(scan_x > 0 ? scan_x - 1 : scan_x), (uint8_t)(spec_y0 - 2), 3, 2);
+    } else {
+        canvas_set_font(canvas, FontKeyboard);
+        canvas_draw_str(canvas, 40, 44, "NO SPECTRUM");
     }
 
-    /* Optional mini spectrum strip above footer */
-    if(spectrum && spectrum_count > 0) {
-        uint8_t max_bars = spectrum_count > 42 ? 42 : spectrum_count;
-        uint8_t gap = 1;
-        uint8_t bw = (uint8_t)((126U / max_bars) > 0 ? (126U / max_bars) : 1);
-        if(bw > 3) bw = 3;
-        for(uint8_t i = 0; i < max_bars; i++) {
-            uint8_t h = room_sweep_analyzer_bar_height(spectrum[i], 8);
-            uint8_t x = (uint8_t)(1U + i * (bw + gap));
-            if(h > 0) canvas_draw_box(canvas, x, (uint8_t)(41U - h), bw, h);
+    /* History waveform (newest right) */
+    const uint8_t wave_y0 = 55;
+    canvas_draw_line(canvas, 4, wave_y0, 124, wave_y0);
+    if(an && an->hist_count > 2) {
+        uint8_t n = an->hist_count;
+        if(n > 60) n = 60;
+        int8_t prev_h = -1;
+        for(uint8_t i = 0; i < n; i++) {
+            uint8_t age = (uint8_t)(n - 1U - i);
+            int8_t r = room_sweep_analyzer_history_at(an, age);
+            uint8_t h = room_sweep_analyzer_bar_height(r, 7);
+            uint8_t x = (uint8_t)(4U + (i * 120U) / n);
+            if(prev_h >= 0) {
+                canvas_draw_line(
+                    canvas,
+                    (uint8_t)(x > 1 ? x - (120U / n) : x),
+                    (uint8_t)(wave_y0 - (uint8_t)prev_h),
+                    x,
+                    (uint8_t)(wave_y0 - h));
+            }
+            canvas_draw_dot(canvas, x, (uint8_t)(wave_y0 - h));
+            prev_h = (int8_t)h;
         }
     }
 
+    /* Footer strip */
     canvas_set_font(canvas, FontKeyboard);
+    canvas_draw_box(canvas, 0, 57, 128, 7);
+    canvas_set_color(canvas, ColorWhite);
     if(an) {
         snprintf(
             buf,
             sizeof(buf),
-            "pk %d  HoldL=list",
-            (int)an->peak_rssi);
-        canvas_draw_str(canvas, 1, 63, buf);
+            "PK%+d %s HoldL:LIST",
+            (int)an->peak_rssi,
+            an->has_signal ? (closer ? "TRK" : "LIVE") : "----");
+        canvas_draw_str(canvas, 2, 63, buf);
+        if(blink && pct > 40) canvas_draw_box(canvas, 122, 58, 4, 5);
     } else {
-        canvas_draw_str(canvas, 1, 63, "HoldL=list");
+        canvas_draw_str(canvas, 2, 63, "HoldL:LIST");
     }
+    canvas_set_color(canvas, ColorBlack);
 }
 
 static void analyzer_feed_tick(App* app) {
@@ -2780,7 +2903,7 @@ static void draw_scanner_analyzer(Canvas* canvas, App* app) {
     }
 
     draw_proximity_analyzer(
-        canvas, title, source, an, spectrum_n > 0 ? spectrum : NULL, spectrum_n);
+        canvas, app, title, source, an, spectrum_n > 0 ? spectrum : NULL, spectrum_n);
 }
 
 /* ================================================================== */
