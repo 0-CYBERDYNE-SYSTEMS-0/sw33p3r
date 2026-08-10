@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Room Sweep — Control Map</title>
+  <style>
+    :root {
+      --bg: #0d1110;
+      --fg: #c8f5c0;
+      --dim: #6a9a68;
+      --box: #1a2420;
+      --line: #3d5c3a;
+      --hi: #7dff6a;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      background: var(--bg);
+      color: var(--fg);
+      padding: 28px 32px 40px;
+    }
+    h1 {
+      margin: 0 0 4px;
+      font-size: 28px;
+      letter-spacing: 0.08em;
+      color: var(--hi);
+    }
+    .sub { color: var(--dim); font-size: 13px; margin-bottom: 22px; }
+    .tabs {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 22px;
+      flex-wrap: wrap;
+    }
+    .tab {
+      border: 1px solid var(--line);
+      padding: 6px 14px;
+      border-radius: 4px;
+      font-size: 13px;
+    }
+    .tab.on { background: var(--hi); color: #0a120a; font-weight: 700; }
+    .grid {
+      display: grid;
+      grid-template-columns: 1.1fr 1fr;
+      gap: 18px;
+    }
+    .card {
+      background: var(--box);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px 16px;
+    }
+    .card h2 {
+      margin: 0 0 10px;
+      font-size: 14px;
+      color: var(--hi);
+      letter-spacing: 0.06em;
+    }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    th, td {
+      text-align: left;
+      padding: 5px 6px;
+      border-bottom: 1px solid #24332a;
+      vertical-align: top;
+    }
+    th { color: var(--dim); font-weight: 600; }
+    .keys {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      font-size: 12px;
+    }
+    .key {
+      border: 1px dashed var(--line);
+      border-radius: 6px;
+      padding: 8px;
+    }
+    .key b { color: var(--hi); display: block; margin-bottom: 4px; }
+    .foot {
+      margin-top: 18px;
+      font-size: 11px;
+      color: var(--dim);
+      line-height: 1.45;
+    }
+    code { color: #9fe89a; }
+  </style>
+</head>
+<body>
+  <h1>ROOM SWEEP</h1>
+  <div class="sub">Flipper Zero FAP · Momentum mntm-012 · API 87.1 · receive survey + bounded TX only</div>
+
+  <div class="tabs">
+    <div class="tab on">RF</div>
+    <div class="tab">Wi</div>
+    <div class="tab">BT</div>
+    <div class="tab">nR</div>
+    <div class="tab">GP</div>
+    <div class="tab">TX</div>
+    <div class="tab">i</div>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>GLOBAL INPUTS</h2>
+      <div class="keys">
+        <div class="key"><b>Short ◀ / ▶</b>Change tab</div>
+        <div class="key"><b>Hold ◀</b>Analyzer on/off (RF Wi BT nR)</div>
+        <div class="key"><b>Hold ▶</b>Page inside mode / analyzer</div>
+        <div class="key"><b>▲ / ▼</b>Select / RF sub-mode / pages</div>
+        <div class="key"><b>OK</b>Primary action</div>
+        <div class="key"><b>Hold OK</b>Lock · or TX when armed</div>
+        <div class="key"><b>Back</b>Settings / disarm TX</div>
+        <div class="key"><b>Hold Back</b>Exit app</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>HOLD ▶ PAGES (NON-TX)</h2>
+      <table>
+        <tr><th>Mode</th><th>Pages</th></tr>
+        <tr><td>RF</td><td>Map (Survey/Sweep/Peak) · Lock card · Sweep map: band step</td></tr>
+        <tr><td>Wi / BT</td><td>Detail · List · Help</td></tr>
+        <tr><td>nR</td><td>Status · Results</td></tr>
+        <tr><td>Analyzer</td><td>Hunt (fat meter) · Field (bars)</td></tr>
+        <tr><td>GPS</td><td>Summary · Detail</td></tr>
+        <tr><td>Info</td><td>Status · Keys · Files · Limits</td></tr>
+        <tr><td>TX</td><td>No pages (safety)</td></tr>
+      </table>
+    </div>
+
+    <div class="card">
+      <h2>ANALYZER METER (Wi / BT)</h2>
+      <table>
+        <tr><td>Source</td><td>Selected or locked row live RSSI</td></tr>
+        <tr><td>&lt;2 s</td><td>Fresh live</td></tr>
+        <tr><td>2–6 s</td><td>STALE fade</td></tr>
+        <tr><td>≥6 s</td><td>LOST empty (0%)</td></tr>
+        <tr><td>Scan</td><td>Kept alive while analyzer open</td></tr>
+      </table>
+    </div>
+
+    <div class="card">
+      <h2>SESSION + FULLSWEEP</h2>
+      <table>
+        <tr><td>Path</td><td><code>/ext/apps_data/room_sweep/</code></td></tr>
+        <tr><td>Files</td><td><code>session-N.csv</code> · <code>report-N.txt</code> · <code>uart-N.txt</code></td></tr>
+        <tr><td>FullSweep</td><td>RF → Wi → BT → nR → GPS · hard timeouts · auto-save · SWEEP DONE</td></tr>
+        <tr><td>Build</td><td><code>./init.sh</code> · <code>ufbt launch</code></td></tr>
+      </table>
+    </div>
+  </div>
+
+  <div class="foot">
+    RSSI is not distance. Beacon/ad is not telemetry or intent. No observation is not proof of absence.
+    TX is a bounded carrier test only — no jam, deauth, or replay. ScanWin lives in Settings, not Hold R.
+    Source of truth: README.md · USER_GUIDE.md · MISSION.md · this map (exact strings).
+  </div>
+</body>
+</html>
