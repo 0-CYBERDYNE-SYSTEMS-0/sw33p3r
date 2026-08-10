@@ -1,22 +1,24 @@
-# PROMPT.md — Room Sweep field-fix fix loop
+# PROMPT.md — Full-sweep expansion (detect-only)
 
 ## Stack (read every iteration, this order)
 1. `progress.log` (tail)
-2. `fix_plan.md` (top unchecked item only)
+2. `features.json` (first `passes: false` only)
 3. Matching file under `specs/`
-4. `FLIPPER_PITFALLS.md` before any NotificationSequence / input / UART change
-5. `room_sweep.c` / `room_sweep.h` / `nmea.c` as needed
+4. `MISSION.md` + `FLIPPER_PITFALLS.md` before radio/UART/notification changes
+5. `docs/BFFB_MOMENTUM.md` before BFFB/nRF24 assumptions
+6. Header-only state files first; `room_sweep.c` is wiring only
 
 ## Rules
-- **One item per iteration.** Mark done only after scoped verification.
+- **One feature per iteration.** Flip `passes` only after scoped host verify (and ufbt for wiring).
 - **Search before building.** Do not assume missing code.
-- Host tests: `./init.sh` must pass before device deploy.
-- Device serial: `/dev/cu.usbmodemflip_XXXX01` @ 115200.
-- No mock data. Prefer Just Call Me Koko Marauder CLI facts.
+- **Detect-only.** No jam, block, deauth, flood, mousejack, or continuous deny-service TX.
+- Host gate: `./init.sh` must pass before device deploy.
 - Commits after each successful item. No Claude/Anthropic co-author trailers.
+- Restore point: tag/branch `restore/pre-full-sweep-2026-08-09`.
 
 ## Stop when
-`fix_plan.md` NEXT section has no open `[ ]` items for this mission, or budget exhausted.
+All `features.json` entries have `passes: true`, or budget exhausted.
 
 ## Mission focus
-BLE sniff ERR, GPS full use (stream + distance), per-tab LED/sound/vibro.
+Room Report (human-readable) + full-sweep sequencer + nRF24 RX survey +
+internal CC1101 while BFFB SPI is nRF24. Coverage checklist in the report.

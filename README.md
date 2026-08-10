@@ -1,54 +1,129 @@
 # Room Sweep
 
-Room Sweep is a Flipper Zero external app for receive-side RF surveying,
-WiFi/BLE scan control through an attached UART device, passive GPS display, and
-a safety-gated TX control tab.
+Receive-side RF / wireless **room survey** app for Flipper Zero (external FAP,
+appid `room_sweep`). Target firmware: **Momentum mntm-012**, API **87.1**,
+target **7**.
 
-## Current controls
+**Mission constraint:** survey and optional **bounded carrier TX test** only.
+No jamming, blocking, deauth, capture/replay, or flood modes.
 
-- Six tabs: RF Survey/Sweep/Peak, WiFi, BLE, GPS, TX, and Info.
-- Short Left/Right changes tabs. Up/Down browses the current tab: RF modes,
-  WiFi/BLE results, GPS/Info pages, or armed TX presets.
-- Short OK performs the ordinary action; Long OK locks a qualified result or
-  confirms an already armed TX request.
-- Short Back opens Settings, closes Settings, or disarms TX.
-- Long Back exits the app from every context.
-- Sound and vibration are Settings items only.
-- TX requires short-OK arming followed by long-OK confirmation. Do not transmit
-  unless you have authorization and intend to do so.
+## Control map
+
+Quick visual of tabs, buttons, Hold-R pages, analyzer, and session files:
+
+![Room Sweep control map](docs/room_sweep_control_map.jpg)
+
+Exact-label HTML map (open in a browser for crisp text):
+
+- [`docs/room_sweep_control_map.html`](docs/room_sweep_control_map.html)
+- Image asset: [`docs/room_sweep_control_map.jpg`](docs/room_sweep_control_map.jpg)
+
+Full operator detail: [`USER_GUIDE.md`](USER_GUIDE.md) · scope: [`MISSION.md`](MISSION.md).
+
+## Hardware
+
+| Path | Role |
+|------|------|
+| Internal or BFFB external **CC1101** | Sub-GHz survey / optional TX |
+| BFFB **ESP32 Marauder** (USART 13/14 @ 115200) | Wi-Fi beacons, BLE sniff, GPS fallback |
+| BFFB **nRF24** (SPI; bottom switch) | 2.4 GHz RPD channel activity (RX only) |
+| GPIO **LPUART 15/16** | Preferred NMEA GPS when configured |
+
+Bottom SPI switch: **up = CC1101**, **down = nRF24**. Settings **SPI Path**
+forces internal CC1101 when nRF24 is selected.
+
+## Tabs (7)
+
+`RF` · `Wi` · `BT` · `nR` · `GP` · `TX` · `i`
+
+| Tab | Purpose |
+|-----|---------|
+| **RF** | Survey (16 presets) / band Sweep / Peak refine |
+| **Wi** | Marauder `sniffbeacon` AP list + analyzer |
+| **BT** | Marauder `sniffbt` device list + analyzer |
+| **nR** | nRF24 RPD survey (detect only) + analyzer |
+| **GP** | GPS fix / sats / mark distance |
+| **TX** | Safety-gated arm → long-OK bounded carrier |
+| **i** | Status, keys, files, limits |
+
+## Controls (current)
+
+| Input | Meaning |
+|-------|---------|
+| **Short ◀/▶** | Previous / next tab |
+| **Hold ◀** | Analyzer on/off (RF, Wi, BT, nR) |
+| **Hold ▶** | **Page inside mode** (see below) |
+| **▲/▼** | Browse selection or RF sub-mode / GPS-Info pages |
+| **OK** | Primary action (scan, start sweep, arm TX, …) |
+| **Hold OK** | Lock target (or confirm TX when armed) |
+| **Back** | Settings (or disarm TX) |
+| **Hold Back** | Exit app |
+
+### Hold ▶ pages by mode
+
+| Mode | Pages |
+|------|--------|
+| **RF** | Survey/Peak: map ↔ lock card. Sweep (idle map): band step |
+| **Wi / BT** | Detail → List → Help → … |
+| **nR** | Status ↔ Results |
+| **Analyzer** (after Hold L) | Hunt (fat meter) ↔ Field (peer/spectrum bars) |
+| **GPS** | Summary ↔ Detail (also ▲/▼) |
+| **Info** | Status → Keys → Files → Limits (also ▲/▼) |
+| **TX** | No extra pages (safety-critical) |
+
+Scan window **15/30/60s** is **Settings → ScanWin** (not Hold R).
+
+### Analyzer metering (Wi/BT)
+
+- Fat bar follows **selected or locked row** live RSSI from the table.
+- Fresh beacons update the bar; after ~2s silence → **STALE fade**; by ~6s → **LOST 0%**.
+- While analyzer is open, Marauder scan is kept alive so samples continue.
+
+## Settings (groups)
+
+Feedback · Wireless · Radio · GPS · Session  
+
+Notable items: Sound, Vibro, Rescan, ScanWin, Record, ExtBand, **SPI Path**,
+GPS Src, GPS Log, Baseline, Raw Dump, TXDur, **FullSweep**.
+
+**FullSweep** runs RF → Wi-Fi → BLE → nRF24 → GPS with hard timeouts, writes
+session + report, shows **SWEEP DONE**.
 
 ## Session files
 
-Settings → Record creates a numbered session across every tab. Settings → Raw
-Dump separately captures a bounded raw UART snapshot. On the SD card, files are
-stored at:
+`/ext/apps_data/room_sweep/`
 
 ```text
-/ext/apps_data/room_sweep/session-N.csv
-/ext/apps_data/room_sweep/report-N.txt
-/ext/apps_data/room_sweep/uart-N.txt
+session-N.csv   # event log (privacy ordinals)
+report-N.txt    # plain-English Room Report
+uart-N.txt      # only if Raw Dump (may hold raw IDs/coords)
 ```
 
-Exact GPS coordinates are omitted unless `GPS in Log` is explicitly enabled.
-Persistent WiFi/BLE identifiers are replaced with per-session ordinals; the
-explicit raw UART dump may contain raw identifiers and coordinates. See
-[`USER_GUIDE.md`](USER_GUIDE.md) for the complete field list and evidence limits.
+GPS coordinates omitted unless **GPS Log** is ON.
 
-## Build and host checks
+## Build / test / deploy
 
 ```sh
-ufbt
-cc -std=c11 -Wall -Wextra -Werror -I. tests/test_nmea.c nmea.c -o /tmp/room_sweep_test_nmea
-/tmp/room_sweep_test_nmea
-cc -std=c11 -Wall -Wextra -Werror -I. tests/test_input_state.c -o /tmp/room_sweep_test_input_state
-/tmp/room_sweep_test_input_state
+./init.sh          # host tests (-Werror) + ufbt
+ufbt               # dist/room_sweep.fap
+ufbt launch        # upload + run (app must not already be running)
 python3 _verify_api.py
 ```
 
-Deploy the built FAP with `ufbt launch` when a Flipper is connected.
+## Limits (honest)
 
-Live BFFB result parsing, measured audio/haptic output, known-signal behavior,
-and deliberate RF field transmission require separate hardware/field checks.
-Passive WiFi/BLE observations cannot prove Internet telemetry, silent/offline
-recording, ownership, or intent. The TX handoff is a bounded carrier-frequency
-test, not capture/replay or blocking.
+- RSSI is **not** distance, identity, ownership, or intent.
+- Wi-Fi beacon ≠ Internet telemetry.
+- No observation ≠ proof of absence.
+- TX is a **bounded carrier** test, not replay or blocking.
+- nRF24 path is **RPD / activity**, not mousejack or jam.
+
+## Docs index
+
+| Doc | Use |
+|-----|-----|
+| [`USER_GUIDE.md`](USER_GUIDE.md) | Operator controls, tabs, analyzer, FullSweep |
+| [`MISSION.md`](MISSION.md) | Scope / legal / TX safety contract |
+| [`docs/BFFB_MOMENTUM.md`](docs/BFFB_MOMENTUM.md) | BFFB + Marauder + Momentum facts |
+| [`docs/room_sweep_control_map.html`](docs/room_sweep_control_map.html) | Exact control map (HTML) |
+| [`docs/room_sweep_control_map.jpg`](docs/room_sweep_control_map.jpg) | Control map image |
