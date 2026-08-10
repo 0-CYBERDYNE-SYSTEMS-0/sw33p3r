@@ -7,6 +7,19 @@ target **7**.
 **Mission constraint:** survey and optional **bounded carrier TX test** only.
 No jamming, blocking, deauth, capture/replay, or flood modes.
 
+## Control map
+
+Quick visual of tabs, buttons, Hold-R pages, analyzer, and session files:
+
+![Room Sweep control map](docs/room_sweep_control_map.jpg)
+
+Exact-label HTML map (open in a browser for crisp text):
+
+- [`docs/room_sweep_control_map.html`](docs/room_sweep_control_map.html)
+- Image asset: [`docs/room_sweep_control_map.jpg`](docs/room_sweep_control_map.jpg)
+
+Full operator detail: [`USER_GUIDE.md`](USER_GUIDE.md) · scope: [`MISSION.md`](MISSION.md).
+
 ## Hardware
 
 | Path | Role |
@@ -105,5 +118,12 @@ python3 _verify_api.py
 - TX is a **bounded carrier** test, not replay or blocking.
 - nRF24 path is **RPD / activity**, not mousejack or jam.
 
-See [`USER_GUIDE.md`](USER_GUIDE.md) for operator detail and
-[`MISSION.md`](MISSION.md) for scope contract.
+## Docs index
+
+| Doc | Use |
+|-----|-----|
+| [`USER_GUIDE.md`](USER_GUIDE.md) | Operator controls, tabs, analyzer, FullSweep |
+| [`MISSION.md`](MISSION.md) | Scope / legal / TX safety contract |
+| [`docs/BFFB_MOMENTUM.md`](docs/BFFB_MOMENTUM.md) | BFFB + Marauder + Momentum facts |
+| [`docs/room_sweep_control_map.html`](docs/room_sweep_control_map.html) | Exact control map (HTML) |
+| [`docs/room_sweep_control_map.jpg`](docs/room_sweep_control_map.jpg) | Control map image |
