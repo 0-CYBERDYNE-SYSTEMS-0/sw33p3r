@@ -1,193 +1,176 @@
-# Room Sweep v3.2 — Operator Guide
+# Room Sweep — Operator Guide
 
-Room Sweep is designed so a non-specialist can collect useful, honest evidence
-without pretending that RSSI identifies a device's purpose or that passive scans
-prove what a device is doing.
+Receive-side room survey on Flipper Zero + optional BFFB (Marauder / dual
+CC1101 / nRF24). Firmware target: **Momentum mntm-012**, API **87.1**.
 
-## The controls to remember
+This guide matches the **current** app behavior (7 tabs, Hold-R pages,
+analyzer age-out, FullSweep auto-save).
 
-- **Short Left / Right:** previous or next tab.
-- **Up / Down:** browse or change the thing shown in the current tab.
-- **Short OK:** the normal action shown at the bottom of the screen.
-- **Long OK:** lock a target, or confirm TX only after TX has been armed.
-- **Short Back:** open/close Settings; on an armed TX screen, disarm first.
-- **Long Back:** exit from anywhere.
+## Remember these controls
 
-Sound and vibration are changed only in Settings. Up and Down are no longer
-wasted on those toggles.
+| Input | Action |
+|-------|--------|
+| Short Left / Right | Change **tab** |
+| Hold Left | **Analyzer** on/off (RF, Wi-Fi, BLE, nRF24) |
+| Hold Right | **Page** inside the current tab (or analyzer) |
+| Up / Down | Browse list / RF sub-mode / GPS-Info pages |
+| Short OK | Main action (scan, start, arm, …) |
+| Hold OK | Lock target — or **transmit** only if TX already armed |
+| Short Back | Settings (or disarm TX first) |
+| Hold Back | Exit app |
 
-## RF: Survey, Sweep, and Peak
+Footer lines on each page state what **L / R / OK** do there.
 
-Use **Up/Down** to choose one of three receive modes:
+## Tabs
 
-- **Survey:** continuously checks 16 useful preset frequencies. Long OK locks a
-  qualified signal so the relative-strength feedback can follow it.
-- **Sweep:** checks an entire 300–348, 387–464, or 779–928 MHz band. Long
-  Left/Right changes the band while idle. Short OK starts or cancels. Long OK
-  locks the completed qualified result.
-- **Peak:** refines the most recent qualified Survey/Sweep result in 25 kHz
-  steps. Short OK starts or cancels; Long OK locks the completed refined result.
+### RF
 
-A candidate must be stronger than -75 dBm, come from a completed operation,
-have a valid actually tuned frequency, and be less than 30 seconds old. RSSI is
-relative signal strength—not distance, identity, ownership, or intent.
+**Up/Down** = Survey / Sweep / Peak.
 
-## Wi-Fi
+| Sub-mode | OK | Hold OK | Hold Right |
+|----------|-----|---------|------------|
+| Survey | — (continuous presets) | Lock qualified hit | Map ↔ **Lock card** |
+| Sweep | Start/cancel band sweep | Lock result | **Band** step while idle on map |
+| Peak | Start/cancel refine | Lock result | Map ↔ **Lock card** |
 
-The BFFB Marauder connection passively listens for AP beacon observations.
+Hold Left = analyzer (Hunt meter / Field spectrum).
 
-- **Up/Down:** browse every stored AP row.
-- **Long Left/Right:** scan window 15 / 30 / 60 seconds.
-- **Short OK:** start a new scan window.
-- **Long OK:** lock/unlock the selected row for relative-strength feedback.
+### Wi-Fi
 
-Each row shows its display name, redacted/present hardware identity on disk,
-RSSI, channel, age, and observation count. Hidden devices are shown as
-`Hidden/unknown`; the app does not invent names. Observations with neither a
-name nor hardware identity are explicitly grouped and are not a device count.
+Marauder command: `sniffbeacon` (AP beacons only).
 
-Important: an AP beacon proves only that a beacon was heard. It does not prove
-Internet connectivity, telemetry upload, recording, ownership, or intent. A
-window with no observation does not prove a device is absent or inactive.
+| Page (Hold Right) | Shows |
+|-------------------|--------|
+| **Detail** | One selected AP: SSID, RSSI, channel, MAC |
+| **List** | Up to 5 rows RSSI + name |
+| **Help** | Short control reminder |
 
-## BLE
+- **Up/Down:** select AP  
+- **OK:** start/restart scan  
+- **Hold OK:** lock/unlock that AP for follow/analyzer  
+- **Hold Left:** analyzer for the **selected/locked** AP  
+- Scan window: **Settings → ScanWin** (15/30/60 s)
 
-The BFFB Marauder connection performs active BLE scanning (`sniffbt` over UART — not Flipper native BLE).
+**Meter truth:** the fat analyzer bar tracks **that AP’s live table RSSI**.
+If beacons stop, after ~2 s the bar **fades**; by ~6 s it is **empty (LOST)**.
+You are not auto-cycling every network on the fat bar—only the selection.
 
-- **Up/Down:** browse every stored BLE row.
-- **Long Left/Right:** scan window 15 / 30 / 60 seconds.
-- **Short OK:** start a new scan window.
-- **Long OK:** lock/unlock the selected row.
+Beacon heard ≠ Internet, telemetry, recording, ownership, or intent.
 
-The app records advertisements/scan responses, RSSI, age, and observation count.
-Observations with no name or hardware identity are grouped rather than treated
-as individually identified devices.
-It cannot prove Internet telemetry or detect a silent/offline recorder merely
-because nothing advertised during the bounded window.
+### BLE
 
-## GPS
+Same page/control pattern as Wi-Fi. Command: `sniffbt`.
 
-The default source is **BFFB Marauder**. Settings can select an optional external
-GPIO NMEA receiver instead.
+### nRF24
 
-- **Up/Down:** switch between Summary and Detail pages.
-- **Short OK:** retry when data is absent/stale; with a fresh position, set or
-  clear a distance mark.
-- **Long OK:** intentionally does nothing.
+2.4 GHz RPD channel activity. **RX only** (no jam / mousejack in this app).
 
-The pages expose source, link/fix state, UTC/date, latitude/longitude, fix
-quality, satellites used/in view, speed/course, valid sentence count, navigation
-sentence count, bytes received, age, and dropped-byte count.
+| Page | Shows |
+|------|--------|
+| **Status** | SPI path, phase, module/switch hints |
+| **Results** | Active channels + top hit channels |
 
-## TX: a bounded frequency-only test
+- Settings **SPI Path = nRF24** and BFFB bottom switch **down**  
+- Sub-GHz then uses **internal** CC1101  
+- **OK:** start/stop RPD pass · **Hold Left:** analyzer  
 
-TX is intentionally harder to activate because it radiates RF energy.
+### GPS
 
-1. Entering TX automatically preloads a fresh qualified RF candidate when one
-   exists; otherwise it uses the selected safe preset.
-2. **Up/Down** chooses among 12 presets spanning ~300 / ~400 / ~900 MHz.
-   On BFFB external radio, ExtBand **auto-follows** 400 vs 900 presets.
-   **Flip the board top switch** to match the on-screen `sw:400` / `sw:900`.
-   ~300 MHz presets need the **internal** radio (not the dual external path).
-3. **Short OK** performs preflight and arms. Arming emits no RF.
-4. **Long OK** confirms a bounded 1–10 second carrier test.
-5. **Back** disarms/stops; leaving the tab also stops and disarms.
-   Refusal reasons (band, expired candidate, real region table) stay on DISARMED.
-   Flipper region `--` (unprovisioned) is **not** a full TX ban; radio + ExtBand
-   still apply. A provisioned region that forbids a frequency still blocks it.
+| Page | Content |
+|------|---------|
+| Summary | Time, sats bar, position, speed/course, mark distance |
+| Detail | Date, NMEA counters, age, drops |
 
-The handoff copies frequency only. It does not capture or replay modulation,
-decode a protocol, clone a remote, measure antenna output, or identify what the
-signal controls. There is no jammer, blocker, deauthentication, or arbitrary
-replay mode. Transmission is restricted by the radio, installed region table
-(when present), selected external band, and two-step confirmation. Use only
-where you are authorized.
+**OK** = set mark (or retry stream). Coordinates in logs only if **GPS Log** ON.
 
-## Info
+### TX (safety-gated)
 
-**Up/Down** switches between live status and a plain-language glossary. Status
-shows radio path, Marauder/GPS evidence, recording number/errors/drops, baseline,
-lock, UART lines, and UART drops.
+1. Defaults **DISARMED**  
+2. Short OK → **ARMED**  
+3. Up/Down preset  
+4. **Hold OK** → bounded carrier (1–10 s, Settings TXDur)  
+5. Auto-disarm; Back disarms anytime  
 
-## Settings
+No jam, replay, or continuous denial TX. Hold-R pages are **not** used here.
 
-Open Settings with Short Back. **Long Left/Right** changes group; **Up/Down**
-moves within the group; **OK** changes the value:
+### Info
 
-**Feedback**
-- **Sound:** Geiger-style audio feedback.
-- **Vibro:** haptic feedback.
+| Page | Content |
+|------|---------|
+| 1 Status | Radio path, Marauder, record, baseline, UART |
+| 2 Keys | Control cheat-sheet |
+| 3 Files | SD path, last report number |
+| 4 Limits | Honest non-claims |
 
-**Wireless**
-- **Rescan:** automatic Wi-Fi/BLE scan windows.
-- **ScanWin:** 15 / 30 / 60 second window (also Long L/R on Wi-Fi/BLE tabs).
+## Analyzer (Hold Left on RF / Wi / BT / nR)
 
-**Radio**
-- **ExtBand:** Auto, explicit 400 MHz, or explicit 900 MHz external-radio path.
-  External TX requires 400 or 900 (not Auto).
-- **TXDur:** bounded carrier duration, 1–10 seconds.
+| Page (Hold Right) | Role |
+|-------------------|------|
+| **Hunt** | Fat continuous bar + CLOSER/FARTHER/STALE/LOST |
+| **Field** | Peer/spectrum bars for context |
 
-**GPS**
-- **GPS Src:** BFFB Marauder or optional external GPIO NMEA.
-- **GPS Log:** exact coordinates are omitted by default; this is a separate
-  explicit opt-in.
+- Hunt meters **one** selected (or locked) source.  
+- Fresh samples move the bar; silence ages out to zero.  
+- While Wi/BT analyzer is open, scan is **kept alive** for samples.
 
-**Session**
-- **Record:** start/finish a numbered cross-tab session (`session-N.csv` +
-  `report-N.txt`). Status also shows on the Info tab.
-- **Baseline:** save the current RSSI value for all 16 RF Survey channels.
-- **Raw Dump:** save the newest bounded full UART lines. This explicit file may
-  contain raw identifiers and GPS coordinates.
+## Settings (Back)
 
-## What gets dumped
+Groups: Feedback · Wireless · Radio · GPS · Session  
 
-The main **Record** switch creates one session spanning every tab; you do not
-need to start a separate dump in each tab. It writes:
+| Item | Role |
+|------|------|
+| Sound / Vibro | Feedback (defaults off) |
+| Rescan | Auto Wi/BT window restart |
+| ScanWin | 15 / 30 / 60 s |
+| Record | Start/stop session → CSV + report |
+| ExtBand | External CC1101 400 / 900 / AUTO |
+| SPI Path | CC1101 vs nRF24 (nRF forces internal Sub-GHz) |
+| GPS Src | BFFB Marauder vs GPIO |
+| GPS Log | Include coordinates in session |
+| Baseline | Snapshot RF survey floor |
+| Raw Dump | Bounded UART snapshot file |
+| TXDur | Carrier length 1–10 s |
+| FullSweep | Auto RF→Wi→BT→nR→GPS, save report, **SWEEP DONE** |
 
-- `session-N.csv`: a versioned, 28-column machine-readable event stream.
-- `report-N.txt`: a plain-English completion/coverage summary, strongest
-  observations, scan-window counts, TX outcome, privacy state, dropped data,
-  storage state, file paths, and limitations.
-- `uart-N.txt`: created only by **Raw Dump**; the newest 24 complete 127-character
-  UART lines, oldest first, with queue-drop and ring-overwrite counts.
+## Session files
 
-The CSV includes sequence/tick, event, source, tab/submode, per-session redacted
-identifier, RSSI, tuned frequency, channel, optional coordinates, GPS fix
-quality/satellites/speed/course/UTC/date/NMEA counters, repeated-observation
-count, state, error code, and detail. It records begin/end, tab/config changes,
-RF results/baselines/locks, accepted Wi-Fi/BLE observations and scan windows,
-GPS snapshots/marks, TX intent/result/refusal/abort, and data loss.
+Path: `/ext/apps_data/room_sweep/`
 
-Recording is bounded to 2,048 records and at most 256 KiB per session, reduced
-automatically when SD free space is low. The app refuses to start below 1 MiB
-free, syncs periodically, never overwrites an earlier numbered file, and marks
-sessions incomplete when data was dropped or storage failed. Live scanning
-continues if recording stops.
+| File | Contents |
+|------|----------|
+| `session-N.csv` | Events; Wi/BT IDs as session ordinals |
+| `report-N.txt` | Plain Room Report |
+| `uart-N.txt` | Only from Raw Dump (may include raw IDs/GPS) |
 
-### Where the files are
+Recording is size-capped; scans continue if logging stops.
 
-On the SD card:
+## FullSweep
 
-```text
-/ext/apps_data/room_sweep/session-N.csv
-/ext/apps_data/room_sweep/report-N.txt
-/ext/apps_data/room_sweep/uart-N.txt
+Settings → FullSweep → OK:
+
+1. RF, Wi-Fi, BLE, nRF24, GPS each with **hard timeouts** (GPS ≤ 8 s)  
+2. nRF skipped immediately if SPI path is not nRF24  
+3. Session closed; `report-N.txt` written  
+4. Info tab + inverted **SWEEP DONE** banner  
+
+## Hardware notes (BFFB)
+
+- USART 13/14 @ 115200 after expansion disable  
+- GPS preferred on LPUART 15/16 @ 9600 when Momentum GPS UART = Extra 15,16  
+- Bottom switch: up CC1101 / down nRF24  
+- Top switch: 400 / 900 MHz external CC1101  
+
+## Honest limits
+
+- RSSI ≠ distance  
+- Beacon/ad ≠ telemetry or intent  
+- No hit ≠ proof of absence  
+- Bounded TX ≠ replay or jam  
+- Analyzer needs ongoing reports; empty when the source goes silent  
+
+## Build
+
+```sh
+./init.sh
+ufbt launch
 ```
-
-In qFlipper or the Flipper Files browser, open `apps_data` → `room_sweep`.
-Older fixed files remain untouched at
-`/ext/apps_data/room_sweep/room_sweep/session.csv` and
-`/ext/apps_data/room_sweep/room_sweep/bffb_dump.txt`.
-
-## Hardware and evidence boundaries
-
-| Capability | Required path | What a result means |
-|---|---|---|
-| RF Survey/Sweep/Peak | internal CC1101 or supported BFFB external CC1101 | energy was measured near a tuned frequency |
-| Wi-Fi | BFFB Marauder UART, `sniffbeacon` | an AP beacon was observed |
-| BLE | BFFB Marauder UART, `sniffbt` | an advertisement/scan response was observed |
-| GPS | BFFB Marauder NMEA or optional GPIO NMEA | checksummed navigation sentences were parsed |
-| TX | supported radio plus region/band approval | software accepted a bounded carrier request; antenna output is not measured |
-
-If the app says `not confirmed`, `unavailable`, `stale`, `partial`, or
-`incomplete`, treat that wording literally. It is not evidence of absence.
