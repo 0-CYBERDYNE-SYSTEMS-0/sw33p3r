@@ -12,6 +12,26 @@ discover a new pitfall, add it here immediately with the date and context.
 
 **BFFB / Marauder:** see `docs/BFFB_MOMENTUM.md` (JCMK wiki + companion + CommandLine.h).
 
+## Pitfall #18: No swipe gesture InputTypes on Momentum mntm-012
+
+**Date:** 2026-08-13
+**Source:** `~/.ufbt/current/sdk_headers/f7_sdk/applications/services/input/input.h` (API 87.1)
+
+The `InputType` enum on this target is **only**
+`{InputTypePress, InputTypeRelease, InputTypeShort, InputTypeLong,
+InputTypeRepeat, InputTypeMAX}`. There are **no** `InputTypeRight/Left/Up/Down`
+swipe gesture events (those exist on some newer mainline builds, not here).
+Any gesture plan built on "swipe the D-pad" will not compile or will be dead code.
+
+Available untapped input dimensions on this target instead:
+- `InputTypePress` — fires on debounce before Short/Long (tap-vs-hold tracker).
+- `InputTypeRelease` — fires after every press; distinguishes a tap from a
+  hold when paired with `InputTypeLong` (Room Sweep uses this for tactile
+  press-tick / hold-confirm feedback via `room_sweep_input.h`).
+- `InputTypeLong` on Up/Down — same as any other key; the phase-aware seam
+  `room_sweep_input_browse_phase()` exposes it without changing the legacy
+  safety classifier table.
+
 ## Pitfall #17: BFFB switch map — ESP32 is NOT switched
 
 **Date:** 2026-08-02  

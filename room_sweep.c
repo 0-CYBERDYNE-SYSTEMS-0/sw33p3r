@@ -27,6 +27,7 @@
 
 #include "room_sweep.h"
 #include "room_sweep_input.h"
+#include "room_sweep_ui_layout.h"
 #include "room_sweep_report.h"
 #include "room_sweep_scan.h"
 #include "room_sweep_settings.h"
@@ -93,6 +94,36 @@ static const NotificationSequence seq_lock_tone = {
     &message_force_speaker_volume_setting_1f,
     &message_note_g4,
     &message_delay_100,
+    NULL,
+};
+
+/* Soft UI tick: one vibro pulse. Deliberately NOT forced — respects the
+ * user's Vibro setting (a muted user asked for silence, not just less sound). */
+static const NotificationSequence seq_ui_tick = {
+    &message_vibro_on,
+    &message_delay_10,
+    &message_vibro_off,
+    NULL,
+};
+
+/* Hold-registered confirmation: double pulse so a hold feels distinct from
+ * a tap. Also NOT forced; gated on the Vibro setting by the caller. */
+static const NotificationSequence seq_ui_hold = {
+    &message_vibro_on,
+    &message_delay_50,
+    &message_vibro_off,
+    &message_delay_50,
+    &message_vibro_on,
+    &message_delay_50,
+    &message_vibro_off,
+    NULL,
+};
+
+/* Soft toggle-confirm note at the user's volume (silent when muted). */
+static const NotificationSequence seq_ui_confirm_beep = {
+    &message_note_e5,
+    &message_delay_100,
+    &message_sound_off,
     NULL,
 };
 
@@ -2975,7 +3006,7 @@ static void draw_rf_lock_card(Canvas* canvas, App* app) {
         canvas_draw_str(canvas, 2, 40, buf);
         snprintf(buf, sizeof(buf), "live %+ddBm", (int)tr);
         canvas_draw_str(canvas, 2, 50, buf);
-        canvas_draw_str(canvas, 2, 63, "HoldOK unlock  U/D mode");
+        canvas_draw_str(canvas, 2, 63, "U/D back  HoldOK unlock");
     } else if(cand_ok) {
         canvas_draw_str(canvas, 2, 28, "CANDIDATE");
         canvas_set_font(canvas, FontKeyboard);
@@ -2988,7 +3019,7 @@ static void draw_rf_lock_card(Canvas* canvas, App* app) {
         canvas_draw_str(canvas, 2, 40, buf);
         snprintf(buf, sizeof(buf), "%+.0f dBm fresh", (double)cand.rssi);
         canvas_draw_str(canvas, 2, 50, buf);
-        canvas_draw_str(canvas, 2, 63, "HoldOK lock  U/D mode");
+        canvas_draw_str(canvas, 2, 63, "U/D back  HoldOK lock");
     } else {
         canvas_draw_str(canvas, 2, 28, "No lock");
         canvas_set_font(canvas, FontKeyboard);
@@ -3002,22 +3033,22 @@ static void draw_rf_lock_card(Canvas* canvas, App* app) {
 /* Drawing: RF Survey sub-view                                         */
 /* ================================================================== */
 static void draw_rf_survey(Canvas* canvas, App* app) {
-    /* Header */
+    /* Header row: title with the radio path inline (EXT = BFFB SPI CC1101) +
+     * right-aligned peak. The path tag previously sat at x52 and collided
+     * with the peak text on the same row. */
     canvas_set_font(canvas, FontSecondary);
-    canvas_draw_str(canvas, 1, 15, "RF Survey");
-
-    /* Sub-mode + radio path (EXT = BFFB SPI CC1101) */
-    canvas_set_font(canvas, FontKeyboard);
-    canvas_draw_str(canvas, 52, 15,
-                    app->radio_path == RadioPathExternal ? "[SURVEY EXT]" : "[SURVEY INT]");
+    canvas_draw_str(
+        canvas,
+        UI_MARGIN_X,
+        UI_ROW_HEADER_BASELINE,
+        app->radio_path == RadioPathExternal ? "RF Survey EXT" : "RF Survey INT");
 
     /* Peak RSSI (right-aligned) */
     char buf[16];
     float peak = app->peak_rssi;
     snprintf(buf, sizeof(buf), "%.0fdBm", (double)peak);
-    canvas_set_font(canvas, FontSecondary);
     uint16_t w = canvas_string_width(canvas, buf);
-    canvas_draw_str(canvas, 127 - (int)w, 15, buf);
+    canvas_draw_str(canvas, (uint8_t)(127 - (int)w), UI_ROW_HEADER_BASELINE, buf);
 
     /* Bar chart (y 15..56) */
     const uint8_t bar_w = 7, bar_gap = 1, area_h = 38, base_y = 54;
@@ -3063,26 +3094,37 @@ static void draw_rf_survey(Canvas* canvas, App* app) {
     /* Frequency labels */
     canvas_set_font(canvas, FontKeyboard);
     for(uint8_t i = 0; i < RF_NUM_CHANNELS; i += 4) {
-        canvas_draw_str(canvas, i * (bar_w + bar_gap), 63, rf_labels[i]);
+        canvas_draw_str(canvas, i * (bar_w + bar_gap), UI_ROW_FOOTER_BASELINE, rf_labels[i]);
     }
 
-    /* SIGNAL / lock / baseline markers */
+    /* Meta row: LOCK/BASE tag or control hints. The alert badge moved out of
+     * the bar area onto this row so it no longer hides the live data. */
     canvas_set_font(canvas, FontKeyboard);
-    if(app->target_kind == TargetRF) {
-        canvas_draw_str(canvas, 1, 22, "LOCK");
-    } else if(app->baseline_set) {
-        canvas_draw_str(canvas, 1, 22, "BASE");
-    }
-    if(!app->rf_alert) canvas_draw_str(canvas, 40, 22, "U/D HoldL=AN HoldOK");
     if(app->rf_alert) {
-        canvas_set_font(canvas, FontSecondary);
-        const char* sig = "SIGNAL!";
-        uint16_t sw = canvas_string_width(canvas, sig);
-        uint8_t sx = (128 - sw) / 2;
         canvas_set_color(canvas, ColorWhite);
-        canvas_draw_box(canvas, sx - 2, 24, sw + 4, 12);
+        canvas_draw_box(canvas, 1, 15, 37, 9);
         canvas_set_color(canvas, ColorBlack);
-        canvas_draw_str(canvas, sx, 34, sig);
+        canvas_draw_str(canvas, UI_MARGIN_X, UI_ROW_BODY_FIRST_BASELINE, "SIGNAL!");
+    } else if(app->target_kind == TargetRF) {
+        canvas_draw_str(canvas, UI_MARGIN_X, UI_ROW_BODY_FIRST_BASELINE, "LOCK");
+        canvas_draw_str(
+            canvas,
+            room_sweep_ui_right_align_x(
+                UI_TEXT_RIGHT_EDGE, (uint8_t)(9U * UI_FONT_KEYBOARD_PX)),
+            UI_ROW_BODY_FIRST_BASELINE,
+            "Hold=card");
+    } else if(app->baseline_set) {
+        canvas_draw_str(canvas, UI_MARGIN_X, UI_ROW_BODY_FIRST_BASELINE, "BASE");
+        canvas_draw_str(
+            canvas,
+            room_sweep_ui_right_align_x(
+                UI_TEXT_RIGHT_EDGE, (uint8_t)(9U * UI_FONT_KEYBOARD_PX)),
+            UI_ROW_BODY_FIRST_BASELINE,
+            "Hold=card");
+    } else {
+        /* 24 chars x 5px = 120px, right edge 126 — fits the panel. */
+        canvas_draw_str(
+            canvas, UI_MARGIN_X, UI_ROW_BODY_FIRST_BASELINE, "U/D cycle Hold=card L=AN");
     }
 }
 
@@ -3288,7 +3330,7 @@ static void draw_wifi_tab(Canvas* canvas, App* app) {
         for(uint8_t row = 0; row < 5; row++) {
             uint8_t idx = (uint8_t)(start + row);
             if(idx >= count) break;
-            uint8_t y = (uint8_t)(24 + row * 7);
+            uint8_t y = (uint8_t)(UI_ROW_BODY_FIRST_BASELINE + row * 8U);
             bool sel = (idx == selected);
             furi_mutex_acquire(app->mutex, FuriWaitForever);
             WifiAp row_ap = app->wifi_aps[idx];
@@ -3420,7 +3462,7 @@ static void draw_ble_tab(Canvas* canvas, App* app) {
         for(uint8_t row = 0; row < 5; row++) {
             uint8_t idx = (uint8_t)(start + row);
             if(idx >= count) break;
-            uint8_t y = (uint8_t)(24 + row * 7);
+            uint8_t y = (uint8_t)(UI_ROW_BODY_FIRST_BASELINE + row * 8U);
             bool sel = (idx == selected);
             furi_mutex_acquire(app->mutex, FuriWaitForever);
             BleDev row_dev = app->ble_devs[idx];
@@ -3517,7 +3559,7 @@ static void draw_gps_tab(Canvas* canvas, App* app) {
         canvas_draw_str(canvas, 2, 38, buf);
         canvas_set_font(canvas, FontKeyboard);
         canvas_draw_str(canvas, 2, 51, "Source set in Settings");
-        canvas_draw_str(canvas, 2, 63, "U/D page OK=retry");
+        canvas_draw_str(canvas, 2, 63, "OK/HOK=retry  U/D page");
         return;
     }
 
@@ -3623,7 +3665,8 @@ static void draw_gps_tab(Canvas* canvas, App* app) {
         canvas_draw_str(canvas, 2, 60, "OK=mark");
     }
 
-    canvas_draw_str(canvas, 78, 60, "U/D page");
+    canvas_draw_str(canvas, 2, 63, "HOK=retry");
+    canvas_draw_str(canvas, 78, 63, "U/D page");
 }
 
 /* ================================================================== */
@@ -3930,7 +3973,7 @@ static void draw_tx_tab(Canvas* canvas, App* app) {
 }
 
 /* ================================================================== */
-/* Drawing: Info tab — 4 pages (U/D or Hold R)                         */
+/* Drawing: Info tab — 5 pages (U/D or Hold R)                         */
 /* ================================================================== */
 static void draw_info_tab(Canvas* canvas, App* app) {
     canvas_set_font(canvas, FontKeyboard);
@@ -3939,10 +3982,69 @@ static void draw_info_tab(Canvas* canvas, App* app) {
     bool gps_has_sentences = app->gps.sentences > 0;
     bool gps_from_gpio = app->gps_from_gpio;
     furi_mutex_release(app->gps_mutex);
-    uint8_t page = app->info_page % 4U;
+    uint8_t page = app->info_page % 5U;
 
+    if(page == 0) {
+        /* RADIO — one fact per row; the second column used to squeeze into
+         * ~7 chars of headroom at x65 and clipped. */
+        canvas_draw_str(canvas, 92, 14, "1/5");
+        snprintf(
+            buf,
+            sizeof(buf),
+            "RF:%s SPI:%s",
+            app->radio_path == RadioPathExternal ? "EXT" :
+            app->radio_path == RadioPathInternal ? "INT" : "NONE",
+            room_sweep_spi_path_label(app->spi_path));
+        canvas_draw_str(canvas, UI_MARGIN_X, 24, buf);
+
+        snprintf(buf, sizeof(buf), "Marauder:%s GPS:%s",
+                 app->marauder_confirmed ? "confirmed" : app->serial ? "open" : "none",
+                 gps_has_sentences ? (gps_from_gpio ? "EXT" : "BFFB") : "wait");
+        canvas_draw_str(canvas, UI_MARGIN_X, 34, buf);
+        canvas_draw_str(canvas, UI_MARGIN_X, UI_ROW_FOOTER_BASELINE, "U/D or R page");
+        return;
+    }
     if(page == 1) {
-        canvas_draw_str(canvas, 2, 14, "KEYS 2/4");
+        canvas_draw_str(canvas, 92, 14, "2/5");
+        snprintf(buf, sizeof(buf), "Rec:%s #%lu drop:%lu",
+                 app->record_storage_error ? "ERR" : app->session_log_on ? "ON" : "off",
+                 (unsigned long)app->record_ordinal,
+                 (unsigned long)app->record_dropped_total);
+        canvas_draw_str(canvas, UI_MARGIN_X, 22, buf);
+
+        snprintf(buf, sizeof(buf), "Base:%s Lock:%s",
+                 app->baseline_set ? "Y" : "n",
+                 app->target_kind == TargetNone ? "-" :
+                 app->target_kind == TargetRF ? "RF" :
+                 app->target_kind == TargetWifi ? "Wi" : "BT");
+        canvas_draw_str(canvas, UI_MARGIN_X, 30, buf);
+
+        /* Target identity gets its own full-width row. */
+        if(app->target_kind != TargetNone) {
+            char tid[12];
+            strncpy(tid, app->target_id, 11);
+            tid[11] = '\0';
+            snprintf(buf, sizeof(buf), "T:%s %ddBm", tid, (int)app->target_rssi);
+        } else {
+            snprintf(buf, sizeof(buf), "Target:none");
+        }
+        canvas_draw_str(canvas, UI_MARGIN_X, 38, buf);
+
+        snprintf(buf, sizeof(buf), "dump:%u lines", app->dump_count);
+        canvas_draw_str(canvas, UI_MARGIN_X, 46, buf);
+
+        snprintf(
+            buf,
+            sizeof(buf),
+            "UART lines:%u drop:%lu",
+            app->uart_line_count,
+            (unsigned long)app->uart_line_drops);
+        canvas_draw_str(canvas, UI_MARGIN_X, 54, buf);
+        canvas_draw_str(canvas, UI_MARGIN_X, UI_ROW_FOOTER_BASELINE, "U/D or R page");
+        return;
+    }
+    if(page == 2) {
+        canvas_draw_str(canvas, 2, 14, "KEYS 3/5");
         canvas_draw_str(canvas, 2, 24, "L/R tab  HoldL AN");
         canvas_draw_str(canvas, 2, 34, "HoldR page in mode");
         canvas_draw_str(canvas, 2, 44, "OK act  HoldOK lock");
@@ -3950,8 +4052,8 @@ static void draw_info_tab(Canvas* canvas, App* app) {
         canvas_draw_str(canvas, 2, 63, "U/D or R next");
         return;
     }
-    if(page == 2) {
-        canvas_draw_str(canvas, 2, 14, "FILES 3/4");
+    if(page == 3) {
+        canvas_draw_str(canvas, 2, 14, "FILES 4/5");
         canvas_draw_str(canvas, 2, 24, "apps_data/room_sweep");
         snprintf(
             buf,
@@ -3966,66 +4068,14 @@ static void draw_info_tab(Canvas* canvas, App* app) {
         canvas_draw_str(canvas, 2, 63, "U/D or R next");
         return;
     }
-    if(page == 3) {
-        canvas_draw_str(canvas, 2, 14, "LIMITS 4/4");
-        canvas_draw_str(canvas, 2, 24, "RSSI != distance");
-        canvas_draw_str(canvas, 2, 34, "no jam / no deauth");
-        canvas_draw_str(canvas, 2, 44, "beacon != telemetry");
-        canvas_draw_str(canvas, 2, 54, "no hit != absence");
-        canvas_draw_str(canvas, 2, 63, "U/D or R next");
-        return;
-    }
 
-    canvas_draw_str(canvas, 92, 14, "1/4");
-
-    snprintf(
-        buf,
-        sizeof(buf),
-        "RF:%s SPI:%s",
-        app->radio_path == RadioPathExternal ? "EXT" :
-        app->radio_path == RadioPathInternal ? "INT" : "NONE",
-        room_sweep_spi_path_label(app->spi_path));
-    canvas_draw_str(canvas, 2, 14, buf);
-
-    snprintf(buf, sizeof(buf), "Marauder:%s GPS:%s",
-             app->marauder_confirmed ? "confirmed" : app->serial ? "open" : "none",
-             gps_has_sentences ? (gps_from_gpio ? "EXT" : "BFFB") : "wait");
-    canvas_draw_str(canvas, 2, 23, buf);
-
-    snprintf(buf, sizeof(buf), "Rec:%s #%lu drop:%lu",
-             app->record_storage_error ? "ERR" : app->session_log_on ? "ON" : "off",
-             (unsigned long)app->record_ordinal,
-             (unsigned long)app->record_dropped_total);
-    canvas_draw_str(canvas, 2, 32, buf);
-
-    snprintf(buf, sizeof(buf), "Base:%s Lock:%s",
-             app->baseline_set ? "Y" : "n",
-             app->target_kind == TargetNone ? "-" :
-             app->target_kind == TargetRF ? "RF" :
-             app->target_kind == TargetWifi ? "Wi" : "BT");
-    canvas_draw_str(canvas, 2, 41, buf);
-
-    if(app->target_kind != TargetNone) {
-        char tid[12];
-        strncpy(tid, app->target_id, 11);
-        tid[11] = '\0';
-        snprintf(buf, sizeof(buf), "T:%s %ddBm", tid, (int)app->target_rssi);
-        canvas_draw_str(canvas, 65, 41, buf);
-    } else {
-        canvas_draw_str(canvas, 65, 41, "T:none");
-    }
-
-    snprintf(buf, sizeof(buf), "dump:%u lines", app->dump_count);
-    canvas_draw_str(canvas, 2, 50, buf);
-
-    snprintf(
-        buf,
-        sizeof(buf),
-        "UART lines:%u drop:%lu",
-        app->uart_line_count,
-        (unsigned long)app->uart_line_drops);
-    canvas_draw_str(canvas, 2, 58, buf);
-    canvas_draw_str(canvas, 2, 63, "U/D or R page");
+    /* page 4 */
+    canvas_draw_str(canvas, 2, 14, "LIMITS 5/5");
+    canvas_draw_str(canvas, 2, 24, "RSSI != distance");
+    canvas_draw_str(canvas, 2, 34, "no jam / no deauth");
+    canvas_draw_str(canvas, 2, 44, "beacon != telemetry");
+    canvas_draw_str(canvas, 2, 54, "no hit != absence");
+    canvas_draw_str(canvas, 2, 63, "U/D or R next");
 }
 
 /* ================================================================== */
@@ -4177,27 +4227,9 @@ static void draw_cb(Canvas* canvas, void* ctx) {
         }
     }
 
-    /* Full-sweep progress or completed banner (footer — never over tabs). */
-    if(room_sweep_full_sweep_is_running(&app->full_sweep)) {
-        canvas_set_font(canvas, FontKeyboard);
-        canvas_draw_box(canvas, 0, 56, 128, 8);
-        canvas_set_color(canvas, ColorWhite);
-        char fs[28];
-        uint32_t elapsed = furi_get_tick() - app->full_sweep_phase_started_tick;
-        uint32_t limit = room_sweep_full_sweep_phase_limit_ms(app->full_sweep.phase);
-        uint8_t sec_left =
-            (limit > elapsed) ? (uint8_t)((limit - elapsed + 999U) / 1000U) : 0;
-        snprintf(
-            fs,
-            sizeof(fs),
-            "FULL %s %us",
-            room_sweep_full_sweep_phase_label(app->full_sweep.phase),
-            (unsigned)sec_left);
-        canvas_draw_str(canvas, 2, 63, fs);
-        canvas_set_color(canvas, ColorBlack);
-    } else if(
-        app->full_sweep_done_until_tick != 0 &&
-        furi_get_tick() < app->full_sweep_done_until_tick) {
+    /* Completed-sweep modal (temporary, after auto-save). */
+    if(app->full_sweep_done_until_tick != 0 &&
+       furi_get_tick() < app->full_sweep_done_until_tick) {
         /* Unmistakable done state after auto-save. */
         canvas_set_color(canvas, ColorBlack);
         canvas_draw_box(canvas, 8, 18, 112, 36);
@@ -4219,19 +4251,40 @@ static void draw_cb(Canvas* canvas, void* ctx) {
         canvas_set_color(canvas, ColorBlack);
     }
 
-    /* Compact tab strip (y0..5) — body content starts at y≥15 to avoid collision. */
-    static const char* tab_labels[] = {"RF", "Wi", "BT", "nR", "GP", "TX", "i"};
+    /* Top strip (y0..6): tab labels — or full-sweep progress while a sweep
+     * runs. The banner used to paint a white box over y56..64, erasing every
+     * tab's y63 footer hints and the RF survey's frequency labels. */
     canvas_set_font(canvas, FontKeyboard);
-    for(int t = 0; t < SweepModeCount; t++) {
-        uint8_t x = (uint8_t)(1 + t * 18);
-        if(t == (int)app->mode) {
-            canvas_draw_box(canvas, x, 0, 17, 5);
-            canvas_set_color(canvas, ColorWhite);
-            canvas_draw_str(canvas, (uint8_t)(x + 3), 5, tab_labels[t]);
-            canvas_set_color(canvas, ColorBlack);
-        } else {
-            canvas_draw_frame(canvas, x, 0, 17, 5);
-            canvas_draw_str(canvas, (uint8_t)(x + 3), 5, tab_labels[t]);
+    if(room_sweep_full_sweep_is_running(&app->full_sweep)) {
+        canvas_draw_box(canvas, 0, 0, UI_W, UI_TAB_STRIP_H);
+        canvas_set_color(canvas, ColorWhite);
+        char fs[28];
+        uint32_t elapsed = furi_get_tick() - app->full_sweep_phase_started_tick;
+        uint32_t limit = room_sweep_full_sweep_phase_limit_ms(app->full_sweep.phase);
+        uint8_t sec_left =
+            (limit > elapsed) ? (uint8_t)((limit - elapsed + 999U) / 1000U) : 0;
+        snprintf(
+            fs,
+            sizeof(fs),
+            "FULL %s %us",
+            room_sweep_full_sweep_phase_label(app->full_sweep.phase),
+            (unsigned)sec_left);
+        canvas_draw_str(canvas, UI_MARGIN_X, UI_TAB_STRIP_H, fs);
+        canvas_set_color(canvas, ColorBlack);
+    } else {
+        /* Compact tab strip (y0..5) — body content starts at y≥15 to avoid collision. */
+        static const char* tab_labels[] = {"RF", "Wi", "BT", "nR", "GP", "TX", "i"};
+        for(int t = 0; t < SweepModeCount; t++) {
+            uint8_t x = (uint8_t)(1 + t * 18);
+            if(t == (int)app->mode) {
+                canvas_draw_box(canvas, x, 0, 17, 5);
+                canvas_set_color(canvas, ColorWhite);
+                canvas_draw_str(canvas, (uint8_t)(x + 3), 5, tab_labels[t]);
+                canvas_set_color(canvas, ColorBlack);
+            } else {
+                canvas_draw_frame(canvas, x, 0, 17, 5);
+                canvas_draw_str(canvas, (uint8_t)(x + 3), 5, tab_labels[t]);
+            }
         }
     }
 
@@ -4245,11 +4298,8 @@ static void draw_cb(Canvas* canvas, void* ctx) {
         canvas_set_color(canvas, ColorBlack);
     }
 
-    /* Sound/vibro: hide on analyzer (header is already dense). */
-    if(!app->analyzer_view && app->mode != SweepModeRF && app->mode != SweepModeTx) {
-        canvas_draw_str(canvas, 92, 14, app->sound_on ? "S" : "s");
-        canvas_draw_str(canvas, 99, 14, app->vibro_on ? "V" : "v");
-    }
+    /* Sound/vibro state is shown in Settings → Feedback; no S/V glyphs float
+     * over per-tab headers anymore (they collided with WiFi/BLE header text). */
 
     /* Settings overlay (highest priority) */
     if(app->settings_active) {
@@ -4260,17 +4310,20 @@ static void draw_cb(Canvas* canvas, void* ctx) {
 /* ================================================================== */
 /* Input handler                                                       */
 /* ================================================================== */
-static RoomSweepInputAction classify_input_event(const InputEvent* event) {
-    RoomSweepInputKey key;
-    switch(event->key) {
-    case InputKeyUp: key = RoomSweepInputUp; break;
-    case InputKeyDown: key = RoomSweepInputDown; break;
-    case InputKeyLeft: key = RoomSweepInputLeft; break;
-    case InputKeyRight: key = RoomSweepInputRight; break;
-    case InputKeyOk: key = RoomSweepInputOk; break;
-    case InputKeyBack: key = RoomSweepInputBack; break;
-    default: return RoomSweepInputNone;
+static RoomSweepInputKey input_key_portable(InputKey key) {
+    switch(key) {
+    case InputKeyUp: return RoomSweepInputUp;
+    case InputKeyDown: return RoomSweepInputDown;
+    case InputKeyLeft: return RoomSweepInputLeft;
+    case InputKeyRight: return RoomSweepInputRight;
+    case InputKeyOk: return RoomSweepInputOk;
+    case InputKeyBack: return RoomSweepInputBack;
+    default: return RoomSweepInputKeyCount;
     }
+}
+
+static RoomSweepInputAction classify_input_event(const InputEvent* event) {
+    RoomSweepInputKey key = input_key_portable(event->key);
 
     RoomSweepInputPhase phase;
     switch(event->type) {
@@ -4280,6 +4333,28 @@ static RoomSweepInputAction classify_input_event(const InputEvent* event) {
     default: return RoomSweepInputNone;
     }
     return room_sweep_input_action(key, phase);
+}
+
+/* Phase-tagged browse classifier for Up/Down only — lets the RF tab tell a
+ * short tap (cycle sub-mode) from a hold (open the lock card) while Repeat
+ * stays browse-only everywhere else. */
+static RoomSweepInputBrowsePhase classify_browse_phase(const InputEvent* event) {
+    RoomSweepInputKey key = input_key_portable(event->key);
+    RoomSweepInputPhase phase;
+    switch(event->type) {
+    case InputTypeShort: phase = RoomSweepInputShort; break;
+    case InputTypeLong: phase = RoomSweepInputLong; break;
+    case InputTypeRepeat: phase = RoomSweepInputRepeat; break;
+    default: return RoomSweepInputBrowsePhaseNone;
+    }
+    return room_sweep_input_browse_phase(key, phase);
+}
+
+/* Uniform soft confirmation for settings value changes. Respects user
+ * Sound/Vibro settings; never forces (see seq_ui_* comments). */
+static void ui_confirm_toggle(App* app) {
+    if(app->vibro_on) notification_message(app->notif, &seq_ui_tick);
+    if(app->sound_on) notification_message(app->notif, &seq_ui_confirm_beep);
 }
 
 static void input_cb(InputEvent* event, void* ctx) {
@@ -4558,6 +4633,7 @@ int32_t room_sweep_app(void* p) {
 
     /* Main loop */
     InputEvent event;
+    RoomSweepInputTouchState touch_state = {0};
     while(app->running) {
         tx_thread_cleanup(app);
         if(furi_message_queue_get(input_queue, &event, 100) != FuriStatusOk) {
@@ -4694,6 +4770,29 @@ int32_t room_sweep_app(void* p) {
             view_port_update(view_port);
             continue;
         }
+
+        /* Tactile seam (host-tested tracker): a tap gives one soft pulse, a
+         * hold gives a double pulse on release so holds register distinctly.
+         * Gated on the user's Vibro setting — never forced. */
+        if(event.type == InputTypePress) {
+            room_sweep_input_touch_feedback(
+                &touch_state, RoomSweepInputTouchPress, input_key_portable(event.key));
+            continue;
+        }
+        if(event.type == InputTypeRelease) {
+            RoomSweepInputFeedback touch_fb = room_sweep_input_touch_feedback(
+                &touch_state, RoomSweepInputTouchRelease, input_key_portable(event.key));
+            if(touch_fb == RoomSweepInputFeedbackPressTick && app->vibro_on) {
+                notification_message(app->notif, &seq_ui_tick);
+            } else if(touch_fb == RoomSweepInputFeedbackHoldConfirmed && app->vibro_on) {
+                notification_message(app->notif, &seq_ui_hold);
+            }
+            continue;
+        }
+        if(event.type == InputTypeLong) {
+            room_sweep_input_touch_note_long(&touch_state, input_key_portable(event.key));
+        }
+
         RoomSweepInputAction input_action = classify_input_event(&event);
         if(input_action == RoomSweepInputNone) continue;
         process_gps_gpio_bytes(app);
@@ -4749,9 +4848,11 @@ int32_t room_sweep_app(void* p) {
                     if(app->vibro_on) notification_message(app->notif, &seq_test_vibro);
                 } else if(app->settings_sel == SET_RESCAN) {
                     app->auto_rescan = !app->auto_rescan;
+                    ui_confirm_toggle(app);
                 } else if(app->settings_sel == SET_SCANWIN) {
                     app->scan_timeout_idx = room_sweep_scan_timeout_step(
                         app->scan_timeout_idx, true);
+                    ui_confirm_toggle(app);
                     record_enqueue(
                         app,
                         "config",
@@ -4809,10 +4910,12 @@ int32_t room_sweep_app(void* p) {
                         }
                     } else {
                         record_finish_session(app);
+                        ui_confirm_toggle(app);
                     }
                 } else if(app->settings_sel == SET_EXTBAND) {
                     apply_ext_band_pref(
                         app, (ExtBandPref)((app->ext_band + 1) % 3));
+                    ui_confirm_toggle(app);
                 } else if(app->settings_sel == SET_SPIPATH) {
                     nrf24_stop_survey(app);
                     app->spi_path = room_sweep_spi_path_step(app->spi_path);
@@ -4839,6 +4942,7 @@ int32_t room_sweep_app(void* p) {
                         room_sweep_full_sweep_abort(&app->full_sweep);
                         nrf24_stop_survey(app);
                         if(app->serial) marauder_stop_scan(app);
+                        ui_confirm_toggle(app);
                     } else {
                         if(!app->session_log_on) {
                             /* Start a session so the Room Report has data. */
@@ -4881,6 +4985,7 @@ int32_t room_sweep_app(void* p) {
                         0,
                         app->gps_profile == GPS_PROFILE_EXTERNAL ?
                             "optional external GPIO selected" : "BFFB Marauder selected");
+                    ui_confirm_toggle(app);
                 } else if(app->settings_sel == SET_GPSLOG) {
                     furi_mutex_acquire(app->record_mutex, FuriWaitForever);
                     app->gps_log_coordinates = !app->gps_log_coordinates;
@@ -4896,6 +5001,7 @@ int32_t room_sweep_app(void* p) {
                         0,
                         gps_coordinates_enabled ?
                             "coordinates enabled by user" : "coordinates omitted");
+                    ui_confirm_toggle(app);
                 } else if(app->settings_sel == SET_BASELINE) {
                     furi_mutex_acquire(app->mutex, FuriWaitForever);
                     for(uint8_t i = 0; i < RF_NUM_CHANNELS; i++) {
@@ -4955,6 +5061,7 @@ int32_t room_sweep_app(void* p) {
                     app->tx_duration_s = (app->tx_duration_s % TX_MAX_DURATION_S) + 1;
                     record_enqueue(
                         app, "config", "TX", "duration", 0, 0, 0, "bounded duration changed");
+                    ui_confirm_toggle(app);
                 }
             }
             continue;
@@ -5130,19 +5237,28 @@ int32_t room_sweep_app(void* p) {
                 continue;
             }
             if(app->mode == SweepModeInfo) {
-                app->info_page = (uint8_t)((app->info_page + 1U) % 4U);
+                app->info_page = (uint8_t)((app->info_page + 1U) % 5U);
                 continue;
             }
         }
 
-        /* --- RF tab: Up/Down cycles sub-modes, OK triggers actions --- */
+        /* --- RF tab: short Up/Down cycles sub-modes, Hold Up/Down opens the
+         * lock/map card, Repeat is dead (holding never spins sub-modes). --- */
         if(app->mode == SweepModeRF) {
-            if(input_action == RoomSweepInputBrowseUp ||
-               input_action == RoomSweepInputBrowseDown) {
-                app->rf_sub = (RfSubMode)room_sweep_cursor_step(
-                    app->rf_sub, RfSubCount, input_action);
-                app->sweep_running = false;
-                app->peak_running = false;
+            RoomSweepInputBrowsePhase browse_phase = classify_browse_phase(&event);
+            if(browse_phase == RoomSweepInputBrowsePhaseShort) {
+                if((app->rf_ui_page & 1U) != 0) {
+                    /* Lock card open: Up/Down returns to the survey map. */
+                    app->rf_ui_page = (uint8_t)(app->rf_ui_page & ~1U);
+                } else {
+                    app->rf_sub = (RfSubMode)room_sweep_cursor_step(
+                        app->rf_sub, RfSubCount, input_action);
+                    app->sweep_running = false;
+                    app->peak_running = false;
+                }
+            } else if(browse_phase == RoomSweepInputBrowsePhaseLong) {
+                /* Hold Up/Down opens the lock/map card from any sub-mode. */
+                app->rf_ui_page = (uint8_t)(app->rf_ui_page | 1U);
             }
             if(input_action == RoomSweepInputPrimary) {
                 if(app->rf_sub == RfSubSweep && !app->sweep_running) {
@@ -5346,6 +5462,23 @@ int32_t room_sweep_app(void* p) {
                 app->gps_page = room_sweep_gps_page_next(app->gps_page);
                 continue;
             }
+            /* Hold OK = reinit the NMEA source (deliberate retry). */
+            if(input_action == RoomSweepInputSecondary) {
+                furi_mutex_acquire(app->gps_mutex, FuriWaitForever);
+                nmea_init(&app->gps);
+                app->gps_last_valid_tick = 0;
+                furi_mutex_release(app->gps_mutex);
+                if(app->gps_profile == GPS_PROFILE_EXTERNAL) {
+                    gps_gpio_open(
+                        app,
+                        app->gps_gpio_baud == GPS_GPIO_BAUD_PRIMARY ?
+                            GPS_GPIO_BAUD_ALT : GPS_GPIO_BAUD_PRIMARY);
+                } else if(app->serial) {
+                    gps_marauder_stream(app);
+                }
+                app->gps_last_request_tick = furi_get_tick();
+                continue;
+            }
             if(input_action != RoomSweepInputPrimary) continue;
             bool gps_fresh = app->gps_last_valid_tick > 0 &&
                              furi_get_tick() - app->gps_last_valid_tick < GPS_STALE_TIMEOUT_MS;
@@ -5385,7 +5518,7 @@ int32_t room_sweep_app(void* p) {
            (input_action == RoomSweepInputBrowseUp ||
             input_action == RoomSweepInputBrowseDown)) {
             app->info_page = (uint8_t)room_sweep_cursor_step(
-                app->info_page, 4, input_action);
+                app->info_page, 5, input_action);
         }
 
         app->tick_count++;

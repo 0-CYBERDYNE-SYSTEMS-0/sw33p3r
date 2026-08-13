@@ -4,7 +4,7 @@ Receive-side room survey on Flipper Zero + optional BFFB (Marauder / dual
 CC1101 / nRF24). Firmware target: **Momentum mntm-012**, API **87.1**.
 
 This guide matches the **current** app behavior (7 tabs, Hold-R pages,
-analyzer age-out, FullSweep auto-save).
+analyzer age-out, FullSweep auto-save, tactile tap/hold feedback).
 
 ## Remember these controls
 
@@ -14,18 +14,25 @@ analyzer age-out, FullSweep auto-save).
 | Hold Left | **Analyzer** on/off (RF, Wi-Fi, BLE, nRF24) |
 | Hold Right | **Page** inside the current tab (or analyzer) |
 | Up / Down | Browse list / RF sub-mode / GPS-Info pages |
-| Short OK | Main action (scan, start, arm, …) |
-| Hold OK | Lock target — or **transmit** only if TX already armed |
+| Hold Up / Down | **RF lock card** open/close (RF tab) |
+| Short OK | Main action (scan, start, arm, mark, …) |
+| Hold OK | Lock target — or **transmit** only if TX already armed. On GPS: **NMEA retry** |
 | Short Back | Settings (or disarm TX first) |
 | Hold Back | Exit app |
 
 Footer lines on each page state what **L / R / OK** do there.
 
+**Tactile feedback:** with **Settings → Vibro** ON, a short tap gives one
+soft pulse and a hold gives a double pulse on release, so holds register
+distinctly. Sound/Vibro state lives in **Settings → Feedback** (no glyphs on
+tab headers).
+
 ## Tabs
 
 ### RF
 
-**Up/Down** = Survey / Sweep / Peak.
+**Up/Down** = Survey / Sweep / Peak. **Hold Up/Down** = open the lock/map
+card from any sub-mode (Up/Down returns to the map).
 
 | Sub-mode | OK | Hold OK | Hold Right |
 |----------|-----|---------|------------|
@@ -81,7 +88,8 @@ Same page/control pattern as Wi-Fi. Command: `sniffbt`.
 | Summary | Time, sats bar, position, speed/course, mark distance |
 | Detail | Date, NMEA counters, age, drops |
 
-**OK** = set mark (or retry stream). Coordinates in logs only if **GPS Log** ON.
+**OK** = set mark. **Hold OK** = NMEA retry (reinit stream / baud swap).
+Coordinates in logs only if **GPS Log** ON.
 
 ### TX (safety-gated)
 
@@ -97,10 +105,11 @@ No jam, replay, or continuous denial TX. Hold-R pages are **not** used here.
 
 | Page | Content |
 |------|---------|
-| 1 Status | Radio path, Marauder, record, baseline, UART |
-| 2 Keys | Control cheat-sheet |
-| 3 Files | SD path, last report number |
-| 4 Limits | Honest non-claims |
+| 1 Radio | RF path, SPI, Marauder, GPS source |
+| 2 State | Record, baseline, lock target, dump, UART |
+| 3 Keys | Control cheat-sheet |
+| 4 Files | SD path, last report number |
+| 5 Limits | Honest non-claims |
 
 ## Analyzer (Hold Left on RF / Wi / BT / nR)
 
@@ -116,6 +125,8 @@ No jam, replay, or continuous denial TX. Hold-R pages are **not** used here.
 ## Settings (Back)
 
 Groups: Feedback · Wireless · Radio · GPS · Session  
+
+Every value toggle confirms with a soft tick/beep (respects Sound/Vibro).
 
 | Item | Role |
 |------|------|
@@ -151,7 +162,8 @@ Settings → FullSweep → OK:
 1. RF, Wi-Fi, BLE, nRF24, GPS each with **hard timeouts** (GPS ≤ 8 s)  
 2. nRF skipped immediately if SPI path is not nRF24  
 3. Session closed; `report-N.txt` written  
-4. Info tab + inverted **SWEEP DONE** banner  
+4. Progress shows in the **top strip** (`FULL RF 10s`) — tab footers stay visible  
+5. Inverted **SWEEP DONE** banner after auto-save
 
 ## Hardware notes (BFFB)
 

@@ -48,5 +48,39 @@
       "FAP builds"
     ],
     "passes": true
+  },
+  {
+    "category": "ui",
+    "description": "UI/UX spread: fix text/UI collisions on crowded tabs (2026-08-13)",
+    "steps": [
+      "room_sweep_ui_layout.h constants + host test",
+      "RF survey header/hint/badge, S/V removal, FullSweep banner to top strip",
+      "Info tab 5 pages, WiFi/BLE list 8px pitch",
+      "Spec: specs/ui-ux-2026-08-13.md"
+    ],
+    "passes": true
+  },
+  {
+    "category": "ui",
+    "description": "Input leverage: tap/hold tactile feedback, RF hold-card, GPS hold-OK retry",
+    "steps": [
+      "room_sweep_input.h browse-phase + touch tracker (host tests)",
+      "Press tick / hold-confirm pulses respect Vibro setting",
+      "RF Hold Up/Down lock card; GPS Hold OK = NMEA retry",
+      "Uniform settings toggle confirmation"
+    ],
+    "passes": true
+  },
+  {
+    "category": "verification",
+    "description": "init.sh host tests + ufbt build + _verify_api + device deploy (2026-08-13)",
+    "steps": [
+      "Run ./init.sh",
+      "All suites PASS",
+      "FAP builds",
+      "python3 _verify_api.py clean",
+      "ufbt launch on flip_XXXX0"
+    ],
+    "passes": true
   }
 ]
