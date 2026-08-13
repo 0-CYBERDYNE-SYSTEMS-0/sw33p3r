@@ -1,19 +1,27 @@
-# fix_plan.md — Room Sweep field-test 3 (graph-engineering)
+# fix_plan.md — Room Sweep (graph-engineering)
 
 ## DONE (prior sessions)
 [x] v3.0 / v3.0.1 tabs, TX guards, NMEA fixes, settings crash, Back routing
+[x] Marauder scan timeout, GPS stream, GPS UI, per-tab feedback (2026-08-01)
+[x] Full-sweep expansion, Room Report, nRF24 RPD survey (2026-08-09)
 
-## DONE (this mission — 2026-08-01)
+## DONE (this mission — 2026-08-13, UI/UX spread)
 
-[x] P0: Fix Marauder scan timeout — never treat last_data_tick==0 as expired; ERR only after full timeout with zero results (BLE dedup silence is OK)
-[x] P0: GPS request stream — send `nmea` on GPS tab enter; stopscan on leave; poll `gps -g nmea` if silent
-[x] P1: GPS UI full use — speed, course, mark+haversine distance, sat quality, honest status labels
-[x] P1: Per-tab feedback — centralize LED/sound/vibro by mode (RF/WiFi/BLE/GPS/TX); remove RF-thread LED monopoly
-[x] P2: Host tests for timeout decision + haversine; init.sh includes them
-[x] P2: Build + deploy to Flipper USB; device smoke (BLE stay-alive 8s, GPS tab, feedback toggles, no crash)
+[x] Layout constants header + host test (`room_sweep_ui_layout.h`)
+[x] Input seam: browse-phase classifier + tap/hold touch tracker (`room_sweep_input.h`, host tests)
+[x] Collision fixes: RF Survey header/hint/SIGNAL, S/V header glyphs removed,
+    FullSweep banner → top strip, Info 5 pages, WiFi/BLE list pitch 8px
+[x] Input leverage: tap tick / hold-confirm pulses, RF Hold U/D lock card,
+    GPS Hold OK = NMEA retry, uniform settings toggle confirmation
+[x] Pitfall #18 (no swipe InputTypes on mntm-012)
+[x] Gate: ./init.sh + ufbt + _verify_api.py all green; deployed via ufbt launch
 
-## DEFERRED
+Plan: `specs/ui-ux-2026-08-13.md` (mission contract graph).
+Restore: tag `restore/pre-ui-ux-2026-08-13` @ aaef4b1.
+
+## PENDING (user)
+
+[ ] Visual QA on device: header collisions gone, RF lock card via Hold U/D,
+    tap/hold pulses, FullSweep strip banner, Info 5 pages
 [ ] Field-test TX radiate (user consent)
-[ ] Capture live BFFB line dumps if parser still mismatches after timeout fix
-[ ] Visual confirm BLE list populates with BFFB attached + nearby devices
-[ ] Visual confirm outdoor GPS FIX with module
+[ ] Capture live BFFB line dumps if parser still mismatches
