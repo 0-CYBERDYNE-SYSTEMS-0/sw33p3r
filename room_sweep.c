@@ -2984,9 +2984,11 @@ static void draw_rf_waterfall(Canvas* canvas, App* app) {
     canvas_draw_str(canvas, UI_MARGIN_X, UI_ROW_FOOTER_BASELINE, "U/D:mode H:card");
 }
 
-/* GPS Radar page: mark-centered, north-up, REAL meters (no RSSI fiction). */
+/* GPS Radar page: mark-centered, north-up, REAL meters (no RSSI fiction).
+ * The tab header (GPS / status / "Radar") is already drawn above by the
+ * caller — this page only owns the body. */
 static void draw_gps_radar(Canvas* canvas, App* app, const GpsFix* gps, bool fresh) {
-    const uint8_t cx = 64, cy = 31, max_r = 22;
+    const uint8_t cx = 70, cy = 36, max_r = 20;
     char buf[48];
 
     if(!app->gps_mark_set) {
@@ -3017,21 +3019,14 @@ static void draw_gps_radar(Canvas* canvas, App* app, const GpsFix* gps, bool fre
     uint32_t bearing = room_sweep_radar_bearing_deg(
         mark_lat, mark_lon, now_lat, now_lon);
 
-    canvas_set_font(canvas, FontKeyboard);
-    canvas_draw_str(canvas, UI_MARGIN_X, UI_ROW_HEADER_BASELINE, "GPS RADAR");
-    snprintf(buf, sizeof(buf), "%ludeg", (unsigned long)bearing);
-    uint16_t bw = canvas_string_width(canvas, buf);
-    canvas_draw_str(canvas, (uint8_t)(126 - bw), UI_ROW_HEADER_BASELINE, buf);
-
-    /* Rings: unit maps 3 rings across max_r. */
+    /* Rings: unit maps 3 rings across max_r; north tick on the circle top. */
     uint8_t r3 = max_r;
     uint8_t r2 = (uint8_t)((uint32_t)max_r * 2U / 3U);
     uint8_t r1 = (uint8_t)((uint32_t)max_r / 3U);
     canvas_draw_circle(canvas, cx, cy, r3);
     canvas_draw_circle(canvas, cx, cy, r2);
     canvas_draw_circle(canvas, cx, cy, r1);
-    /* North tick */
-    canvas_draw_str(canvas, (uint8_t)(cx - 2), 7, "N");
+    canvas_draw_line(canvas, cx, (int32_t)(cy - r3 - 2), cx, (int32_t)(cy - r3 + 1));
 
     uint8_t phase = (uint8_t)(app->tick_count & 0xFFU);
     int16_t sweep_a = (int16_t)((phase * 8U) % 360U);
@@ -3058,20 +3053,24 @@ static void draw_gps_radar(Canvas* canvas, App* app, const GpsFix* gps, bool fre
         }
     }
     /* Mark at the center: cross. */
-    canvas_draw_line(canvas, cx - 3, cy, cx + 3, cy);
-    canvas_draw_line(canvas, cx, cy - 3, cx, cy + 3);
+    canvas_draw_line(canvas, (int32_t)(cx - 3), cy, (int32_t)(cx + 3), cy);
+    canvas_draw_line(canvas, cx, (int32_t)(cy - 3), cx, (int32_t)(cy + 3));
 
-    /* Readouts */
+    /* Left-column readouts (clear of the radar circle at x≥50). */
     canvas_set_font(canvas, FontKeyboard);
+    snprintf(buf, sizeof(buf), "%ludeg true", (unsigned long)bearing);
+    canvas_draw_str(canvas, UI_MARGIN_X, 26, buf);
     if(dist_m >= 1000.0f) {
         snprintf(buf, sizeof(buf), "%.2fkm", (double)(dist_m / 1000.0f));
     } else {
         snprintf(buf, sizeof(buf), "%.1fm", (double)dist_m);
     }
-    canvas_draw_str(canvas, 2, 60, buf);
+    canvas_draw_str(canvas, UI_MARGIN_X, 38, buf);
     snprintf(buf, sizeof(buf), "ring %s", room_sweep_radar_ring_label(unit));
-    canvas_draw_str(canvas, 2, UI_ROW_FOOTER_BASELINE, buf);
-    canvas_draw_str(canvas, 70, UI_ROW_FOOTER_BASELINE, "true bearing");
+    canvas_draw_str(canvas, UI_MARGIN_X, 50, buf);
+
+    canvas_draw_str(canvas, UI_MARGIN_X, UI_ROW_FOOTER_BASELINE, "HOK=retry");
+    canvas_draw_str(canvas, 78, UI_ROW_FOOTER_BASELINE, "U/D page");
 }
 
 static void analyzer_feed_tick(App* app) {
