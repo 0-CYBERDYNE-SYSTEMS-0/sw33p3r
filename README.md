@@ -126,6 +126,11 @@ python3 _verify_api.py
 - No observation ≠ proof of absence.
 - TX is a **bounded carrier** test, not replay or blocking.
 - nRF24 path is **RPD / activity**, not mousejack or jam.
+- **No compass/IMU from a FAP:** radar bearing is a true (north-up) map
+  bearing. GPS course-over-ground (already parsed as `spd/crs`) is the only
+  available heading source and only while moving — stationary device heading
+  is impossible without new hardware. A course-up steering radar is planned
+  around that data (see USER_GUIDE → GPS).
 
 ## Docs index
 
