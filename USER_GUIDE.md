@@ -104,9 +104,18 @@ Coordinates in logs only if **GPS Log** ON.
 centered on the **mark**; your live position is the blip at true bearing +
 real haversine distance; rings are auto-scaled meters (2m…1km); the trail of
 your last ~8 fixes draws your approach path; the cross at the center is the
-mark itself. Bearing is **true north** — the Flipper has no compass, so face
-the blip toward the top of the screen to walk straight at it. Position
-history is in-RAM only and is never written to the session log.
+mark itself. Bearing is **true north** (map bearing, north-up) — the Flipper
+has no compass, so while walking, face the blip toward the top of the screen
+to walk straight at it. Position history is in-RAM only and is never written
+to the session log.
+
+**Heading reality check (verified against the SDK):** a GPS receiver cannot
+sense a stationary device's facing, and a FAP has no IMU/magnetometer access
+(Pitfall #20), so there is no stationary compass. But the app already parses
+GPS **course-over-ground** (`spd/crs` on Summary) — the true-north direction
+of movement while walking ≥ ~0.5 m/s. A planned course-up mode will rotate
+this radar so screen-top = your walking direction, turning the blip into pure
+left/right steering guidance. Until then: north-up map + true bearing.
 
 ### TX (safety-gated)
 

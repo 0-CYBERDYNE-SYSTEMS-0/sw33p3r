@@ -96,3 +96,16 @@ room_sweep.c/h, init.sh, docs, git.
 - V1 gate: ./init.sh ALL PASS (16 suites) + ufbt + _verify_api 64/64 CLEAN.
 - V2: ufbt launch OK on flip_XXXX0 (app closed via CLI first).
 - Field verify pending: user visual QA of radar/waterfall/meter/GPS-radar.
+
+## Addendum — heading capability verification (2026-08-13)
+
+Post-mission verification of "can we get true north?":
+- Static device heading: impossible. GPS = position only; no magnetometer on
+  Flipper/BFFB; no IMU symbols exported for FAPs (Pitfall #20).
+- Moving true-north heading: possible and data already present — RMC
+  course-over-ground parsed into `GpsFix.course`/`speed_kts`, displayed
+  (spd/crs) and logged (course_deg); independently derivable from successive
+  trail fixes via `room_sweep_radar_bearing_deg()`.
+- Planned (not yet built): course-up steering radar (screen-top = COG,
+  blip angle = bearing − COG), speed-gated (≥ ~0.5 m/s), with a
+  "walk 2m for heading" fallback. Docs updated accordingly.

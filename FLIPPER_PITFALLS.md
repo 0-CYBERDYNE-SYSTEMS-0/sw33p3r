@@ -44,6 +44,21 @@ fixed-point implemented inside the app (Room Sweep uses `room_sweep_radar.h`:
 (`canvas_draw_circle`, `canvas_draw_disc`, `canvas_draw_triangle`) and
 `FontBigNumbers` ARE exported and verified usable.
 
+## Pitfall #20: No IMU/compass access from a FAP — GPS COG is the only heading source
+
+**Date:** 2026-08-13
+**Source:** `api_symbols.csv` (API 87.1) — zero `imu_*` / `furi_hal_imu_*` /
+accelerometer/gyro symbols exported; no imu service headers in the SDK.
+
+A FAP cannot read the LSM6DSO. Stationary device heading is therefore
+impossible to compute (no magnetometer anywhere: Flipper or BFFB). The only
+true-north heading available is **course-over-ground (COG)** from NMEA RMC/VTG
+while moving ≥ ~0.5 m/s — already parsed into `GpsFix.speed_kts` / `.course`
+(nmea.h) and already logged to the session CSV (`course_deg`). This enables
+course-up steering displays (`bearing − COG`), but never a stationary compass.
+COG can also be derived from two successive trail fixes via
+`room_sweep_radar_bearing_deg()` if RMC course is absent.
+
 ## Pitfall #17: BFFB switch map — ESP32 is NOT switched
 
 **Date:** 2026-08-02  

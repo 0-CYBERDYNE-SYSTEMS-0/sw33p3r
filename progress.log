@@ -66,3 +66,9 @@
 - Honesty: RSSI rings labeled "not meters"; GPS radar uses real haversine meters; trail in-RAM only
 - Gate: ./init.sh 16 suites PASS; ufbt Target 7 API 87.1; _verify_api 64/64 CLEAN
 - Deploy: ufbt launch OK on flip_XXXX0; user visual QA pending
+
+## Iteration: docs — heading capability verification (2026-08-13)
+- Verified: no IMU/compass access from FAP (no exported imu symbols) → Pitfall #20
+- Verified: RMC COG already parsed (nmea.h speed_kts/course), logged, displayed
+- Docs: README limits + USER_GUIDE GPS radar + Pitfall #20 + spec addendum
+- Next candidate mission: course-up steering radar (bearing − COG, speed-gated)
