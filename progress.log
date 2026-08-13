@@ -55,3 +55,14 @@
 - Gate: ./init.sh ALL PASS; ufbt Target 7 API 87.1; _verify_api.py CLEAN (63/63)
 - Deploy: ufbt launch OK on flip_XXXX0 (mntm-012, e1784e74); CLI responsive
 - Field verify pending: user visual QA of headers/card/pulses on device
+
+## Iteration: Meter Suite — radar / waterfall / big-meter / GPS hunt radar (2026-08-13)
+- Restore point: tag restore/pre-meter-suite-2026-08-13 @ 0397d5d; branch feat/meter-suite-2026-08-13
+- Mission contract graph: specs/meter-suite-2026-08-13.md (3 parallel agents + orchestrator)
+- Platform: canvas circle/disc/triangle + FontBigNumbers exported; libm NOT exported → Pitfall #19
+- New headers (host-tested): room_sweep_radar.h (integer trig/bearing/rings), room_sweep_waterfall.h, GPS trail
+- Views: analyzer now 4 pages (Hunt/Field/Radar/Meter); RF sub-mode 4 = Waterfall (2.5 Hz scroll + peak-hold);
+  GPS page 3 = mark-centered walk-to radar (true bearing, auto meter rings, 8-fix trail)
+- Honesty: RSSI rings labeled "not meters"; GPS radar uses real haversine meters; trail in-RAM only
+- Gate: ./init.sh 16 suites PASS; ufbt Target 7 API 87.1; _verify_api 64/64 CLEAN
+- Deploy: ufbt launch OK on flip_XXXX0; user visual QA pending

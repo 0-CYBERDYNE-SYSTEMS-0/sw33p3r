@@ -31,16 +31,24 @@ tab headers).
 
 ### RF
 
-**Up/Down** = Survey / Sweep / Peak. **Hold Up/Down** = open the lock/map
-card from any sub-mode (Up/Down returns to the map).
+**Up/Down** = Survey / Sweep / Peak / **Waterfall**. **Hold Up/Down** = open
+the lock/map card from any sub-mode (Up/Down returns to the map).
 
 | Sub-mode | OK | Hold OK | Hold Right |
 |----------|-----|---------|------------|
 | Survey | — (continuous presets) | Lock qualified hit | Map ↔ **Lock card** |
 | Sweep | Start/cancel band sweep | Lock result | **Band** step while idle on map |
 | Peak | Start/cancel refine | Lock result | Map ↔ **Lock card** |
+| Waterfall | — (passive history) | Lock qualified hit | Map ↔ **Lock card** |
 
-Hold Left = analyzer (Hunt meter / Field spectrum).
+Hold Left = analyzer (Hunt meter / Field spectrum / Radar / Big meter).
+
+### Waterfall (RF sub-mode)
+
+Scrolling spectrum history of the 16 presets — newest column on the right,
+~2.5 snapshots/second, per-channel **peak-hold dots** on the right edge and
+a dashed alert-threshold line. Purely passive: read the room's RF activity
+over the last ~10 seconds at a glance.
 
 ### Wi-Fi
 
@@ -87,9 +95,18 @@ Same page/control pattern as Wi-Fi. Command: `sniffbt`.
 |------|---------|
 | Summary | Time, sats bar, position, speed/course, mark distance |
 | Detail | Date, NMEA counters, age, drops |
+| **Radar** | Mark-centered, north-up **real meters** — you walk toward the center |
 
 **OK** = set mark. **Hold OK** = NMEA retry (reinit stream / baud swap).
 Coordinates in logs only if **GPS Log** ON.
+
+**GPS Radar (walk-to-target):** set a mark (OK), then walk. The radar is
+centered on the **mark**; your live position is the blip at true bearing +
+real haversine distance; rings are auto-scaled meters (2m…1km); the trail of
+your last ~8 fixes draws your approach path; the cross at the center is the
+mark itself. Bearing is **true north** — the Flipper has no compass, so face
+the blip toward the top of the screen to walk straight at it. Position
+history is in-RAM only and is never written to the session log.
 
 ### TX (safety-gated)
 
@@ -117,10 +134,14 @@ No jam, replay, or continuous denial TX. Hold-R pages are **not** used here.
 |-------------------|------|
 | **Hunt** | Fat continuous bar + CLOSER/FARTHER/STALE/LOST |
 | **Field** | Peer/spectrum bars for context |
+| **Radar** | Polar view: rings = RSSI, angle = channel wheel, sweep line, locked target blinks as a diamond |
+| **Meter** | FontBigNumbers dBm + peak hold + trend |
 
 - Hunt meters **one** selected (or locked) source.  
 - Fresh samples move the bar; silence ages out to zero.  
-- While Wi/BT analyzer is open, scan is **kept alive** for samples.
+- While Wi/BT analyzer is open, scan is **kept alive** for samples.  
+- The radar ring scale is **RSSI, not meters** — the display says so. Real
+  meters exist only on the GPS tab's Radar page (with a real fix).
 
 ## Settings (Back)
 

@@ -4,24 +4,25 @@
 [x] v3.0 / v3.0.1 tabs, TX guards, NMEA fixes, settings crash, Back routing
 [x] Marauder scan timeout, GPS stream, GPS UI, per-tab feedback (2026-08-01)
 [x] Full-sweep expansion, Room Report, nRF24 RPD survey (2026-08-09)
+[x] UI/UX spread: collision fixes, layout constants, tap/hold feedback (2026-08-13)
 
-## DONE (this mission — 2026-08-13, UI/UX spread)
+## DONE (this mission — 2026-08-13, Meter Suite)
 
-[x] Layout constants header + host test (`room_sweep_ui_layout.h`)
-[x] Input seam: browse-phase classifier + tap/hold touch tracker (`room_sweep_input.h`, host tests)
-[x] Collision fixes: RF Survey header/hint/SIGNAL, S/V header glyphs removed,
-    FullSweep banner → top strip, Info 5 pages, WiFi/BLE list pitch 8px
-[x] Input leverage: tap tick / hold-confirm pulses, RF Hold U/D lock card,
-    GPS Hold OK = NMEA retry, uniform settings toggle confirmation
-[x] Pitfall #18 (no swipe InputTypes on mntm-012)
-[x] Gate: ./init.sh + ufbt + _verify_api.py all green; deployed via ufbt launch
+[x] Integer trig radar math + host tests (room_sweep_radar.h)
+[x] Scrolling RF waterfall history + host tests (room_sweep_waterfall.h)
+[x] GPS trail ring + Radar page (room_sweep_gps_state.h)
+[x] Analyzer 4 pages: Hunt / Field / Radar / Big-number Meter
+[x] RF sub-mode 4: Waterfall (2.5 Hz, peak-hold edge, threshold line)
+[x] GPS walk-to radar: mark-centered, true bearing, auto meter rings, trail
+[x] Pitfall #19 (no libm in export table)
+[x] Gate: ./init.sh + ufbt + _verify_api green; deployed via ufbt launch
 
-Plan: `specs/ui-ux-2026-08-13.md` (mission contract graph).
-Restore: tag `restore/pre-ui-ux-2026-08-13` @ aaef4b1.
+Plan: `specs/meter-suite-2026-08-13.md` (mission contract graph).
+Restore: tag `restore/pre-meter-suite-2026-08-13` @ 0397d5d.
 
 ## PENDING (user)
 
-[ ] Visual QA on device: header collisions gone, RF lock card via Hold U/D,
-    tap/hold pulses, FullSweep strip banner, Info 5 pages
+[ ] Visual QA on device: radar sweep/blips, waterfall scroll, big meter,
+    GPS radar walk-to (needs outdoor fix), honest labels
 [ ] Field-test TX radiate (user consent)
 [ ] Capture live BFFB line dumps if parser still mismatches

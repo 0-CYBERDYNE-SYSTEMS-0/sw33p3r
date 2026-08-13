@@ -72,6 +72,18 @@
     "passes": true
   },
   {
+    "category": "ui",
+    "description": "Meter suite: polar RSSI radar, waterfall history, big-number meter, GPS walk-to radar",
+    "steps": [
+      "room_sweep_radar.h integer trig (sin/atan2/bearing/rings) + host tests",
+      "room_sweep_waterfall.h scrolling spectrum + host tests",
+      "GPS trail ring + Radar page in room_sweep_gps_state.h",
+      "Analyzer 4 pages, RF Waterfall sub-mode, GPS Radar page",
+      "Honest labels: RSSI rings not meters; GPS radar real meters"
+    ],
+    "passes": true
+  },
+  {
     "category": "verification",
     "description": "init.sh host tests + ufbt build + _verify_api + device deploy (2026-08-13)",
     "steps": [
