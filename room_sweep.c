@@ -3101,8 +3101,10 @@ static void draw_rf_survey(Canvas* canvas, App* app) {
      * the bar area onto this row so it no longer hides the live data. */
     canvas_set_font(canvas, FontKeyboard);
     if(app->rf_alert) {
+        /* White backing on the meta row only — must not cover the title row
+         * above (y9..15) or the header glyphs. */
         canvas_set_color(canvas, ColorWhite);
-        canvas_draw_box(canvas, 1, 15, 37, 9);
+        canvas_draw_box(canvas, 1, 17, 37, 8);
         canvas_set_color(canvas, ColorBlack);
         canvas_draw_str(canvas, UI_MARGIN_X, UI_ROW_BODY_FIRST_BASELINE, "SIGNAL!");
     } else if(app->target_kind == TargetRF) {
