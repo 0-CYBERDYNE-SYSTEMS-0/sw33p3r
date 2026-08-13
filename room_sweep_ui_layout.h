@@ -1,0 +1,90 @@
+#pragma once
+
+#include <stdbool.h>
+#include <stdint.h>
+
+/*
+ * Room Sweep — 128x64 panel layout constants and text-placement helpers.
+ * Header-only and Flipper-header-free so host tests compile with plain cc.
+ * Integer math only: the project builds with -Wdouble-promotion as an error.
+ */
+
+/* Full panel size: the Flipper display is 128x64. */
+#define UI_W 128
+#define UI_H 64
+
+/* Tab strip covers y0-5 (5px glyphs + 1px separator). */
+#define UI_TAB_STRIP_H 6
+
+/* Header baseline: first text line below the tab strip (glyphs y9-14). */
+#define UI_ROW_HEADER_BASELINE 14
+
+/* Baseline of the first body row below the header. */
+#define UI_ROW_BODY_FIRST_BASELINE 22
+
+/* Vertical pitch between consecutive body-row baselines. */
+#define UI_ROW_BODY_PITCH 10
+
+/* Baseline of the single footer text row. */
+#define UI_ROW_FOOTER_BASELINE 63
+
+/* Top of the footer band spanning y57-64. */
+#define UI_FOOTER_BAND_TOP 57
+
+/* Left text margin in px. */
+#define UI_MARGIN_X 2
+
+/* Rightmost x any text may reach (2px margin from the 128px edge). */
+#define UI_TEXT_RIGHT_EDGE 126
+
+/* FontKeyboard glyph width in px (smallest font, ~25 chars/line). */
+#define UI_FONT_KEYBOARD_PX 5
+
+/* FontSecondary glyph width in px (body text). */
+#define UI_FONT_SECONDARY_PX 6
+
+/*
+ * Number of row baselines in [top_baseline, bottom_baseline] at the given
+ * pitch (bottom baseline inclusive). Rejects a zero pitch or an inverted
+ * band, both of which would otherwise loop or count forever.
+ */
+static inline uint8_t room_sweep_ui_rows_between(
+    uint8_t top_baseline,
+    uint8_t bottom_baseline,
+    uint8_t pitch) {
+    if(pitch == 0 || top_baseline > bottom_baseline) return 0;
+    return (uint8_t)((uint32_t)(bottom_baseline - top_baseline) / pitch + 1U);
+}
+
+/*
+ * True iff char_count chars at px_per_char fit between start_x and the right
+ * margin. Empty text always fits: with nothing to draw, a start beyond the
+ * margin is harmless (documented choice). The width multiply runs in unsigned
+ * 32-bit so start_x + count*px cannot overflow a promoted int.
+ */
+static inline bool room_sweep_ui_text_fits(
+    uint8_t start_x,
+    uint8_t char_count,
+    uint8_t px_per_char) {
+    if(char_count == 0) return true;
+    return (uint32_t)start_x + (uint32_t)char_count * px_per_char <=
+           UI_TEXT_RIGHT_EDGE;
+}
+
+/* Start x right-aligning text_px against right_edge; 0 if text is wider. */
+static inline uint8_t room_sweep_ui_right_align_x(uint8_t right_edge, uint8_t text_px) {
+    if(text_px > right_edge) return 0;
+    return (uint8_t)(right_edge - text_px);
+}
+
+/*
+ * Start x centering text_px inside [box_x, box_x + box_w], clamped so it never
+ * exceeds box_x + box_w. Text at least as wide as the box flushes to box_x.
+ */
+static inline uint8_t room_sweep_ui_center_x(uint8_t box_x, uint8_t box_w, uint8_t text_px) {
+    uint32_t box_right = (uint32_t)box_x + box_w;
+    if(text_px >= box_w) return box_x;
+    uint32_t x = (uint32_t)box_x + (uint32_t)(box_w - text_px) / 2U;
+    if(x > box_right) x = box_right;
+    return (uint8_t)x;
+}

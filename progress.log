@@ -40,3 +40,18 @@
 - ufbt Target 7 API 87.1; FAP 88296b
 - FAP SHA-256: 0d68feab3f4e54a5de3bc5df5f6776028fdc1e10f182598b10a339c139863110
 - Device field verify deferred: nRF24 RPD with BFFB bottom switch down + OTG
+
+## Iteration: UI/UX spread & input leverage (2026-08-13)
+- Restore point: tag restore/pre-ui-ux-2026-08-13 @ aaef4b1; branch feat/ui-ux-spread-2026-08-13
+- Mission contract graph: specs/ui-ux-2026-08-13.md (nodes A1/A2 delegated to parallel agents)
+- Constraint found: mntm-012 InputType has NO swipe events (Press/Release/Short/Long/Repeat only) — Pitfall #18
+- Layout constants: room_sweep_ui_layout.h + tests/test_ui_layout.c (host, 18 checks)
+- Input seam: browse-phase classifier + touch tracker in room_sweep_input.h + tests/test_input_touch.c (48 checks); legacy safety table untouched
+- Collision fixes: RF Survey header (peak vs [SURVEY EXT]), hint overflow, SIGNAL badge moved out of bars,
+  S/V glyphs removed from headers, FullSweep banner moved to top strip (no longer erases footers),
+  Info tab 5 pages (radio/state/keys/files/limits), WiFi/BLE list pitch 8px
+- Input leverage: tap tick + hold-confirm double pulse (respects Vibro setting), RF Hold Up/Down lock card,
+  GPS Hold OK = NMEA retry, uniform settings toggle confirmation
+- Gate: ./init.sh ALL PASS; ufbt Target 7 API 87.1; _verify_api.py CLEAN (63/63)
+- Deploy: ufbt launch OK on flip_XXXX0 (mntm-012, e1784e74); CLI responsive
+- Field verify pending: user visual QA of headers/card/pulses on device

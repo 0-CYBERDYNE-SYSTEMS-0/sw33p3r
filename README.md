@@ -18,6 +18,9 @@ Exact-label HTML map (open in a browser for crisp text):
 - [`docs/room_sweep_control_map.html`](docs/room_sweep_control_map.html)
 - Image asset: [`docs/room_sweep_control_map.jpg`](docs/room_sweep_control_map.jpg)
 
+The map shows structure; the **Controls** tables below are authoritative for
+input details (Hold ▲/▼ lock card, GPS Hold-OK retry, tap/hold pulses).
+
 Full operator detail: [`USER_GUIDE.md`](USER_GUIDE.md) · scope: [`MISSION.md`](MISSION.md).
 
 ## Hardware
@@ -54,10 +57,14 @@ forces internal CC1101 when nRF24 is selected.
 | **Hold ◀** | Analyzer on/off (RF, Wi, BT, nR) |
 | **Hold ▶** | **Page inside mode** (see below) |
 | **▲/▼** | Browse selection or RF sub-mode / GPS-Info pages |
-| **OK** | Primary action (scan, start sweep, arm TX, …) |
-| **Hold OK** | Lock target (or confirm TX when armed) |
+| **Hold ▲/▼** | **RF lock card** open/close (RF tab) |
+| **OK** | Primary action (scan, start sweep, arm TX, GPS mark, …) |
+| **Hold OK** | Lock target (or confirm TX when armed). On **GPS**: NMEA retry |
 | **Back** | Settings (or disarm TX) |
 | **Hold Back** | Exit app |
+
+With **Vibro** ON, a tap gives one soft pulse and a hold gives a double pulse
+on release. Sound/Vibro state lives in **Settings → Feedback**.
 
 ### Hold ▶ pages by mode
 
@@ -68,10 +75,12 @@ forces internal CC1101 when nRF24 is selected.
 | **nR** | Status ↔ Results |
 | **Analyzer** (after Hold L) | Hunt (fat meter) ↔ Field (peer/spectrum bars) |
 | **GPS** | Summary ↔ Detail (also ▲/▼) |
-| **Info** | Status → Keys → Files → Limits (also ▲/▼) |
+| **Info** | Radio → State → Keys → Files → Limits (also ▲/▼) |
 | **TX** | No extra pages (safety-critical) |
 
 Scan window **15/30/60s** is **Settings → ScanWin** (not Hold R).
+While a **FullSweep** runs, the top strip shows `FULL <phase> <s>` progress
+instead of the tab labels; every tab keeps its footer hints visible.
 
 ### Analyzer metering (Wi/BT)
 

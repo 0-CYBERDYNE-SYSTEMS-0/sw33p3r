@@ -47,6 +47,14 @@ echo "== host analyzer / proximity meter =="
 cc -std=c11 -Wall -Wextra -Werror -I. tests/test_analyzer_state.c -o /tmp/room_sweep_analyzer_test
 /tmp/room_sweep_analyzer_test
 
+echo "== host UI layout helpers =="
+cc -std=c11 -Wall -Wextra -Werror -pedantic -I. tests/test_ui_layout.c -o /tmp/room_sweep_ui_layout_test
+/tmp/room_sweep_ui_layout_test
+
+echo "== host input touch / browse-phase seam =="
+cc -std=c11 -Wall -Wextra -Werror -pedantic -I. tests/test_input_touch.c -o /tmp/room_sweep_input_touch_test
+/tmp/room_sweep_input_touch_test
+
 if [[ -f tests/test_scan_logic.c ]]; then
   echo "== host scan/GPS helpers =="
   cc -std=c11 -Wall -Wextra -Werror -I. tests/test_scan_logic.c -o /tmp/test_scan_logic
