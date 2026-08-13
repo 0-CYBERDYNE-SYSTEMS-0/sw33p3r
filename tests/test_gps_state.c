@@ -27,23 +27,30 @@ int main(void) {
         .stale_timeout_ms = ROOM_SWEEP_GPS_DEFAULT_STALE_TIMEOUT_MS,
     };
 
-    /* Up/Down page browsing is exactly two pages and wraps in both directions. */
+    /* Up/Down page browsing cycles three pages and wraps in both directions. */
     check(
         room_sweep_gps_page_next(RoomSweepGpsPageSummary) == RoomSweepGpsPageDetail,
         "summary Down reaches detail page");
     check(
-        room_sweep_gps_page_next(RoomSweepGpsPageDetail) == RoomSweepGpsPageSummary,
-        "detail Down wraps to summary page");
+        room_sweep_gps_page_next(RoomSweepGpsPageDetail) == RoomSweepGpsPageRadar,
+        "detail Down reaches radar page");
     check(
-        room_sweep_gps_page_prev(RoomSweepGpsPageSummary) == RoomSweepGpsPageDetail,
-        "summary Up wraps to detail page");
+        room_sweep_gps_page_next(RoomSweepGpsPageRadar) == RoomSweepGpsPageSummary,
+        "radar Down wraps to summary page");
+    check(
+        room_sweep_gps_page_prev(RoomSweepGpsPageSummary) == RoomSweepGpsPageRadar,
+        "summary Up wraps to radar page");
+    check(
+        room_sweep_gps_page_prev(RoomSweepGpsPageRadar) == RoomSweepGpsPageDetail,
+        "radar Up reaches detail page");
     check(
         room_sweep_gps_page_prev(RoomSweepGpsPageDetail) == RoomSweepGpsPageSummary,
         "detail Up reaches summary page");
     check(
         room_sweep_gps_page_text(RoomSweepGpsPageSummary)[0] == 'S' &&
-            room_sweep_gps_page_text(RoomSweepGpsPageDetail)[0] == 'D',
-        "both GPS page labels are discoverable");
+            room_sweep_gps_page_text(RoomSweepGpsPageDetail)[0] == 'D' &&
+            strcmp(room_sweep_gps_page_text(RoomSweepGpsPageRadar), "Radar") == 0,
+        "all three GPS page labels are discoverable");
 
     /* No transport is different from a connected transport with no sentences. */
     check(
@@ -113,6 +120,69 @@ int main(void) {
     check(
         room_sweep_gps_status(&snapshot) == RoomSweepGpsStatusWaiting,
         "optional external GPIO link reports WAIT before first sentence");
+
+    /* Trail ring buffer: dedupe within ~2 m, FIFO wrap after MAX points. */
+    {
+        RoomSweepGpsTrail trail;
+        const RoomSweepGpsTrailPoint* p;
+
+        room_sweep_gps_trail_clear(&trail);
+        check(trail.count == 0, "fresh trail starts empty");
+        check(
+            room_sweep_gps_trail_point_at(&trail, 0) == NULL,
+            "empty trail has no points");
+
+        room_sweep_gps_trail_push(&trail, 1000000, -70000000, 10);
+        check(trail.count == 1, "first push stores one point");
+        p = room_sweep_gps_trail_point_at(&trail, 0);
+        check(
+            p != NULL && p->lat_e6 == 1000000 && p->lon_e6 == -70000000 &&
+                p->tick == 10,
+            "newest point matches pushed coordinates and tick");
+
+        /* Identical spot dedupes. */
+        room_sweep_gps_trail_push(&trail, 1000000, -70000000, 20);
+        check(trail.count == 1, "identical spot is deduped");
+
+        /* 18 e6 in each axis is the ~2 m boundary: still deduped. */
+        room_sweep_gps_trail_push(&trail, 1000018, -70000018, 30);
+        check(trail.count == 1, "point within 2 m of newest is deduped");
+
+        /* 37 e6 (~4 m) of latitude movement must be stored. */
+        room_sweep_gps_trail_push(&trail, 1000037, -70000000, 40);
+        check(trail.count == 2, "movement past 2 m stores a second point");
+        p = room_sweep_gps_trail_point_at(&trail, 0);
+        check(p != NULL && p->tick == 40, "point_at(0) is the newest point");
+        p = room_sweep_gps_trail_point_at(&trail, 1);
+        check(p != NULL && p->tick == 10, "point_at(1) is the previous point");
+
+        /* MAX + 2 distinct pushes keep the MAX newest points in order. */
+        room_sweep_gps_trail_clear(&trail);
+        for(int i = 0; i < ROOM_SWEEP_GPS_TRAIL_MAX + 2; i++) {
+            room_sweep_gps_trail_push(
+                &trail, 1000 + 100 * i, 2000 + 100 * i, (uint32_t)(1000 + i));
+        }
+        check(
+            trail.count == ROOM_SWEEP_GPS_TRAIL_MAX,
+            "full trail caps at MAX points");
+        p = room_sweep_gps_trail_point_at(&trail, 0);
+        check(
+            p != NULL && p->tick == 1000 + ROOM_SWEEP_GPS_TRAIL_MAX + 1,
+            "wrap keeps the last pushed point as newest");
+        p = room_sweep_gps_trail_point_at(&trail, ROOM_SWEEP_GPS_TRAIL_MAX - 1);
+        check(
+            p != NULL && p->tick == 1002,
+            "point_at(MAX-1) is the oldest retained point");
+        check(
+            room_sweep_gps_trail_point_at(&trail, ROOM_SWEEP_GPS_TRAIL_MAX) == NULL,
+            "point_at(MAX) is out of range");
+
+        /* Clearing resets for the next session. */
+        room_sweep_gps_trail_clear(&trail);
+        check(
+            trail.count == 0 && room_sweep_gps_trail_point_at(&trail, 0) == NULL,
+            "clear empties a wrapped trail");
+    }
 
     printf("RESULT: %s (%d failure(s))\n", failures ? "FAIL" : "ALL PASS", failures);
     return failures ? 1 : 0;

@@ -41,13 +41,13 @@ forces internal CC1101 when nRF24 is selected.
 
 | Tab | Purpose |
 |-----|---------|
-| **RF** | Survey (16 presets) / band Sweep / Peak refine |
+| **RF** | Survey (16 presets) / band Sweep / Peak refine / **Waterfall history** |
 | **Wi** | Marauder `sniffbeacon` AP list + analyzer |
 | **BT** | Marauder `sniffbt` device list + analyzer |
 | **nR** | nRF24 RPD survey (detect only) + analyzer |
-| **GP** | GPS fix / sats / mark distance |
+| **GP** | GPS fix / sats / mark distance / **walk-to radar (real meters)** |
 | **TX** | Safety-gated arm → long-OK bounded carrier |
-| **i** | Status, keys, files, limits |
+| **i** | Status, state, keys, files, limits |
 
 ## Controls (current)
 
@@ -70,11 +70,11 @@ on release. Sound/Vibro state lives in **Settings → Feedback**.
 
 | Mode | Pages |
 |------|--------|
-| **RF** | Survey/Peak: map ↔ lock card. Sweep (idle map): band step |
+| **RF** | Survey/Peak/Waterfall: map ↔ lock card. Sweep (idle map): band step. Up/Down cycles Survey→Sweep→Peak→Waterfall |
 | **Wi / BT** | Detail → List → Help → … |
 | **nR** | Status ↔ Results |
-| **Analyzer** (after Hold L) | Hunt (fat meter) ↔ Field (peer/spectrum bars) |
-| **GPS** | Summary ↔ Detail (also ▲/▼) |
+| **Analyzer** (after Hold L) | Hunt → Field → **Radar** → **Meter** (polar RSSI rings, big-number dBm) |
+| **GPS** | Summary ↔ Detail ↔ **Radar** (mark-centered, true-bearing walk-to) |
 | **Info** | Radio → State → Keys → Files → Limits (also ▲/▼) |
 | **TX** | No extra pages (safety-critical) |
 

@@ -28,6 +28,8 @@
 #include "room_sweep.h"
 #include "room_sweep_input.h"
 #include "room_sweep_ui_layout.h"
+#include "room_sweep_radar.h"
+#include "room_sweep_waterfall.h"
 #include "room_sweep_report.h"
 #include "room_sweep_scan.h"
 #include "room_sweep_settings.h"
@@ -364,7 +366,7 @@ typedef struct {
 
     /* Per-scanner visual analyzer (proximity / spectrum) — Long Left toggles */
     bool analyzer_view; /* true while current scanner shows analyzer UI */
-    uint8_t analyzer_ui_page; /* 0=hunt meter, 1=field/spectrum */
+    uint8_t analyzer_ui_page; /* 0=hunt, 1=field, 2=radar, 3=big meter */
     RoomSweepAnalyzerState analyzer_rf;
     RoomSweepAnalyzerState analyzer_wifi;
     RoomSweepAnalyzerState analyzer_ble;
@@ -372,6 +374,14 @@ typedef struct {
     uint32_t analyzer_last_push_tick;
     bool analyzer_source_stale; /* last feed older than STALE_MS */
     bool analyzer_source_dead; /* faded to empty / no row */
+
+    /* Meter suite: scrolling RF spectrum waterfall (RF sub-mode, passive) */
+    RoomSweepWaterfallState waterfall;
+    uint32_t waterfall_last_push_tick;
+
+    /* GPS hunt trail (mark-centered radar, in-RAM only — never logged) */
+    RoomSweepGpsTrail gps_trail;
+    uint32_t gps_trail_last_push_tick;
 
     /* Per-mode content pages (Hold Right). TX has no pages. */
     uint8_t wifi_ui_page; /* 0=detail 1=list 2=help */
@@ -2708,8 +2718,360 @@ static void draw_proximity_analyzer(
     canvas_set_font(canvas, FontKeyboard);
     canvas_draw_box(canvas, 0, 57, 128, 7);
     canvas_set_color(canvas, ColorWhite);
-    canvas_draw_str(canvas, 2, 63, "L=list R=hunt  bars=peers");
+    canvas_draw_str(canvas, 2, 63, "L=list R=radar  bars=peers");
     canvas_set_color(canvas, ColorBlack);
+}
+
+/* ================================================================== */
+/* Meter suite — polar radar / big-number meter / RF waterfall         */
+/* ================================================================== */
+#define ANALYZER_RADAR_CX 64
+#define ANALYZER_RADAR_CY 31
+#define ANALYZER_RADAR_R 24
+
+typedef struct {
+    int16_t angle_deg;
+    uint8_t radius; /* 0 = silent, skip drawing */
+    bool locked;
+} RadarBlip;
+
+/* Gather polar blips for the current scanner mode. RSSI is mapped to radius
+ * and channel/index to angle; the locked target blinks as a diamond. */
+static uint8_t analyzer_radar_blips(App* app, RadarBlip* out) {
+    uint8_t n = 0;
+    furi_mutex_acquire(app->mutex, FuriWaitForever);
+    switch(app->mode) {
+    case SweepModeRF: {
+        for(uint8_t i = 0; i < RF_NUM_CHANNELS; i++) {
+            out[n].angle_deg =
+                (int16_t)room_sweep_radar_angle_for_channel(i, RF_NUM_CHANNELS);
+            out[n].radius =
+                room_sweep_radar_rssi_radius((int8_t)app->rssi[i], ANALYZER_RADAR_R);
+            out[n].locked =
+                app->target_kind == TargetRF && app->target_freq_hz == rf_channels[i];
+            n++;
+        }
+        break;
+    }
+    case SweepModeWifi: {
+        for(uint8_t i = 0; i < app->wifi_count && n < 16; i++) {
+            const WifiAp* ap = &app->wifi_aps[i];
+            if(!ap->valid) continue;
+            uint8_t ch = ap->channel > 0 ? ap->channel : 1;
+            out[n].angle_deg =
+                (int16_t)room_sweep_radar_angle_for_channel((uint8_t)(ch - 1U), 14);
+            out[n].radius = room_sweep_radar_rssi_radius(ap->rssi, ANALYZER_RADAR_R);
+            out[n].locked = app->target_kind == TargetWifi &&
+                            ((ap->bssid[0] && strcmp(app->target_id, ap->bssid) == 0) ||
+                             (ap->ssid[0] && strcmp(app->target_id, ap->ssid) == 0));
+            n++;
+        }
+        break;
+    }
+    case SweepModeBle: {
+        for(uint8_t i = 0; i < app->ble_count && n < 16; i++) {
+            const BleDev* dev = &app->ble_devs[i];
+            if(!dev->valid) continue;
+            out[n].angle_deg = (int16_t)room_sweep_radar_angle_for_channel(i, 12);
+            out[n].radius = room_sweep_radar_rssi_radius(dev->rssi, ANALYZER_RADAR_R);
+            out[n].locked = app->target_kind == TargetBle &&
+                            ((dev->mac[0] && strcmp(app->target_id, dev->mac) == 0) ||
+                             (dev->name[0] && strcmp(app->target_id, dev->name) == 0));
+            n++;
+        }
+        break;
+    }
+    case SweepModeNrf24: {
+        if(app->nrf24.phase == RoomSweepNrf24Scanning) {
+            out[n].angle_deg =
+                (int16_t)room_sweep_radar_angle_for_channel(app->nrf24.channel, 125);
+            uint8_t hit = app->nrf24.hits[app->nrf24.channel];
+            out[n].radius = room_sweep_radar_rssi_radius(
+                (int8_t)room_sweep_analyzer_activity_to_rssi(
+                    hit > 0 ? (uint8_t)(hit * 40) : 0),
+                ANALYZER_RADAR_R);
+            out[n].locked = false;
+            n++;
+        } else {
+            for(uint8_t i = 0; i < 3 && i < ROOM_SWEEP_NRF24_TOP_N; i++) {
+                if(app->nrf24.top_hits[i] == 0) continue;
+                out[n].angle_deg = (int16_t)room_sweep_radar_angle_for_channel(
+                    app->nrf24.top_channels[i], 125);
+                out[n].radius = room_sweep_radar_rssi_radius(
+                    (int8_t)room_sweep_analyzer_activity_to_rssi(
+                        app->nrf24.top_hits[i] > 6 ? 255 :
+                                                     (uint8_t)(app->nrf24.top_hits[i] * 40)),
+                    ANALYZER_RADAR_R);
+                out[n].locked = false;
+                n++;
+            }
+        }
+        break;
+    }
+    default:
+        break;
+    }
+    furi_mutex_release(app->mutex);
+    return n;
+}
+
+/* Polar radar page: rings = RSSI (honest label), sweep line, channel wheel. */
+static void draw_analyzer_radar(
+    Canvas* canvas,
+    App* app,
+    const char* title,
+    const RoomSweepAnalyzerState* an,
+    const RadarBlip* blips,
+    uint8_t blip_count) {
+    char buf[40];
+    uint8_t phase = (uint8_t)(app->tick_count & 0xFFU);
+
+    canvas_set_font(canvas, FontKeyboard);
+    snprintf(buf, sizeof(buf), "%s RADAR", title);
+    canvas_draw_str(canvas, UI_MARGIN_X, UI_ROW_HEADER_BASELINE, buf);
+    if(an) {
+        snprintf(buf, sizeof(buf), "%+ddBm", (int)an->live_rssi);
+        uint16_t w = canvas_string_width(canvas, buf);
+        canvas_draw_str(canvas, (uint8_t)(126 - w), UI_ROW_HEADER_BASELINE, buf);
+    }
+
+    /* dBm ring scale — labels map linearly to radii 24/18/12/6:
+     * (r/24)*107-127 → -20 / -47 / -74 / -100. */
+    canvas_draw_str(canvas, 2, 9, "-20");
+    canvas_draw_str(canvas, 2, 15, "-47");
+    canvas_draw_str(canvas, 2, 21, "-74");
+    canvas_draw_str(canvas, 2, 27, "-100");
+
+    canvas_draw_circle(canvas, ANALYZER_RADAR_CX, ANALYZER_RADAR_CY, ANALYZER_RADAR_R);
+    canvas_draw_circle(canvas, ANALYZER_RADAR_CX, ANALYZER_RADAR_CY, 18);
+    canvas_draw_circle(canvas, ANALYZER_RADAR_CX, ANALYZER_RADAR_CY, 12);
+    canvas_draw_circle(canvas, ANALYZER_RADAR_CX, ANALYZER_RADAR_CY, 6);
+
+    int16_t sweep_a = (int16_t)((phase * 8U) % 360U);
+    int16_t sx, sy;
+    room_sweep_radar_blip_xy(
+        sweep_a, ANALYZER_RADAR_R, ANALYZER_RADAR_CX, ANALYZER_RADAR_CY, &sx, &sy);
+    canvas_draw_line(canvas, ANALYZER_RADAR_CX, ANALYZER_RADAR_CY, sx, sy);
+
+    bool blink = ((app->tick_count / 8U) & 1U) != 0;
+    for(uint8_t i = 0; i < blip_count; i++) {
+        const RadarBlip* b = &blips[i];
+        if(b->radius == 0) continue;
+        int16_t bx, by;
+        room_sweep_radar_blip_xy(
+            b->angle_deg, b->radius, ANALYZER_RADAR_CX, ANALYZER_RADAR_CY, &bx, &by);
+        if(b->locked) {
+            if(!blink) continue;
+            canvas_draw_line(canvas, bx, (int8_t)(by - 3), (int8_t)(bx + 3), by);
+            canvas_draw_line(canvas, (int8_t)(bx + 3), by, bx, (int8_t)(by + 3));
+            canvas_draw_line(canvas, bx, (int8_t)(by + 3), (int8_t)(bx - 3), by);
+            canvas_draw_line(canvas, (int8_t)(bx - 3), by, bx, (int8_t)(by - 3));
+        } else {
+            canvas_draw_dot(canvas, bx, by);
+        }
+    }
+    canvas_draw_dot(canvas, ANALYZER_RADAR_CX, ANALYZER_RADAR_CY);
+
+    /* Honest scale disclaimer + footer */
+    canvas_set_font(canvas, FontKeyboard);
+    canvas_draw_str(canvas, UI_MARGIN_X, 60, "RSSI ring, not meters");
+    canvas_draw_box(canvas, 0, UI_FOOTER_BAND_TOP, 128, 7);
+    canvas_set_color(canvas, ColorWhite);
+    canvas_draw_str(canvas, 2, UI_ROW_FOOTER_BASELINE, "L=list R=meter  U/D=sel");
+    canvas_set_color(canvas, ColorBlack);
+}
+
+/* Big-number meter page: FontBigNumbers readout + segmented bar + trend. */
+static void draw_analyzer_meter(
+    Canvas* canvas,
+    App* app,
+    const char* title,
+    const RoomSweepAnalyzerState* an,
+    const char* source) {
+    char buf[40];
+    uint8_t phase = (uint8_t)(app->tick_count & 0xFFU);
+    int rssi = an ? (int)an->live_rssi : -127;
+    RoomSweepAnalyzerTrend trend =
+        an ? an->trend : RoomSweepAnalyzerTrendStable;
+
+    canvas_set_font(canvas, FontKeyboard);
+    snprintf(buf, sizeof(buf), "%s METER", title);
+    canvas_draw_str(canvas, UI_MARGIN_X, UI_ROW_HEADER_BASELINE, buf);
+
+    canvas_set_font(canvas, FontSecondary);
+    draw_str_clip(canvas, UI_MARGIN_X, 24, (source && source[0]) ? source : "(none)", 120);
+
+    /* Big readout — digits only; minus drawn separately. */
+    if(rssi < 0) {
+        canvas_set_font(canvas, FontSecondary);
+        canvas_draw_str(canvas, 40, 45, "-");
+    }
+    canvas_set_font(canvas, FontBigNumbers);
+    snprintf(buf, sizeof(buf), "%d", rssi < 0 ? -rssi : rssi);
+    uint16_t w = canvas_string_width(canvas, buf);
+    canvas_draw_str(canvas, (uint8_t)(92 - w), 45, buf);
+    canvas_set_font(canvas, FontKeyboard);
+    canvas_draw_str(canvas, 94, 45, "dBm");
+
+    /* fill_px is 0..118 pixels (inner width), not a percentage. */
+    draw_segmented_meter(
+        canvas, 3, 49, 122, 8, room_sweep_analyzer_bar_height(rssi, 118), phase);
+
+    canvas_draw_box(canvas, 0, UI_FOOTER_BAND_TOP, 128, 7);
+    canvas_set_color(canvas, ColorWhite);
+    snprintf(
+        buf,
+        sizeof(buf),
+        "PK %d  %s %s",
+        an ? (int)an->peak_rssi : -127,
+        room_sweep_analyzer_trend_arrow(trend),
+        room_sweep_analyzer_trend_text(trend));
+    canvas_draw_str(canvas, 2, UI_ROW_FOOTER_BASELINE, buf);
+    canvas_draw_str(canvas, 96, UI_ROW_FOOTER_BASELINE, "R=hunt");
+    canvas_set_color(canvas, ColorBlack);
+}
+
+/* RF Waterfall sub-mode: scrolling 24-snapshot history of the 16 presets.
+ * Newest column on the right; per-channel peak-hold markers on the edge. */
+static void draw_rf_waterfall(Canvas* canvas, App* app) {
+    char buf[40];
+    const uint8_t area_top = 16;
+    const uint8_t area_bot = 56;
+    const uint8_t col_w = 5;
+
+    canvas_set_font(canvas, FontSecondary);
+    canvas_draw_str(canvas, UI_MARGIN_X, UI_ROW_HEADER_BASELINE, "RF Waterfall");
+    canvas_set_font(canvas, FontKeyboard);
+    canvas_draw_str(
+        canvas,
+        62,
+        UI_ROW_HEADER_BASELINE,
+        app->radio_path == RadioPathExternal ? "[EXT]" : "[INT]");
+
+    snprintf(buf, sizeof(buf), "%.0fdBm", (double)app->peak_rssi);
+    canvas_set_font(canvas, FontSecondary);
+    uint16_t pw = canvas_string_width(canvas, buf);
+    canvas_draw_str(canvas, (uint8_t)(127 - (int)pw), UI_ROW_HEADER_BASELINE, buf);
+
+    /* Alert threshold dotted line on the same rssi→pixel scale. */
+    uint8_t th_y = (uint8_t)(
+        area_bot - room_sweep_radar_rssi_radius(
+                       (int8_t)RF_ALERT_THRESHOLD, (uint8_t)(area_bot - area_top)));
+    for(uint8_t dx = 0; dx < 128; dx += 4) {
+        canvas_draw_dot(canvas, dx, th_y);
+    }
+
+    /* Columns: age 0 = newest = rightmost. 16 channels across 40 px. */
+    for(uint8_t age = 0; age < ROOM_SWEEP_WATERFALL_COLS; age++) {
+        uint8_t x = (uint8_t)(UI_MARGIN_X + (ROOM_SWEEP_WATERFALL_COLS - 1U - age) * col_w);
+        for(uint8_t ch = 0; ch < ROOM_SWEEP_WATERFALL_CHANNELS; ch++) {
+            int8_t v = room_sweep_waterfall_channel_at(&app->waterfall, age, ch);
+            uint8_t h = room_sweep_radar_rssi_radius(v, 4);
+            if(h == 0) continue;
+            uint8_t y = (uint8_t)(area_bot - (ch * (area_bot - area_top)) / 15U);
+            canvas_draw_box(canvas, x, (uint8_t)(y - h + 1), 3, h);
+        }
+    }
+
+    /* Per-channel peak-hold column on the right edge. */
+    for(uint8_t ch = 0; ch < ROOM_SWEEP_WATERFALL_CHANNELS; ch++) {
+        if(app->waterfall.peak[ch] <= -127) continue;
+        uint8_t y = (uint8_t)(area_bot - (ch * (area_bot - area_top)) / 15U);
+        canvas_draw_dot(canvas, 124, y);
+    }
+
+    canvas_set_font(canvas, FontKeyboard);
+    canvas_draw_str(canvas, UI_MARGIN_X, UI_ROW_FOOTER_BASELINE, "U/D:mode H:card");
+}
+
+/* GPS Radar page: mark-centered, north-up, REAL meters (no RSSI fiction). */
+static void draw_gps_radar(Canvas* canvas, App* app, const GpsFix* gps, bool fresh) {
+    const uint8_t cx = 64, cy = 31, max_r = 22;
+    char buf[48];
+
+    if(!app->gps_mark_set) {
+        canvas_set_font(canvas, FontSecondary);
+        canvas_draw_str(canvas, UI_MARGIN_X, 26, "Radar needs a mark");
+        canvas_set_font(canvas, FontKeyboard);
+        canvas_draw_str(canvas, UI_MARGIN_X, 40, "OK=mark, then walk");
+        canvas_draw_str(canvas, UI_MARGIN_X, UI_ROW_FOOTER_BASELINE, "U/D page");
+        return;
+    }
+    if(!fresh || !gps->has_pos) {
+        canvas_set_font(canvas, FontSecondary);
+        canvas_draw_str(canvas, UI_MARGIN_X, 26, "No fix right now");
+        canvas_set_font(canvas, FontKeyboard);
+        canvas_draw_str(canvas, UI_MARGIN_X, 40, "walk clear of cover");
+        canvas_draw_str(canvas, UI_MARGIN_X, UI_ROW_FOOTER_BASELINE, "U/D page HOK=retry");
+        return;
+    }
+
+    int32_t mark_lat = (int32_t)(app->gps_mark_lat * 1e6f);
+    int32_t mark_lon = (int32_t)(app->gps_mark_lon * 1e6f);
+    int32_t now_lat = (int32_t)(gps->latitude * 1e6f);
+    int32_t now_lon = (int32_t)(gps->longitude * 1e6f);
+
+    float dist_m = geo_distance_m(
+        app->gps_mark_lat, app->gps_mark_lon, gps->latitude, gps->longitude);
+    uint16_t unit = room_sweep_radar_ring_unit_m((uint32_t)dist_m);
+    uint32_t bearing = room_sweep_radar_bearing_deg(
+        mark_lat, mark_lon, now_lat, now_lon);
+
+    canvas_set_font(canvas, FontKeyboard);
+    canvas_draw_str(canvas, UI_MARGIN_X, UI_ROW_HEADER_BASELINE, "GPS RADAR");
+    snprintf(buf, sizeof(buf), "%ludeg", (unsigned long)bearing);
+    uint16_t bw = canvas_string_width(canvas, buf);
+    canvas_draw_str(canvas, (uint8_t)(126 - bw), UI_ROW_HEADER_BASELINE, buf);
+
+    /* Rings: unit maps 3 rings across max_r. */
+    uint8_t r3 = max_r;
+    uint8_t r2 = (uint8_t)((uint32_t)max_r * 2U / 3U);
+    uint8_t r1 = (uint8_t)((uint32_t)max_r / 3U);
+    canvas_draw_circle(canvas, cx, cy, r3);
+    canvas_draw_circle(canvas, cx, cy, r2);
+    canvas_draw_circle(canvas, cx, cy, r1);
+    /* North tick */
+    canvas_draw_str(canvas, (uint8_t)(cx - 2), 7, "N");
+
+    uint8_t phase = (uint8_t)(app->tick_count & 0xFFU);
+    int16_t sweep_a = (int16_t)((phase * 8U) % 360U);
+    int16_t sx, sy;
+    room_sweep_radar_blip_xy(sweep_a, max_r, cx, cy, &sx, &sy);
+    canvas_draw_line(canvas, cx, cy, sx, sy);
+
+    /* Trail (older first), then the live position on top. */
+    for(uint8_t age = 0; age < ROOM_SWEEP_GPS_TRAIL_MAX; age++) {
+        const RoomSweepGpsTrailPoint* p = room_sweep_gps_trail_point_at(&app->gps_trail, age);
+        if(!p) break;
+        float pd = geo_distance_m(
+            app->gps_mark_lat, app->gps_mark_lon,
+            (float)p->lat_e6 * 1e-6f, (float)p->lon_e6 * 1e-6f);
+        uint32_t pb = room_sweep_radar_bearing_deg(mark_lat, mark_lon, p->lat_e6, p->lon_e6);
+        uint32_t pr = (uint32_t)(pd * (float)(max_r * 3U) / ((float)unit * 3.0f));
+        if(pr > max_r) pr = max_r;
+        int16_t px, py;
+        room_sweep_radar_blip_xy((int16_t)pb, (uint8_t)pr, cx, cy, &px, &py);
+        if(age == 0) {
+            canvas_draw_box(canvas, (uint8_t)(px - 1), (uint8_t)(py - 1), 3, 3);
+        } else {
+            canvas_draw_dot(canvas, px, py);
+        }
+    }
+    /* Mark at the center: cross. */
+    canvas_draw_line(canvas, cx - 3, cy, cx + 3, cy);
+    canvas_draw_line(canvas, cx, cy - 3, cx, cy + 3);
+
+    /* Readouts */
+    canvas_set_font(canvas, FontKeyboard);
+    if(dist_m >= 1000.0f) {
+        snprintf(buf, sizeof(buf), "%.2fkm", (double)(dist_m / 1000.0f));
+    } else {
+        snprintf(buf, sizeof(buf), "%.1fm", (double)dist_m);
+    }
+    canvas_draw_str(canvas, 2, 60, buf);
+    snprintf(buf, sizeof(buf), "ring %s", room_sweep_radar_ring_label(unit));
+    canvas_draw_str(canvas, 2, UI_ROW_FOOTER_BASELINE, buf);
+    canvas_draw_str(canvas, 70, UI_ROW_FOOTER_BASELINE, "true bearing");
 }
 
 static void analyzer_feed_tick(App* app) {
@@ -2970,6 +3332,19 @@ static void draw_scanner_analyzer(Canvas* canvas, App* app) {
     }
     default:
         break;
+    }
+
+    /* Page dispatch: 0=hunt, 1=field, 2=radar, 3=big meter (Hold R cycles). */
+    uint8_t page = app->analyzer_ui_page % 4U;
+    if(page == 2) {
+        RadarBlip blips[16];
+        uint8_t n = analyzer_radar_blips(app, blips);
+        draw_analyzer_radar(canvas, app, title, an, blips, n);
+        return;
+    }
+    if(page == 3) {
+        draw_analyzer_meter(canvas, app, title, an, source);
+        return;
     }
 
     draw_proximity_analyzer(
@@ -3562,6 +3937,11 @@ static void draw_gps_tab(Canvas* canvas, App* app) {
         canvas_set_font(canvas, FontKeyboard);
         canvas_draw_str(canvas, 2, 51, "Source set in Settings");
         canvas_draw_str(canvas, 2, 63, "OK/HOK=retry  U/D page");
+        return;
+    }
+
+    if(app->gps_page == RoomSweepGpsPageRadar) {
+        draw_gps_radar(canvas, app, &gps, gps_fresh);
         return;
     }
 
@@ -4202,8 +4582,10 @@ static void draw_cb(Canvas* canvas, void* ctx) {
                 draw_rf_survey(canvas, app);
             } else if(app->rf_sub == RfSubSweep) {
                 draw_rf_sweep(canvas, app);
-            } else {
+            } else if(app->rf_sub == RfSubPeak) {
                 draw_rf_peak(canvas, app);
+            } else {
+                draw_rf_waterfall(canvas, app);
             }
             break;
         case SweepModeWifi:
@@ -4536,6 +4918,8 @@ int32_t room_sweep_app(void* p) {
     UNUSED(p);
     App* app = malloc(sizeof(App));
     memset(app, 0, sizeof(App));
+    room_sweep_waterfall_init(&app->waterfall);
+    room_sweep_gps_trail_clear(&app->gps_trail);
     app->mutex = furi_mutex_alloc(FuriMutexTypeNormal);
     app->radio_mutex = furi_mutex_alloc(FuriMutexTypeNormal);
     app->gps_mutex = furi_mutex_alloc(FuriMutexTypeNormal);
@@ -4701,6 +5085,49 @@ int32_t room_sweep_app(void* p) {
 
             full_sweep_tick(app);
             analyzer_feed_tick(app);
+
+            /* Meter suite: waterfall snapshot (~2.5 Hz) while its sub-mode shows. */
+            if(app->mode == SweepModeRF && app->rf_sub == RfSubWaterfall) {
+                uint32_t wnow = furi_get_tick();
+                if((uint32_t)(wnow - app->waterfall_last_push_tick) >= 400U) {
+                    app->waterfall_last_push_tick = wnow;
+                    int8_t snap[RF_NUM_CHANNELS];
+                    furi_mutex_acquire(app->mutex, FuriWaitForever);
+                    for(uint8_t i = 0; i < RF_NUM_CHANNELS; i++) {
+                        snap[i] = (int8_t)app->rssi[i];
+                    }
+                    furi_mutex_release(app->mutex);
+                    room_sweep_waterfall_push(&app->waterfall, snap);
+                }
+            }
+
+            /* Meter suite: GPS hunt trail (in-RAM only, never logged;
+             * <2 m moves are deduped inside the trail state). */
+            {
+                uint32_t tnow = furi_get_tick();
+                if((uint32_t)(tnow - app->gps_trail_last_push_tick) >= 2000U) {
+                    bool t_fresh = false;
+                    float t_lat = 0.0f;
+                    float t_lon = 0.0f;
+                    furi_mutex_acquire(app->gps_mutex, FuriWaitForever);
+                    if(app->gps.has_fix) {
+                        t_fresh = app->gps_last_valid_tick > 0 &&
+                                  (uint32_t)(tnow - app->gps_last_valid_tick) <
+                                      GPS_STALE_TIMEOUT_MS;
+                        t_lat = app->gps.latitude;
+                        t_lon = app->gps.longitude;
+                    }
+                    furi_mutex_release(app->gps_mutex);
+                    if(t_fresh) {
+                        app->gps_trail_last_push_tick = tnow;
+                        room_sweep_gps_trail_push(
+                            &app->gps_trail,
+                            (int32_t)(t_lat * 1e6f),
+                            (int32_t)(t_lon * 1e6f),
+                            tnow);
+                    }
+                }
+            }
 
             if(app->serial && (app->mode == SweepModeWifi || app->mode == SweepModeBle)) {
                 uint32_t now = furi_get_tick();
@@ -5208,7 +5635,7 @@ int32_t room_sweep_app(void* p) {
         /* Long Right: analyzer page, or per-mode content page (never TX). */
         if(input_action == RoomSweepInputAlternateNext) {
             if(app->analyzer_view && mode_supports_analyzer(app->mode)) {
-                app->analyzer_ui_page = (uint8_t)(1U - (app->analyzer_ui_page & 1U));
+                app->analyzer_ui_page = (uint8_t)((app->analyzer_ui_page + 1U) % 4U);
                 continue;
             }
             if(app->mode == SweepModeRF) {

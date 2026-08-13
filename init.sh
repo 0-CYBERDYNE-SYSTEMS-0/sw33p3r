@@ -55,6 +55,14 @@ echo "== host input touch / browse-phase seam =="
 cc -std=c11 -Wall -Wextra -Werror -pedantic -I. tests/test_input_touch.c -o /tmp/room_sweep_input_touch_test
 /tmp/room_sweep_input_touch_test
 
+echo "== host radar polar math =="
+cc -std=c11 -Wall -Wextra -Werror -pedantic -I. tests/test_radar.c -o /tmp/room_sweep_radar_test
+/tmp/room_sweep_radar_test
+
+echo "== host waterfall state =="
+cc -std=c11 -Wall -Wextra -Werror -pedantic -I. tests/test_waterfall.c -o /tmp/room_sweep_waterfall_test
+/tmp/room_sweep_waterfall_test
+
 if [[ -f tests/test_scan_logic.c ]]; then
   echo "== host scan/GPS helpers =="
   cc -std=c11 -Wall -Wextra -Werror -I. tests/test_scan_logic.c -o /tmp/test_scan_logic

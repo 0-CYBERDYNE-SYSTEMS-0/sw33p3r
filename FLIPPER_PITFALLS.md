@@ -32,6 +32,18 @@ Available untapped input dimensions on this target instead:
   `room_sweep_input_browse_phase()` exposes it without changing the legacy
   safety classifier table.
 
+## Pitfall #19: No libm trig in the FAP export table
+
+**Date:** 2026-08-13
+**Source:** `api_symbols.csv` (API 87.1) — `sinf`, `cosf`, `atan2f`, `atanf`,
+`sqrtf`, `fabsf` all absent.
+
+External FAPs cannot link libm. Any polar/radar/bearing math must be integer
+fixed-point implemented inside the app (Room Sweep uses `room_sweep_radar.h`:
+1°-step `sin128` LUT + octant-fold atan2 LUT, all host-tested). Canvas shapes
+(`canvas_draw_circle`, `canvas_draw_disc`, `canvas_draw_triangle`) and
+`FontBigNumbers` ARE exported and verified usable.
+
 ## Pitfall #17: BFFB switch map — ESP32 is NOT switched
 
 **Date:** 2026-08-02  

@@ -24,9 +24,10 @@ typedef enum {
  * RF sub-modes (cycled with Up/Down on RF tab)
  * --------------------------------------------------------------------------- */
 typedef enum {
-    RfSubSurvey,    // 16-point preset sweep (fast room check)
-    RfSubSweep,     // Coarse band sweep with progress + peak hold
-    RfSubPeak,      // Fine refinement around a detected peak
+    RfSubSurvey,     // 16-point preset sweep (fast room check)
+    RfSubSweep,      // Coarse band sweep with progress + peak hold
+    RfSubPeak,       // Fine refinement around a detected peak
+    RfSubWaterfall,  // Scrolling spectrum history of the 16 presets (passive)
     RfSubCount
 } RfSubMode;
 
