@@ -69,6 +69,10 @@ if [[ -f tests/test_scan_logic.c ]]; then
   /tmp/test_scan_logic
 fi
 
+echo "== host Marauder line parser =="
+cc -std=c11 -Wall -Wextra -Werror -pedantic -I. tests/test_marauder_parse.c -o /tmp/test_marauder_parse
+/tmp/test_marauder_parse
+
 echo "== ufbt build =="
 ufbt
 
