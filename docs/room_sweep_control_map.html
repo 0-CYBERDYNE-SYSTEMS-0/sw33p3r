@@ -173,9 +173,32 @@
       padding: 22px 24px 28px;
     }
     .modal-body .keys { grid-template-columns: 1fr 1fr 1fr; }
+    .nav-btn {
+      border: 1px solid var(--line);
+      background: #101814;
+      color: var(--fg);
+      font-family: inherit;
+      font-size: 13px;
+      padding: 10px 14px;
+      border-radius: 4px;
+      cursor: pointer;
+      min-width: 140px;
+    }
+    .nav-btn:hover, .nav-btn:focus-visible {
+      border-color: var(--hi);
+      color: var(--hi);
+      outline: none;
+    }
+    .nav-btn[disabled] {
+      opacity: 0.35;
+      cursor: default;
+      border-color: var(--line);
+      color: var(--dim);
+    }
     .modal-nav {
       display: flex;
       justify-content: space-between;
+      align-items: center;
       gap: 12px;
       padding: 10px 20px;
       border-top: 1px solid var(--line);
@@ -184,7 +207,8 @@
     }
     @media (max-width: 820px) {
       .grid, .modal-body .keys { grid-template-columns: 1fr; }
-      .modal-panel { inset: 2vh 2vw; }
+      .modal-panel { left: 8px; right: 8px; bottom: 8px; }
+      .nav-btn { min-width: 0; flex: 1; }
     }
   </style>
 </head>
@@ -195,7 +219,7 @@
       Flipper Zero FAP · appid <code>room_sweep</code> · Momentum mntm-012 · API 87.1 · target 7<br>
       Receive survey + bounded carrier TX only. Tab strip labels: <code>RF Wi BT nR GP TX i</code>
     </div>
-    <p class="hint">Click a tab for its full card. Click another tab to switch. Same tab, Close, or Esc closes it.</p>
+    <p class="hint">Click a tab for its full card. Back / Forward step tabs. Browser Back closes or goes to the last tab. Esc or Close dismisses.</p>
     <div class="tabs" role="tablist" aria-label="Room Sweep tabs">
       <button type="button" class="tab" data-tab="rf" aria-haspopup="dialog">RF</button>
       <button type="button" class="tab" data-tab="wi" aria-haspopup="dialog">Wi</button>
@@ -282,8 +306,9 @@
       </div>
       <div class="modal-body" id="modal-body"></div>
       <div class="modal-nav">
-        <span>◀ / ▶ or strip tabs switch cards</span>
-        <span>Esc closes</span>
+        <button type="button" class="nav-btn" id="nav-back">◀ Back</button>
+        <span>◀ / ▶ · browser Back / Forward</span>
+        <button type="button" class="nav-btn" id="nav-fwd">Forward ▶</button>
       </div>
     </div>
   </div>
@@ -422,7 +447,25 @@
       var kicker = document.getElementById("modal-kicker");
       var tabs = document.querySelectorAll(".tab");
       var chrome = document.getElementById("chrome");
+      var backBtn = document.getElementById("nav-back");
+      var fwdBtn = document.getElementById("nav-fwd");
       var current = null;
+      var muteHash = false;
+
+      function tabFromHash() {
+        var raw = (location.hash || "").replace(/^#/, "").toLowerCase();
+        return order.indexOf(raw) >= 0 ? raw : null;
+      }
+
+      function setHash(id) {
+        var next = id ? "#" + id : "#";
+        if (location.hash === next || (id === null && (location.hash === "" || location.hash === "#"))) {
+          return;
+        }
+        muteHash = true;
+        location.hash = id ? id : "";
+        setTimeout(function () { muteHash = false; }, 0);
+      }
 
       function placeModal() {
         document.documentElement.style.setProperty(
@@ -437,7 +480,22 @@
         });
       }
 
-      function openTab(id) {
+      function paintNav() {
+        var i = order.indexOf(current);
+        if (i < 0) return;
+        if (i === 0) {
+          backBtn.textContent = "◀ Close";
+        } else {
+          backBtn.textContent = "◀ " + titles[order[i - 1]][1];
+        }
+        if (i === order.length - 1) {
+          fwdBtn.textContent = titles[order[0]][1] + " ▶";
+        } else {
+          fwdBtn.textContent = titles[order[i + 1]][1] + " ▶";
+        }
+      }
+
+      function showTab(id) {
         var tpl = document.getElementById("card-" + id);
         if (!tpl) return;
         var meta = titles[id];
@@ -451,9 +509,10 @@
         modal.setAttribute("aria-hidden", "false");
         document.body.classList.add("modal-open");
         setOn(id);
+        paintNav();
       }
 
-      function closeModal() {
+      function hideModal() {
         modal.classList.remove("open");
         modal.setAttribute("aria-hidden", "true");
         document.body.classList.remove("modal-open");
@@ -461,10 +520,30 @@
         setOn(null);
       }
 
+      function openTab(id) {
+        showTab(id);
+        setHash(id);
+      }
+
+      function closeModal() {
+        hideModal();
+        setHash(null);
+      }
+
       function step(delta) {
         if (!current) return;
         var i = order.indexOf(current);
+        if (delta < 0 && i === 0) {
+          closeModal();
+          return;
+        }
         openTab(order[(i + delta + order.length) % order.length]);
+      }
+
+      function syncFromHash() {
+        var id = tabFromHash();
+        if (id) showTab(id);
+        else hideModal();
       }
 
       tabs.forEach(function (t) {
@@ -475,19 +554,31 @@
         });
       });
 
+      backBtn.addEventListener("click", function () { step(-1); });
+      fwdBtn.addEventListener("click", function () { step(1); });
+
       modal.addEventListener("click", function (e) {
         if (e.target.getAttribute("data-close") === "1") closeModal();
       });
 
       document.addEventListener("keydown", function (e) {
         if (!current) return;
-        if (e.key === "Escape") closeModal();
-        if (e.key === "ArrowLeft") { e.preventDefault(); step(-1); }
+        if (e.key === "Escape") { e.preventDefault(); closeModal(); }
+        if (e.key === "ArrowLeft" || e.key === "Backspace") {
+          e.preventDefault();
+          step(-1);
+        }
         if (e.key === "ArrowRight") { e.preventDefault(); step(1); }
+      });
+
+      window.addEventListener("hashchange", function () {
+        if (muteHash) return;
+        syncFromHash();
       });
 
       window.addEventListener("resize", placeModal);
       placeModal();
+      syncFromHash();
     })();
   </script>
 </body>
