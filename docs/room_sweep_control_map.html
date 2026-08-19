@@ -5,13 +5,14 @@
   <title>Room Sweep — Control Map</title>
   <style>
     :root {
-      --bg: #0d1110;
-      --fg: #c8f5c0;
-      --dim: #6a9a68;
-      --box: #1a2420;
-      --line: #3d5c3a;
-      --hi: #7dff6a;
-      --hi-dim: #3a8a32;
+      --bg: #07101f;
+      --fg: #ffc08a;
+      --dim: #c4895c;
+      --box: #101a32;
+      --line: #2c456e;
+      --hi: #ffbf70;
+      --ink: #07101f;
+      --head: #0c1730;
     }
     * { box-sizing: border-box; }
     body {
@@ -58,7 +59,7 @@
       color: var(--hi);
       outline: none;
     }
-    .tab.on { background: var(--hi); color: #0a120a; font-weight: 700; }
+    .tab.on { background: var(--hi); color: var(--ink); font-weight: 700; }
     .grid {
       display: grid;
       grid-template-columns: 1.1fr 1fr;
@@ -80,7 +81,7 @@
     th, td {
       text-align: left;
       padding: 5px 6px;
-      border-bottom: 1px solid #24332a;
+      border-bottom: 1px solid var(--line);
       vertical-align: top;
     }
     th { color: var(--dim); font-weight: 600; }
@@ -102,7 +103,7 @@
       color: var(--dim);
       line-height: 1.45;
     }
-    code { color: #9fe89a; }
+    code { color: var(--hi); }
     .lede { color: var(--dim); font-size: 13px; margin: 0 0 16px; line-height: 1.45; }
 
     .modal {
@@ -115,7 +116,7 @@
     .modal-backdrop {
       position: absolute;
       inset: 0;
-      background: rgba(4, 8, 6, 0.86);
+      background: rgba(4, 10, 28, 0.88);
     }
     .modal-panel {
       position: absolute;
@@ -129,7 +130,7 @@
       display: flex;
       flex-direction: column;
       overflow: hidden;
-      box-shadow: 0 0 0 1px #0a120a, 0 24px 80px rgba(0, 0, 0, 0.55);
+      box-shadow: 0 0 0 1px var(--ink), 0 24px 80px rgba(2, 6, 18, 0.7);
     }
     .modal-head {
       display: flex;
@@ -137,7 +138,7 @@
       gap: 16px;
       padding: 16px 20px;
       border-bottom: 1px solid var(--line);
-      background: #101814;
+      background: var(--head);
     }
     .modal-kicker {
       color: var(--dim);
@@ -175,7 +176,7 @@
     .modal-body .keys { grid-template-columns: 1fr 1fr 1fr; }
     .nav-btn {
       border: 1px solid var(--line);
-      background: #101814;
+      background: var(--head);
       color: var(--fg);
       font-family: inherit;
       font-size: 13px;
