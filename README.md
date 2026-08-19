@@ -9,13 +9,17 @@ No jamming, blocking, deauth, capture/replay, or flood modes.
 
 ## Control map
 
-Open this file in a browser. It is the operator map. Labels match the FAP.
+GitHub does not run HTML inside a README. The image is what you see on this
+page. Click it to open the live map (tabs, tab cards, Back / Forward).
 
-**[docs/room_sweep_control_map.html](docs/room_sweep_control_map.html)**
+[![Room Sweep control map](docs/room_sweep_control_map.jpg)](https://htmlpreview.github.io/?https://github.com/0-CYBERDYNE-SYSTEMS-0/sw33p3r/blob/main/docs/room_sweep_control_map.html)
 
-Raster preview of that same map:
+Click a strip tab (RF shown):
 
-![Room Sweep control map](docs/room_sweep_control_map.jpg)
+[![RF tab card](docs/room_sweep_control_map_rf.jpg)](https://htmlpreview.github.io/?https://github.com/0-CYBERDYNE-SYSTEMS-0/sw33p3r/blob/main/docs/room_sweep_control_map.html#rf)
+
+- Live map: [htmlpreview](https://htmlpreview.github.io/?https://github.com/0-CYBERDYNE-SYSTEMS-0/sw33p3r/blob/main/docs/room_sweep_control_map.html)
+- Source file: [`docs/room_sweep_control_map.html`](docs/room_sweep_control_map.html)
 
 The tables below repeat the same facts for markdown readers.
 
@@ -135,7 +139,8 @@ python3 _verify_api.py
 
 | Doc | Use |
 |-----|-----|
-| [`docs/room_sweep_control_map.html`](docs/room_sweep_control_map.html) | Operator control map (open in a browser) |
+| [`docs/room_sweep_control_map.html`](https://htmlpreview.github.io/?https://github.com/0-CYBERDYNE-SYSTEMS-0/sw33p3r/blob/main/docs/room_sweep_control_map.html) | Live operator map (tabs + cards) |
+| [`docs/room_sweep_control_map.jpg`](docs/room_sweep_control_map.jpg) | README preview of the map |
 | [`USER_GUIDE.md`](USER_GUIDE.md) | Operator controls, tabs, analyzer, FullSweep |
 | [`MISSION.md`](MISSION.md) | Scope / legal / TX safety contract |
 | [`docs/BFFB_MOMENTUM.md`](docs/BFFB_MOMENTUM.md) | BFFB + Marauder + Momentum facts |
