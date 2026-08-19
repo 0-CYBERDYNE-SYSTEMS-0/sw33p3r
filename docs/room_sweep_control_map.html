@@ -11,6 +11,7 @@
       --box: #1a2420;
       --line: #3d5c3a;
       --hi: #7dff6a;
+      --hi-dim: #3a8a32;
     }
     * { box-sizing: border-box; }
     body {
@@ -20,24 +21,42 @@
       color: var(--fg);
       padding: 28px 32px 40px;
     }
+    body.modal-open { overflow: hidden; }
     h1 {
       margin: 0 0 4px;
       font-size: 28px;
       letter-spacing: 0.08em;
       color: var(--hi);
     }
-    .sub { color: var(--dim); font-size: 13px; margin-bottom: 22px; }
+    .sub { color: var(--dim); font-size: 13px; margin-bottom: 14px; }
+    .hint { color: var(--hi); font-size: 12px; margin: 0 0 12px; letter-spacing: 0.04em; }
+    .chrome {
+      position: sticky;
+      top: 0;
+      z-index: 30;
+      background: var(--bg);
+      padding: 12px 0 14px;
+      margin: 0 0 12px;
+    }
     .tabs {
       display: flex;
       gap: 8px;
-      margin-bottom: 22px;
       flex-wrap: wrap;
     }
     .tab {
       border: 1px solid var(--line);
-      padding: 6px 14px;
+      padding: 8px 16px;
       border-radius: 4px;
-      font-size: 13px;
+      font-size: 14px;
+      font-family: inherit;
+      background: transparent;
+      color: var(--fg);
+      cursor: pointer;
+    }
+    .tab:hover, .tab:focus-visible {
+      border-color: var(--hi);
+      color: var(--hi);
+      outline: none;
     }
     .tab.on { background: var(--hi); color: #0a120a; font-weight: 700; }
     .grid {
@@ -51,8 +70,7 @@
       border-radius: 8px;
       padding: 14px 16px;
     }
-    .card.wide { grid-column: 1 / -1; }
-    .card h2 {
+    .card h2, .panel h2 {
       margin: 0 0 10px;
       font-size: 14px;
       color: var(--hi);
@@ -85,26 +103,108 @@
       line-height: 1.45;
     }
     code { color: #9fe89a; }
+    .lede { color: var(--dim); font-size: 13px; margin: 0 0 16px; line-height: 1.45; }
+
+    .modal {
+      position: fixed;
+      inset: 0;
+      z-index: 20;
+      display: none;
+    }
+    .modal.open { display: block; }
+    .modal-backdrop {
+      position: absolute;
+      inset: 0;
+      background: rgba(4, 8, 6, 0.86);
+    }
+    .modal-panel {
+      position: absolute;
+      top: var(--chrome-h, 168px);
+      left: 16px;
+      right: 16px;
+      bottom: 16px;
+      background: var(--box);
+      border: 2px solid var(--hi);
+      border-radius: 10px;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      box-shadow: 0 0 0 1px #0a120a, 0 24px 80px rgba(0, 0, 0, 0.55);
+    }
+    .modal-head {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--line);
+      background: #101814;
+    }
+    .modal-kicker {
+      color: var(--dim);
+      font-size: 11px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+    .modal-title {
+      margin: 2px 0 0;
+      font-size: 26px;
+      letter-spacing: 0.08em;
+      color: var(--hi);
+    }
+    .modal-close {
+      margin-left: auto;
+      border: 1px solid var(--line);
+      background: transparent;
+      color: var(--fg);
+      font-family: inherit;
+      font-size: 13px;
+      padding: 8px 12px;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    .modal-close:hover, .modal-close:focus-visible {
+      border-color: var(--hi);
+      color: var(--hi);
+      outline: none;
+    }
+    .modal-body {
+      flex: 1;
+      overflow: auto;
+      padding: 22px 24px 28px;
+    }
+    .modal-body .keys { grid-template-columns: 1fr 1fr 1fr; }
+    .modal-nav {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 20px;
+      border-top: 1px solid var(--line);
+      color: var(--dim);
+      font-size: 11px;
+    }
     @media (max-width: 820px) {
-      .grid { grid-template-columns: 1fr; }
+      .grid, .modal-body .keys { grid-template-columns: 1fr; }
+      .modal-panel { inset: 2vh 2vw; }
     }
   </style>
 </head>
 <body>
-  <h1>ROOM SWEEP</h1>
-  <div class="sub">
-    Flipper Zero FAP · appid <code>room_sweep</code> · Momentum mntm-012 · API 87.1 · target 7<br>
-    Receive survey + bounded carrier TX only. Tab strip labels: <code>RF Wi BT nR GP TX i</code>
-  </div>
-
-  <div class="tabs">
-    <div class="tab on">RF</div>
-    <div class="tab">Wi</div>
-    <div class="tab">BT</div>
-    <div class="tab">nR</div>
-    <div class="tab">GP</div>
-    <div class="tab">TX</div>
-    <div class="tab">i</div>
+  <div class="chrome" id="chrome">
+    <h1>ROOM SWEEP</h1>
+    <div class="sub">
+      Flipper Zero FAP · appid <code>room_sweep</code> · Momentum mntm-012 · API 87.1 · target 7<br>
+      Receive survey + bounded carrier TX only. Tab strip labels: <code>RF Wi BT nR GP TX i</code>
+    </div>
+    <p class="hint">Click a tab for its full card. Click another tab to switch. Same tab, Close, or Esc closes it.</p>
+    <div class="tabs" role="tablist" aria-label="Room Sweep tabs">
+      <button type="button" class="tab" data-tab="rf" aria-haspopup="dialog">RF</button>
+      <button type="button" class="tab" data-tab="wi" aria-haspopup="dialog">Wi</button>
+      <button type="button" class="tab" data-tab="bt" aria-haspopup="dialog">BT</button>
+      <button type="button" class="tab" data-tab="nr" aria-haspopup="dialog">nR</button>
+      <button type="button" class="tab" data-tab="gp" aria-haspopup="dialog">GP</button>
+      <button type="button" class="tab" data-tab="tx" aria-haspopup="dialog">TX</button>
+      <button type="button" class="tab" data-tab="info" aria-haspopup="dialog">i</button>
+    </div>
   </div>
 
   <div class="grid">
@@ -138,43 +238,6 @@
     </div>
 
     <div class="card">
-      <h2>RF SUB-MODES (▲/▼)</h2>
-      <table>
-        <tr><th>Sub</th><th>OK</th><th>Hold OK</th></tr>
-        <tr><td>Survey</td><td>—</td><td>Lock qualified hit</td></tr>
-        <tr><td>Sweep</td><td>Start / cancel band sweep</td><td>Lock result</td></tr>
-        <tr><td>Peak</td><td>Start / cancel refine</td><td>Lock result</td></tr>
-        <tr><td>Waterfall</td><td>—</td><td>Lock qualified hit</td></tr>
-      </table>
-      Waterfall: 16 presets × 24 columns, push every 400 ms (~2.5 Hz, ~9.6 s history). Passive.
-    </div>
-
-    <div class="card">
-      <h2>ANALYZER (RF / Wi / BT / nR)</h2>
-      <table>
-        <tr><td>Hunt</td><td>Fat bar + CLOSER / FARTHER / STALE fade / LOST 0%</td></tr>
-        <tr><td>Field</td><td>Peer / spectrum bars</td></tr>
-        <tr><td>Radar</td><td>Polar RSSI rings + channel wheel. Locked target blinks as a diamond. Label: <code>RSSI ring, not meters</code></td></tr>
-        <tr><td>Meter</td><td>Big-number dBm + peak + trend</td></tr>
-        <tr><td>Age</td><td>&lt;2 s live · 2–6 s STALE fade · ≥6 s LOST (−127)</td></tr>
-        <tr><td>Wi / BT</td><td>Scan kept alive while analyzer is open</td></tr>
-      </table>
-    </div>
-
-    <div class="card">
-      <h2>GPS / TX / INFO</h2>
-      <table>
-        <tr><td>GPS OK</td><td>Fresh fix: set mark. No/stale NMEA: retry (same as Hold OK).</td></tr>
-        <tr><td>GPS Hold OK</td><td>Reinit NMEA. GPIO: swap 9600 ↔ 115200. Marauder: send <code>nmea</code>.</td></tr>
-        <tr><td>GPS Radar</td><td>Mark-centered, north-up, real meters. Trail ≤ 8 in-RAM points. No compass.</td></tr>
-        <tr><td>TX</td><td>DISARMED → OK arms → Hold OK transmits 1–10 s → auto-disarm. Back stops.</td></tr>
-        <tr><td>Info 1/5</td><td>RF path, SPI, Marauder, GPS source</td></tr>
-        <tr><td>Info 2/5</td><td>Record, baseline, lock, dump, UART</td></tr>
-        <tr><td>Info 3–5</td><td>Keys · Files · Limits</td></tr>
-      </table>
-    </div>
-
-    <div class="card">
       <h2>SETTINGS (Back)</h2>
       <table>
         <tr><th>Group</th><th>Items</th></tr>
@@ -195,7 +258,6 @@
         <tr><td>Privacy</td><td>Wi/BT IDs are session ordinals. GPS coords only if GPS Log ON.</td></tr>
         <tr><td>FullSweep</td><td>RF 10 s → Wi-Fi 15 s → BLE 15 s → nRF24 12 s → GPS 8 s (GPS may finish after 2 s if NMEA exists). nR skipped if SPI Path is not nRF24. Never arms TX.</td></tr>
         <tr><td>Banner</td><td>Top strip <code>FULL &lt;phase&gt; &lt;s&gt;</code>. Then inverted <code>SWEEP DONE</code> + <code>saved report-N</code>.</td></tr>
-        <tr><td>Vibro</td><td>ON: tap = one pulse, hold-release = double pulse.</td></tr>
       </table>
     </div>
   </div>
@@ -205,11 +267,228 @@
     TX is a bounded carrier test only — no jam, deauth, or replay. nRF24 is RPD activity, not mousejack.
     Analyzer radar rings are RSSI. Real meters exist only on GPS Radar with a fix.
     ScanWin lives in Settings, not Hold ▶.
-    Source of these strings: <code>room_sweep.h</code>, <code>room_sweep.c</code> input/draw,
-    <code>room_sweep_settings.h</code>, <code>room_sweep_analyzer.h</code>,
-    <code>room_sweep_gps_state.h</code>, <code>room_sweep_full_sweep.h</code>,
-    <code>room_sweep_waterfall.h</code>, <code>session_log.h</code>.
-    Operator prose: README.md · USER_GUIDE.md · MISSION.md.
+    Source: <code>room_sweep.h</code>, <code>room_sweep.c</code>, state headers. Operator prose: README.md · USER_GUIDE.md · MISSION.md.
   </div>
+
+  <div id="modal" class="modal" aria-hidden="true">
+    <div class="modal-backdrop" data-close="1"></div>
+    <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <div class="modal-head">
+        <div>
+          <div class="modal-kicker" id="modal-kicker">TAB</div>
+          <h2 class="modal-title" id="modal-title">RF</h2>
+        </div>
+        <button type="button" class="modal-close" data-close="1">Close</button>
+      </div>
+      <div class="modal-body" id="modal-body"></div>
+      <div class="modal-nav">
+        <span>◀ / ▶ or strip tabs switch cards</span>
+        <span>Esc closes</span>
+      </div>
+    </div>
+  </div>
+
+  <template id="card-rf">
+    <p class="lede">Sub-GHz CC1101 survey. Internal or BFFB external. 16 presets. Analyzer via Hold ◀.</p>
+    <div class="keys" style="margin-bottom:18px">
+      <div class="key"><b>▲ / ▼ short</b>Survey → Sweep → Peak → Waterfall</div>
+      <div class="key"><b>Hold ▲ / ▼</b>Open lock card. Short ▲/▼ returns to map.</div>
+      <div class="key"><b>Hold ▶</b>Map ↔ lock card. Idle Sweep map: band step 300-348 / 387-464 / 779-928.</div>
+      <div class="key"><b>Hold ◀</b>Analyzer: Hunt → Field → Radar → Meter</div>
+    </div>
+    <table>
+      <tr><th>Sub</th><th>OK</th><th>Hold OK</th></tr>
+      <tr><td>Survey</td><td>—</td><td>Lock qualified hit</td></tr>
+      <tr><td>Sweep</td><td>Start / cancel band sweep</td><td>Lock result</td></tr>
+      <tr><td>Peak</td><td>Start / cancel refine</td><td>Lock result</td></tr>
+      <tr><td>Waterfall</td><td>—</td><td>Lock qualified hit</td></tr>
+    </table>
+    <p class="lede" style="margin-top:14px">Waterfall: 16 presets × 24 columns, push every 400 ms (~2.5 Hz, ~9.6 s). Passive. Analyzer radar rings are RSSI, not meters.</p>
+  </template>
+
+  <template id="card-wi">
+    <p class="lede">Marauder <code>sniffbeacon</code> over USART 13/14 @ 115200. AP beacons only. Needs BFFB + OTG.</p>
+    <div class="keys" style="margin-bottom:18px">
+      <div class="key"><b>Hold ▶</b>Detail → List → Help</div>
+      <div class="key"><b>▲ / ▼</b>Select AP</div>
+      <div class="key"><b>OK</b>Start / restart scan</div>
+      <div class="key"><b>Hold OK</b>Lock / unlock that AP</div>
+      <div class="key"><b>Hold ◀</b>Analyzer on selected or locked AP</div>
+      <div class="key"><b>ScanWin</b>15 / 30 / 60 s in Settings, not Hold ▶</div>
+    </div>
+    <table>
+      <tr><td>Detail</td><td>One AP: SSID, RSSI, channel, MAC</td></tr>
+      <tr><td>List</td><td>Up to 5 rows RSSI + name</td></tr>
+      <tr><td>Help</td><td>Short control reminder</td></tr>
+      <tr><td>Analyzer age</td><td>&lt;2 s live · 2–6 s STALE fade · ≥6 s LOST 0%</td></tr>
+      <tr><td>While analyzer open</td><td>Scan stays alive</td></tr>
+    </table>
+    <p class="lede" style="margin-top:14px">Beacon heard ≠ Internet, telemetry, ownership, or intent. Fat bar follows the selected or locked row only.</p>
+  </template>
+
+  <template id="card-bt">
+    <p class="lede">Marauder <code>sniffbt</code>. Same page and lock pattern as Wi. BLE silence after first sightings is not an error.</p>
+    <div class="keys" style="margin-bottom:18px">
+      <div class="key"><b>Hold ▶</b>Detail → List → Help</div>
+      <div class="key"><b>▲ / ▼</b>Select device</div>
+      <div class="key"><b>OK</b>Start / restart scan</div>
+      <div class="key"><b>Hold OK</b>Lock / unlock that device</div>
+      <div class="key"><b>Hold ◀</b>Analyzer on selected or locked device</div>
+      <div class="key"><b>ScanWin</b>15 / 30 / 60 s in Settings</div>
+    </div>
+    <table>
+      <tr><td>Detail</td><td>One device: name, RSSI, MAC</td></tr>
+      <tr><td>List</td><td>Up to 5 rows RSSI + name</td></tr>
+      <tr><td>Analyzer</td><td>Hunt / Field / Radar / Meter. Scan kept alive.</td></tr>
+    </table>
+    <p class="lede" style="margin-top:14px">Advertisement ≠ telemetry or intent. Dedup silence is not ERR.</p>
+  </template>
+
+  <template id="card-nr">
+    <p class="lede">nRF24 RPD channel activity. RX only. No jam, no mousejack. Settings <code>SPI Path = nRF24</code> and BFFB bottom switch down. Sub-GHz then uses internal CC1101.</p>
+    <div class="keys" style="margin-bottom:18px">
+      <div class="key"><b>Hold ▶</b>Status ↔ Results</div>
+      <div class="key"><b>OK</b>Start / stop RPD pass</div>
+      <div class="key"><b>Hold ◀ or Hold OK</b>Analyzer</div>
+    </div>
+    <table>
+      <tr><td>Status</td><td>SPI path, phase, module / switch hints</td></tr>
+      <tr><td>Results</td><td>Active channels + top hit channels</td></tr>
+      <tr><td>Need</td><td><code>SPI=nRF24</code> and BFFB bottom DOWN. Check OTG if module not seen.</td></tr>
+    </table>
+    <p class="lede" style="margin-top:14px">FullSweep skips this phase if SPI Path is not nRF24. Hard timeout 12 s.</p>
+  </template>
+
+  <template id="card-gp">
+    <p class="lede">NMEA listener. GPIO LPUART 15/16 @ 9600 is primary. Marauder <code>nmea</code> is fallback. No compass in a FAP.</p>
+    <div class="keys" style="margin-bottom:18px">
+      <div class="key"><b>Hold ▶ or ▲/▼</b>Summary → Detail → Radar</div>
+      <div class="key"><b>OK</b>Fresh fix: set mark. No/stale NMEA: retry.</div>
+      <div class="key"><b>Hold OK</b>Always retry. GPIO: swap 9600 ↔ 115200. Marauder: send <code>nmea</code>.</div>
+    </div>
+    <table>
+      <tr><td>Summary</td><td>Time, sats, position, speed/course, mark distance</td></tr>
+      <tr><td>Detail</td><td>Date, NMEA counters, age, drops</td></tr>
+      <tr><td>Radar</td><td>Mark-centered, north-up, real meters. Trail ≤ 8 in-RAM points.</td></tr>
+      <tr><td>GPS Log</td><td>Coords enter the session only if Settings GPS Log is ON.</td></tr>
+    </table>
+    <p class="lede" style="margin-top:14px">Radar bearing is true north. Stationary heading is impossible. Course-over-ground exists only while moving.</p>
+  </template>
+
+  <template id="card-tx">
+    <p class="lede">Safety-gated bounded carrier. Never starts on tab entry. Never jam, replay, or continuous deny TX.</p>
+    <div class="keys" style="margin-bottom:18px">
+      <div class="key"><b>OK</b>DISARMED → ARMED</div>
+      <div class="key"><b>Hold OK</b>Transmit only if already ARMED. 1–10 s (Settings TXDur).</div>
+      <div class="key"><b>▲ / ▼</b>Frequency preset</div>
+      <div class="key"><b>Hold ◀ / ▶</b>ExtBand AUTO/400/900, only while DISARMED on external CC1101.</div>
+      <div class="key"><b>Back</b>Disarm / stop at any point. Then Settings.</div>
+      <div class="key"><b>Hold ▶ pages</b>None. This tab has no page cycle.</div>
+    </div>
+    <table>
+      <tr><td>Machine</td><td>TxDisarmed → TxArmed → TxStarting → TxTransmitting → auto-disarm</td></tr>
+      <tr><td>Preflight</td><td>Valid frequency + region allow + ExtBand policy</td></tr>
+      <tr><td>Fill</td><td>Fresh RF candidate frequency pre-loads here</td></tr>
+    </table>
+  </template>
+
+  <template id="card-info">
+    <p class="lede">Live capability card. Hold ▶ or ▲/▼ cycles five pages.</p>
+    <table>
+      <tr><td>1 / 5 Radio</td><td>RF path, SPI, Marauder, GPS source</td></tr>
+      <tr><td>2 / 5 State</td><td>Record, baseline, lock target, dump, UART</td></tr>
+      <tr><td>3 / 5 Keys</td><td>Control cheat-sheet</td></tr>
+      <tr><td>4 / 5 Files</td><td><code>apps_data/room_sweep</code>, last report number</td></tr>
+      <tr><td>5 / 5 Limits</td><td>RSSI ≠ distance · no jam · beacon ≠ telemetry · no hit ≠ absence</td></tr>
+    </table>
+    <p class="lede" style="margin-top:14px">Footer on device: <code>U/D or R page</code>.</p>
+  </template>
+
+  <script>
+    (function () {
+      var order = ["rf", "wi", "bt", "nr", "gp", "tx", "info"];
+      var titles = {
+        rf: ["TAB 1 / 7", "RF"],
+        wi: ["TAB 2 / 7", "Wi"],
+        bt: ["TAB 3 / 7", "BT"],
+        nr: ["TAB 4 / 7", "nR"],
+        gp: ["TAB 5 / 7", "GP"],
+        tx: ["TAB 6 / 7", "TX"],
+        info: ["TAB 7 / 7", "i"]
+      };
+      var modal = document.getElementById("modal");
+      var body = document.getElementById("modal-body");
+      var title = document.getElementById("modal-title");
+      var kicker = document.getElementById("modal-kicker");
+      var tabs = document.querySelectorAll(".tab");
+      var chrome = document.getElementById("chrome");
+      var current = null;
+
+      function placeModal() {
+        document.documentElement.style.setProperty(
+          "--chrome-h",
+          Math.ceil(chrome.getBoundingClientRect().bottom) + "px"
+        );
+      }
+
+      function setOn(id) {
+        tabs.forEach(function (t) {
+          t.classList.toggle("on", t.getAttribute("data-tab") === id);
+        });
+      }
+
+      function openTab(id) {
+        var tpl = document.getElementById("card-" + id);
+        if (!tpl) return;
+        var meta = titles[id];
+        current = id;
+        placeModal();
+        kicker.textContent = meta[0];
+        title.textContent = meta[1];
+        body.innerHTML = "";
+        body.appendChild(tpl.content.cloneNode(true));
+        modal.classList.add("open");
+        modal.setAttribute("aria-hidden", "false");
+        document.body.classList.add("modal-open");
+        setOn(id);
+      }
+
+      function closeModal() {
+        modal.classList.remove("open");
+        modal.setAttribute("aria-hidden", "true");
+        document.body.classList.remove("modal-open");
+        current = null;
+        setOn(null);
+      }
+
+      function step(delta) {
+        if (!current) return;
+        var i = order.indexOf(current);
+        openTab(order[(i + delta + order.length) % order.length]);
+      }
+
+      tabs.forEach(function (t) {
+        t.addEventListener("click", function () {
+          var id = t.getAttribute("data-tab");
+          if (current === id) closeModal();
+          else openTab(id);
+        });
+      });
+
+      modal.addEventListener("click", function (e) {
+        if (e.target.getAttribute("data-close") === "1") closeModal();
+      });
+
+      document.addEventListener("keydown", function (e) {
+        if (!current) return;
+        if (e.key === "Escape") closeModal();
+        if (e.key === "ArrowLeft") { e.preventDefault(); step(-1); }
+        if (e.key === "ArrowRight") { e.preventDefault(); step(1); }
+      });
+
+      window.addEventListener("resize", placeModal);
+      placeModal();
+    })();
+  </script>
 </body>
 </html>
