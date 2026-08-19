@@ -9,17 +9,15 @@ No jamming, blocking, deauth, capture/replay, or flood modes.
 
 ## Control map
 
-Quick visual of tabs, buttons, Hold-R pages, analyzer, and session files:
+Open this file in a browser. It is the operator map. Labels match the FAP.
+
+**[docs/room_sweep_control_map.html](docs/room_sweep_control_map.html)**
+
+Raster preview of that same map:
 
 ![Room Sweep control map](docs/room_sweep_control_map.jpg)
 
-Exact-label HTML map (open in a browser for crisp text):
-
-- [`docs/room_sweep_control_map.html`](docs/room_sweep_control_map.html)
-- Image asset: [`docs/room_sweep_control_map.jpg`](docs/room_sweep_control_map.jpg)
-
-The map shows structure; the **Controls** tables below are authoritative for
-input details (Hold ▲/▼ lock card, GPS Hold-OK retry, tap/hold pulses).
+The tables below repeat the same facts for markdown readers.
 
 Full operator detail: [`USER_GUIDE.md`](USER_GUIDE.md) · scope: [`MISSION.md`](MISSION.md).
 
@@ -47,20 +45,20 @@ forces internal CC1101 when nRF24 is selected.
 | **nR** | nRF24 RPD survey (detect only) + analyzer |
 | **GP** | GPS fix / sats / mark distance / **walk-to radar (real meters)** |
 | **TX** | Safety-gated arm → long-OK bounded carrier |
-| **i** | Status, state, keys, files, limits |
+| **i** | Radio / State / Keys / Files / Limits |
 
 ## Controls (current)
 
 | Input | Meaning |
 |-------|---------|
 | **Short ◀/▶** | Previous / next tab |
-| **Hold ◀** | Analyzer on/off (RF, Wi, BT, nR) |
-| **Hold ▶** | **Page inside mode** (see below) |
+| **Hold ◀** | Analyzer on/off (RF, Wi, BT, nR). **nR Hold OK** also toggles it |
+| **Hold ▶** | **Page inside mode** (see below). TX disarmed + external radio: ExtBand |
 | **▲/▼** | Browse selection or RF sub-mode / GPS-Info pages |
-| **Hold ▲/▼** | **RF lock card** open/close (RF tab) |
+| **Hold ▲/▼** | **RF lock card** open (RF tab). Short ▲/▼ returns to the map |
 | **OK** | Primary action (scan, start sweep, arm TX, GPS mark, …) |
 | **Hold OK** | Lock target (or confirm TX when armed). On **GPS**: NMEA retry |
-| **Back** | Settings (or disarm TX) |
+| **Back** | Settings (or disarm TX). In Settings, ◀/▶ change group |
 | **Hold Back** | Exit app |
 
 With **Vibro** ON, a tap gives one soft pulse and a hold gives a double pulse
@@ -76,9 +74,9 @@ on release. Sound/Vibro state lives in **Settings → Feedback**.
 | **Analyzer** (after Hold L) | Hunt → Field → **Radar** → **Meter** (polar RSSI rings, big-number dBm) |
 | **GPS** | Summary ↔ Detail ↔ **Radar** (mark-centered, true-bearing walk-to) |
 | **Info** | Radio → State → Keys → Files → Limits (also ▲/▼) |
-| **TX** | No extra pages (safety-critical) |
+| **TX** | No pages. Hold ◀/▶ steps ExtBand only while **DISARMED** on external CC1101 |
 
-Scan window **15/30/60s** is **Settings → ScanWin** (not Hold R).
+Scan window **15/30/60s** is **Settings → ScanWin** (not Hold ▶).
 While a **FullSweep** runs, the top strip shows `FULL <phase> <s>` progress
 instead of the tab labels; every tab keeps its footer hints visible.
 
@@ -95,8 +93,9 @@ Feedback · Wireless · Radio · GPS · Session
 Notable items: Sound, Vibro, Rescan, ScanWin, Record, ExtBand, **SPI Path**,
 GPS Src, GPS Log, Baseline, Raw Dump, TXDur, **FullSweep**.
 
-**FullSweep** runs RF → Wi-Fi → BLE → nRF24 → GPS with hard timeouts, writes
-session + report, shows **SWEEP DONE**.
+**FullSweep** runs RF 10 s → Wi-Fi 15 s → BLE 15 s → nRF24 12 s → GPS 8 s
+(GPS may finish after 2 s if NMEA exists). nR is skipped if SPI Path is not
+nRF24. Never arms TX. Writes session + report, shows **SWEEP DONE**.
 
 ## Session files
 
@@ -136,8 +135,8 @@ python3 _verify_api.py
 
 | Doc | Use |
 |-----|-----|
+| [`docs/room_sweep_control_map.html`](docs/room_sweep_control_map.html) | Operator control map (open in a browser) |
 | [`USER_GUIDE.md`](USER_GUIDE.md) | Operator controls, tabs, analyzer, FullSweep |
 | [`MISSION.md`](MISSION.md) | Scope / legal / TX safety contract |
 | [`docs/BFFB_MOMENTUM.md`](docs/BFFB_MOMENTUM.md) | BFFB + Marauder + Momentum facts |
-| [`docs/room_sweep_control_map.html`](docs/room_sweep_control_map.html) | Exact control map (HTML) |
-| [`docs/room_sweep_control_map.jpg`](docs/room_sweep_control_map.jpg) | Control map image |
+| [`handoff.md`](handoff.md) | Historical 2026-08-01 snapshot — not current |

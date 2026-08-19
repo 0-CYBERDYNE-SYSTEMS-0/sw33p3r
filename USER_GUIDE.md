@@ -3,8 +3,10 @@
 Receive-side room survey on Flipper Zero + optional BFFB (Marauder / dual
 CC1101 / nRF24). Firmware target: **Momentum mntm-012**, API **87.1**.
 
-This guide matches the **current** app behavior (7 tabs, Hold-R pages,
+This guide matches the **current** app behavior (7 tabs, Hold-▶ pages,
 analyzer age-out, FullSweep auto-save, tactile tap/hold feedback).
+
+One-page map: [`docs/room_sweep_control_map.html`](docs/room_sweep_control_map.html).
 
 ## Remember these controls
 
@@ -87,7 +89,7 @@ Same page/control pattern as Wi-Fi. Command: `sniffbt`.
 
 - Settings **SPI Path = nRF24** and BFFB bottom switch **down**  
 - Sub-GHz then uses **internal** CC1101  
-- **OK:** start/stop RPD pass · **Hold Left:** analyzer  
+- **OK:** start/stop RPD pass · **Hold Left** or **Hold OK:** analyzer  
 
 ### GPS
 
@@ -97,7 +99,9 @@ Same page/control pattern as Wi-Fi. Command: `sniffbt`.
 | Detail | Date, NMEA counters, age, drops |
 | **Radar** | Mark-centered, north-up **real meters** — you walk toward the center |
 
-**OK** = set mark. **Hold OK** = NMEA retry (reinit stream / baud swap).
+**OK** = set mark when NMEA is fresh. If there is no sentence or the fix is
+stale, **OK** retries the source (same path as Hold OK). **Hold OK** always
+retries (reinit stream / GPIO baud swap 9600 ↔ 115200, or Marauder `nmea`).
 Coordinates in logs only if **GPS Log** ON.
 
 **GPS Radar (walk-to-target):** set a mark (OK), then walk. The radar is
@@ -125,7 +129,8 @@ left/right steering guidance. Until then: north-up map + true bearing.
 4. **Hold OK** → bounded carrier (1–10 s, Settings TXDur)  
 5. Auto-disarm; Back disarms anytime  
 
-No jam, replay, or continuous denial TX. Hold-R pages are **not** used here.
+No jam, replay, or continuous denial TX. Hold ▶ does **not** open pages here.
+While **DISARMED** on external CC1101, Hold ◀/▶ steps ExtBand (AUTO / 400 / 900).
 
 ### Info
 
@@ -156,6 +161,7 @@ No jam, replay, or continuous denial TX. Hold-R pages are **not** used here.
 
 Groups: Feedback · Wireless · Radio · GPS · Session  
 
+◀/▶ (short or hold) change group. ▲/▼ move inside the group.
 Every value toggle confirms with a soft tick/beep (respects Sound/Vibro).
 
 | Item | Role |
@@ -189,11 +195,12 @@ Recording is size-capped; scans continue if logging stops.
 
 Settings → FullSweep → OK:
 
-1. RF, Wi-Fi, BLE, nRF24, GPS each with **hard timeouts** (GPS ≤ 8 s)  
+1. Hard timeouts: RF 10 s, Wi-Fi 15 s, BLE 15 s, nRF24 12 s, GPS 8 s
+   (GPS may finish after 2 s if a sentence or fix exists)  
 2. nRF skipped immediately if SPI path is not nRF24  
 3. Session closed; `report-N.txt` written  
 4. Progress shows in the **top strip** (`FULL RF 10s`) — tab footers stay visible  
-5. Inverted **SWEEP DONE** banner after auto-save
+5. Inverted **SWEEP DONE** banner after auto-save (`saved report-N`)
 
 ## Hardware notes (BFFB)
 

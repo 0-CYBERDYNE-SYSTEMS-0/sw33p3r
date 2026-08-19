@@ -7,8 +7,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Room Sweep is a Flipper Zero external app (`.fap`, appid `room_sweep`) for
 receive-side RF surveying on the operator's own property: sub-GHz survey/sweep
 via CC1101, WiFi/BLE scans driven over UART on a Just Call Me Koko **BFFB**
-ESP32 running ESP32Marauder, passive GPS display, session recording, and a
-safety-gated TX tab. Target firmware: **Momentum mntm-012, API 87.1, target 7**.
+ESP32 running ESP32Marauder, nRF24 RPD survey, passive GPS display, session
+recording, and a safety-gated TX tab. Target firmware: **Momentum mntm-012,
+API 87.1, target 7**. Seven tabs: RF / Wi / BT / nR / GP / TX / i.
 
 **Mission scope is a hard constraint, not prose:** receive-side surveying plus a
 bounded carrier-frequency TX test only. No jamming, blocking, deauthentication,
@@ -32,10 +33,13 @@ Run one suite by copying its line from `init.sh`, e.g.:
 cc -std=c11 -Wall -Wextra -Werror -I. tests/test_nmea.c nmea.c -o /tmp/t_nmea && /tmp/t_nmea
 ```
 
-Suites: `test_nmea` (58 assertions), `test_input_state` (Back routing),
+Suites (see `init.sh`): `test_nmea`, `test_input_state`, `test_input_touch`,
 `test_rf_tx_state`, `test_wireless_state`, `test_gps_state`,
-`test_record_state`, `test_report_state`, `test_scan_logic`. Tests use a
-`CHECK(cond, msg)` counter macro and return non-zero on failure — no framework.
+`test_record_state`, `test_report_state`, `test_scan_logic`,
+`test_marauder_parse`, `test_settings_state`, `test_full_sweep_state`,
+`test_nrf24_state`, `test_analyzer_state`, `test_ui_layout`, `test_radar`,
+`test_waterfall`. Tests use a `CHECK(cond, msg)` counter macro and return
+non-zero on failure — no framework.
 
 Device helpers (need a Flipper over USB, pyserial): `_smoke_test.py`
 (build/upload/traverse; `FLIPPER_PORT`/`FLIPPER_BAUD` env overrides, default
@@ -48,8 +52,8 @@ the serial CLI first.
 
 ## Architecture
 
-Single ViewPort app, one draw function, six tabs (`SweepMode` in
-`room_sweep.h`): RF / WiFi / BLE / GPS / TX / Info. `room_sweep.c` (~4k lines)
+Single ViewPort app, one draw function, **7 tabs** (`SweepMode` in
+`room_sweep.h`): RF / Wi / BT / nR / GP / TX / i. `room_sweep.c` (~5790 lines)
 is the intentional monolith: input routing, drawing, RF engine, TX thread,
 UART parsing, feedback. Everything that can be logic-tested off-device lives in
 **header-only, Flipper-header-free state files** so host suites compile with
@@ -60,17 +64,23 @@ plain `cc`:
   `RoomSweepTxRefusal*`).
 - `room_sweep_scan.h` — Marauder scan timeout decision (timeout from scan
   start; ERR only when zero results; BLE dedup silence is not an error).
-- `room_sweep_input.h` — Back-button routing decision table.
+- `room_sweep_marauder.h` — Wi-Fi / BLE line parse.
+- `room_sweep_input.h` — Back-button routing + tap/hold tracker.
 - `room_sweep_gps_state.h`, `room_sweep_wireless.h`, `room_sweep_record_state.h`,
   `room_sweep_report.h` — GPS presentation, WiFi/BLE list state, recorder
   queue, report text assembly.
+- `room_sweep_full_sweep.h`, `room_sweep_radio_path.h`,
+  `room_sweep_nrf24_state.h`, `room_sweep_settings.h`.
+- `room_sweep_analyzer.h`, `room_sweep_radar.h`, `room_sweep_waterfall.h`,
+  `room_sweep_ui_layout.h`.
 
 When changing behavior, put the decision logic in one of these headers and add
 a host test; keep `room_sweep.c` as the wiring/rendering layer.
 
 Other modules: `nmea.c/h` (host-tested NMEA parser: GGA/RMC/GLL/ZDA/GSV),
-`session_log.c/h` (session writer; main-loop-only), `application.fam`
-(ufbt manifest, stack 6 KiB, `sources=["*.c","!tests"]`).
+`session_log.c/h` (session writer; main-loop-only), `nrf24_survey.c/h`
+(SPI RPD sample), `application.fam` (ufbt manifest, stack 6 KiB,
+`sources=["*.c","!tests"]`).
 
 ### Threads and locking
 

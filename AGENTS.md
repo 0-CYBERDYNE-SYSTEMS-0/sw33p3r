@@ -40,18 +40,20 @@ gitignored.
 Single ViewPort app, one draw function, **7 tabs** (`SweepMode` in
 `room_sweep.h`): RF / Wi / BT / nR / GP / TX / i.
 
-- `room_sweep.c` (~200 KB, ~4k lines) is an intentional monolith: input
+- `room_sweep.c` (~5790 lines) is an intentional monolith: input
   routing, drawing, RF engine, TX thread, UART parsing, feedback.
 - **All logic that can be host-tested lives in header-only, Flipper-header-free
   state files** so suites compile with plain `cc`. When changing behavior, put
   the decision logic in the relevant header and add a host test; keep
   `room_sweep.c` as wiring/rendering only. State headers:
   `room_sweep_state.h` (RF→TX handoff + TX refusal state machine),
-  `room_sweep_scan.h`, `room_sweep_input.h` (Back routing),
+  `room_sweep_scan.h`, `room_sweep_marauder.h`, `room_sweep_input.h`,
   `room_sweep_gps_state.h`, `room_sweep_wireless.h`,
   `room_sweep_record_state.h`, `room_sweep_report.h`,
   `room_sweep_full_sweep.h`, `room_sweep_radio_path.h`,
-  `room_sweep_nrf24_state.h`, `room_sweep_settings.h`.
+  `room_sweep_nrf24_state.h`, `room_sweep_settings.h`,
+  `room_sweep_analyzer.h`, `room_sweep_radar.h`, `room_sweep_waterfall.h`,
+  `room_sweep_ui_layout.h`.
 - Other modules: `nmea.c/h` (host-tested NMEA parser),
   `session_log.c/h` (session writer, main-loop-only), `nrf24_survey.c/h`.
 - `application.fam` — ufbt manifest: stack 6 KiB, `sources=["*.c","!tests"]`.

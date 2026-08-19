@@ -1,17 +1,33 @@
 # Room Sweep — Developer Handoff
 
-**Date:** 2026-08-01
-**Version:** v3.0.1 (HEAD d6182a1 plus verified working-tree fixes)
-**Branch:** main
-**Firmware:** Momentum mntm-012, API 87.1, target 7
-**Build tool:** ufbt (pyenv shim at ~/.pyenv/shims/ufbt)
-**Final FAP SHA-256:** `7994ddea5961dc2889a0f767831fc3428b32ae6d1df9f048ec2f0a2fe91e853c`
+**This file is a historical snapshot from 2026-08-01 (v3.0.1).**
+It is not the current operator or architecture description.
+
+Current sources:
+
+- Operator: [`README.md`](README.md), [`USER_GUIDE.md`](USER_GUIDE.md)
+- Control map: [`docs/room_sweep_control_map.html`](docs/room_sweep_control_map.html)
+- Scope: [`MISSION.md`](MISSION.md)
+- Agent brief: [`AGENTS.md`](AGENTS.md)
+
+The live FAP has **7 tabs** (`RF Wi BT nR GP TX i`), stack 6 KiB, and
+`room_sweep.c` is ~5790 lines. Do not copy tab counts or file lists from
+the archive below.
 
 ---
 
-## Current State
+**Archive date:** 2026-08-01
+**Archive version:** v3.0.1 (HEAD d6182a1 plus verified working-tree fixes)
+**Branch:** main
+**Firmware:** Momentum mntm-012, API 87.1, target 7
+**Build tool:** ufbt (pyenv shim at ~/.pyenv/shims/ufbt)
+**Archive FAP SHA-256:** `7994ddea5961dc2889a0f767831fc3428b32ae6d1df9f048ec2f0a2fe91e853c`
 
-Six-tab Flipper Zero app. The current working tree builds clean with -Werror,
+---
+
+## Archive state (2026-08-01)
+
+Six-tab Flipper Zero app (nR / Waterfall / analyzer suite did not exist yet). The current working tree builds clean with -Werror,
 passes 58/58 executable NMEA assertions plus 4/4 Back-state assertions, and has been
 installed and traversed on the connected Flipper without a crash. Device proof
 uses valid Press→Short/Long→Release input sequences; iPhone Mirroring visually
@@ -188,7 +204,7 @@ Three verification levels — never conflate them:
 2. **Host-verified:** 58/58 executable NMEA assertions and 4/4 Back-routing assertions pass
 3. **Device-verified:** confirmed on physical Flipper hardware
 
-Current device-verified: all-six-tab no-crash traversal, settings controls,
+Archive device-verified (2026-08-01, six tabs then): no-crash traversal, settings controls,
 Settings short-close, long-exit, TX disarm navigation, and app launch/exit.
 Actual BFFB result parsing, audio/haptic observation, and deliberate RF
 transmission remain user field tests because the required hardware/consent was
