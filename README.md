@@ -12,13 +12,13 @@ No jamming, blocking, deauth, capture/replay, or flood modes.
 GitHub does not run HTML inside a README. The image is what you see on this
 page. Click it to open the live map (tabs, tab cards, Back / Forward).
 
-[![Room Sweep control map](docs/room_sweep_control_map.jpg)](https://htmlpreview.github.io/?https://github.com/0-CYBERDYNE-SYSTEMS-0/sw33p3r/blob/main/docs/room_sweep_control_map.html)
+[![Room Sweep control map](docs/room_sweep_control_map.jpg)](https://0-cyberdyne-systems-0.github.io/sw33p3r/)
 
 Click a strip tab (RF shown):
 
-[![RF tab card](docs/room_sweep_control_map_rf.jpg)](https://htmlpreview.github.io/?https://github.com/0-CYBERDYNE-SYSTEMS-0/sw33p3r/blob/main/docs/room_sweep_control_map.html#rf)
+[![RF tab card](docs/room_sweep_control_map_rf.jpg)](https://0-cyberdyne-systems-0.github.io/sw33p3r/room_sweep_control_map.html#rf)
 
-- Live map: [htmlpreview](https://htmlpreview.github.io/?https://github.com/0-CYBERDYNE-SYSTEMS-0/sw33p3r/blob/main/docs/room_sweep_control_map.html)
+- Live map: [github.io](https://0-cyberdyne-systems-0.github.io/sw33p3r/)
 - Source file: [`docs/room_sweep_control_map.html`](docs/room_sweep_control_map.html)
 
 The tables below repeat the same facts for markdown readers.
@@ -139,7 +139,7 @@ python3 _verify_api.py
 
 | Doc | Use |
 |-----|-----|
-| [`docs/room_sweep_control_map.html`](https://htmlpreview.github.io/?https://github.com/0-CYBERDYNE-SYSTEMS-0/sw33p3r/blob/main/docs/room_sweep_control_map.html) | Live operator map (tabs + cards) |
+| [Live control map](https://0-cyberdyne-systems-0.github.io/sw33p3r/) | Operator map (tabs + cards) |
 | [`docs/room_sweep_control_map.jpg`](docs/room_sweep_control_map.jpg) | README preview of the map |
 | [`USER_GUIDE.md`](USER_GUIDE.md) | Operator controls, tabs, analyzer, FullSweep |
 | [`MISSION.md`](MISSION.md) | Scope / legal / TX safety contract |
