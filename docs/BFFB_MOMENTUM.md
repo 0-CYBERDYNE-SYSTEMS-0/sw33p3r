@@ -1,6 +1,9 @@
 # BFFB + Momentum + Marauder — source of truth
 
-Authoritative references used by Room Sweep. Prefer these over blog posts.
+Authoritative hardware/UART references used by Room Sweep. Prefer these
+over blog posts. Operator controls live in
+[`room_sweep_control_map.html`](room_sweep_control_map.html),
+[`USER_GUIDE.md`](../USER_GUIDE.md), and [`README.md`](../README.md).
 
 ## Hardware: Just Call Me Koko BFFB
 

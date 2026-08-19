@@ -1,5 +1,9 @@
 # PROMPT.md — Full-sweep expansion (detect-only)
 
+Status: this expansion is complete (`features.json` all `passes: true`).
+Current operator docs: `README.md`, `USER_GUIDE.md`,
+`docs/room_sweep_control_map.html`. Keep this file as the graph-loop recipe.
+
 ## Stack (read every iteration, this order)
 1. `progress.log` (tail)
 2. `features.json` (first `passes: false` only)
