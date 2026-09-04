@@ -2466,10 +2466,10 @@ static void draw_proximity_analyzer(
             }
         }
 
-        canvas_draw_box(canvas, 0, 60, 128, 4);
+        canvas_draw_box(canvas, 0, UI_FOOTER_BAND_TOP, 128, 7);
         canvas_set_color(canvas, ColorWhite);
         canvas_set_font(canvas, FontKeyboard);
-        canvas_draw_str(canvas, 2, 63, "L=list R=field  U/D=sel");
+        canvas_draw_str(canvas, 2, UI_ROW_FOOTER_BASELINE, UI_HINT_AN_LIST);
         canvas_set_color(canvas, ColorBlack);
         return;
     }
@@ -2479,8 +2479,12 @@ static void draw_proximity_analyzer(
     snprintf(buf, sizeof(buf), "%s FIELD", title ? title : "AN");
     canvas_draw_str(canvas, 2, 14, buf);
     if(an) {
-        snprintf(buf, sizeof(buf), "%+d", (int)an->live_rssi);
-        canvas_draw_str(canvas, 100, 14, buf);
+        snprintf(buf, sizeof(buf), "%+ddBm", (int)an->live_rssi);
+        canvas_draw_str(
+            canvas,
+            room_sweep_ui_right_align_x(UI_TEXT_RIGHT_EDGE, canvas_string_width(canvas, buf)),
+            14,
+            buf);
     }
     canvas_set_font(canvas, FontSecondary);
     draw_str_clip(
@@ -2510,16 +2514,18 @@ static void draw_proximity_analyzer(
     canvas_set_font(canvas, FontKeyboard);
     canvas_draw_box(canvas, 0, 57, 128, 7);
     canvas_set_color(canvas, ColorWhite);
-    canvas_draw_str(canvas, 2, 63, "L=list R=radar  bars=peers");
+    canvas_draw_str(canvas, 2, 63, UI_HINT_AN_FIELD);
     canvas_set_color(canvas, ColorBlack);
 }
 
 /* ================================================================== */
 /* Meter suite — polar radar / big-number meter / RF waterfall         */
 /* ================================================================== */
+/* Scope fits the body band: top (CY - R = 18) clears the header glyphs,
+ * bottom (CY + R = 56) clears the footer band at UI_FOOTER_BAND_TOP. */
 #define ANALYZER_RADAR_CX 64
-#define ANALYZER_RADAR_CY 31
-#define ANALYZER_RADAR_R 24
+#define ANALYZER_RADAR_CY 37
+#define ANALYZER_RADAR_R 19
 
 typedef struct {
     int16_t angle_deg;
@@ -2627,17 +2633,30 @@ static void draw_analyzer_radar(
         canvas_draw_str(canvas, (uint8_t)(126 - w), UI_ROW_HEADER_BASELINE, buf);
     }
 
-    /* dBm ring scale — labels map linearly to radii 24/18/12/6:
-     * (r/24)*107-127 → -20 / -47 / -74 / -100. */
-    canvas_draw_str(canvas, 2, 9, "-20");
-    canvas_draw_str(canvas, 2, 15, "-47");
-    canvas_draw_str(canvas, 2, 21, "-74");
-    canvas_draw_str(canvas, 2, 27, "-100");
+    /* dBm ring scale — ring radii come from the same rssi→radius mapping the
+     * blips use, so rings and blips always agree. Labels sit in the left
+     * column, clear of the header row and the scope (left edge = CX - R). */
+    canvas_draw_str(canvas, 2, 23, "-20");
+    canvas_draw_str(canvas, 2, 30, "-47");
+    canvas_draw_str(canvas, 2, 37, "-74");
+    canvas_draw_str(canvas, 2, 44, "-100");
 
     canvas_draw_circle(canvas, ANALYZER_RADAR_CX, ANALYZER_RADAR_CY, ANALYZER_RADAR_R);
-    canvas_draw_circle(canvas, ANALYZER_RADAR_CX, ANALYZER_RADAR_CY, 18);
-    canvas_draw_circle(canvas, ANALYZER_RADAR_CX, ANALYZER_RADAR_CY, 12);
-    canvas_draw_circle(canvas, ANALYZER_RADAR_CX, ANALYZER_RADAR_CY, 6);
+    canvas_draw_circle(
+        canvas,
+        ANALYZER_RADAR_CX,
+        ANALYZER_RADAR_CY,
+        room_sweep_radar_rssi_radius(-47, ANALYZER_RADAR_R));
+    canvas_draw_circle(
+        canvas,
+        ANALYZER_RADAR_CX,
+        ANALYZER_RADAR_CY,
+        room_sweep_radar_rssi_radius(-74, ANALYZER_RADAR_R));
+    canvas_draw_circle(
+        canvas,
+        ANALYZER_RADAR_CX,
+        ANALYZER_RADAR_CY,
+        room_sweep_radar_rssi_radius(-100, ANALYZER_RADAR_R));
 
     int16_t sweep_a = (int16_t)((phase * 8U) % 360U);
     int16_t sx, sy;
@@ -2664,12 +2683,10 @@ static void draw_analyzer_radar(
     }
     canvas_draw_dot(canvas, ANALYZER_RADAR_CX, ANALYZER_RADAR_CY);
 
-    /* Honest scale disclaimer + footer */
-    canvas_set_font(canvas, FontKeyboard);
-    canvas_draw_str(canvas, UI_MARGIN_X, 60, "RSSI ring, not meters");
+    /* Footer only — the dBm legend above carries the scale meaning. */
     canvas_draw_box(canvas, 0, UI_FOOTER_BAND_TOP, 128, 7);
     canvas_set_color(canvas, ColorWhite);
-    canvas_draw_str(canvas, 2, UI_ROW_FOOTER_BASELINE, "L=list R=meter  U/D=sel");
+    canvas_draw_str(canvas, 2, UI_ROW_FOOTER_BASELINE, UI_HINT_AN_RADAR);
     canvas_set_color(canvas, ColorBlack);
 }
 
@@ -2711,12 +2728,12 @@ static void draw_analyzer_meter(
 
     canvas_draw_box(canvas, 0, UI_FOOTER_BAND_TOP, 128, 7);
     canvas_set_color(canvas, ColorWhite);
+    /* Trend text only — the arrow duplicated it and pushed past "R=hunt". */
     snprintf(
         buf,
         sizeof(buf),
-        "PK %d  %s %s",
+        "PK %d %s",
         an ? (int)an->peak_rssi : -127,
-        room_sweep_analyzer_trend_arrow(trend),
         room_sweep_analyzer_trend_text(trend));
     canvas_draw_str(canvas, 2, UI_ROW_FOOTER_BASELINE, buf);
     canvas_draw_str(canvas, 96, UI_ROW_FOOTER_BASELINE, "R=hunt");
@@ -2728,7 +2745,8 @@ static void draw_analyzer_meter(
 static void draw_rf_waterfall(Canvas* canvas, App* app) {
     char buf[40];
     const uint8_t area_top = 16;
-    const uint8_t area_bot = 56;
+    /* Bottom stops above the footer text glyphs (baseline 63, tops ~55). */
+    const uint8_t area_bot = 52;
     const uint8_t col_w = 5;
 
     canvas_set_font(canvas, FontSecondary);
@@ -3172,7 +3190,7 @@ static void draw_rf_lock_card(Canvas* canvas, App* app) {
         canvas_draw_str(canvas, 2, 40, buf);
         snprintf(buf, sizeof(buf), "live %+ddBm", (int)tr);
         canvas_draw_str(canvas, 2, 50, buf);
-        canvas_draw_str(canvas, 2, 63, "U/D back  HoldOK unlock");
+        canvas_draw_str(canvas, 2, 63, "U/D back HOK=unlock");
     } else if(cand_ok) {
         canvas_draw_str(canvas, 2, 28, "CANDIDATE");
         canvas_set_font(canvas, FontKeyboard);
@@ -3185,7 +3203,7 @@ static void draw_rf_lock_card(Canvas* canvas, App* app) {
         canvas_draw_str(canvas, 2, 40, buf);
         snprintf(buf, sizeof(buf), "%+.0f dBm fresh", (double)cand.rssi);
         canvas_draw_str(canvas, 2, 50, buf);
-        canvas_draw_str(canvas, 2, 63, "U/D back  HoldOK lock");
+        canvas_draw_str(canvas, 2, 63, "U/D back HOK=lock");
     } else {
         canvas_draw_str(canvas, 2, 28, "No lock");
         canvas_set_font(canvas, FontKeyboard);
@@ -3346,7 +3364,7 @@ static void draw_rf_sweep(Canvas* canvas, App* app) {
         }
 
         canvas_set_font(canvas, FontKeyboard);
-        canvas_draw_str(canvas, 2, 62, "U/D OK HoldL=AN HoldR band");
+        canvas_draw_str(canvas, 2, 62, UI_HINT_RF_SWEEP);
     }
 }
 
@@ -3402,7 +3420,7 @@ static void draw_rf_peak(Canvas* canvas, App* app) {
                 canvas_draw_str(canvas, 2, 52, buf);
             }
             canvas_set_font(canvas, FontKeyboard);
-            canvas_draw_str(canvas, 2, 63, "U/D mode OK refine HoldOK lock");
+            canvas_draw_str(canvas, 2, 63, UI_HINT_RF_PEAK);
         } else {
             canvas_set_font(canvas, FontSecondary);
             canvas_draw_str(
@@ -3428,7 +3446,7 @@ static void draw_wifi_tab(Canvas* canvas, App* app) {
         canvas_set_font(canvas, FontSecondary);
         canvas_draw_str(canvas, 2, 16, "WiFi");
         canvas_set_font(canvas, FontKeyboard);
-        canvas_draw_str(canvas, 2, 30, "No UART — attach BFFB");
+        canvas_draw_str(canvas, 2, 30, "No UART - check BFFB");
         canvas_draw_str(canvas, 2, 42, "power 5V/OTG");
         canvas_draw_str(canvas, 2, 63, "OK unused");
         return;
@@ -3486,8 +3504,8 @@ static void draw_wifi_tab(Canvas* canvas, App* app) {
         canvas_draw_str(canvas, 2, 34, "U/D select AP");
         canvas_draw_str(canvas, 2, 42, "OK scan  HoldOK lock");
         canvas_draw_str(canvas, 2, 50, "L analyzer R pages");
+        /* y58 only — the old y63 "R=detail" row overdraw this line. */
         canvas_draw_str(canvas, 2, 58, "ScanWin in Settings");
-        canvas_draw_str(canvas, 2, 63, "R=detail");
         return;
     }
     if(page == 1) {
@@ -3558,7 +3576,7 @@ static void draw_ble_tab(Canvas* canvas, App* app) {
         canvas_set_font(canvas, FontSecondary);
         canvas_draw_str(canvas, 2, 16, "BLE");
         canvas_set_font(canvas, FontKeyboard);
-        canvas_draw_str(canvas, 2, 30, "No UART — attach BFFB");
+        canvas_draw_str(canvas, 2, 30, "No UART - check BFFB");
         canvas_draw_str(canvas, 2, 63, "OK unused");
         return;
     }
@@ -3619,8 +3637,8 @@ static void draw_ble_tab(Canvas* canvas, App* app) {
         canvas_draw_str(canvas, 2, 34, "U/D select device");
         canvas_draw_str(canvas, 2, 42, "OK scan  HoldOK lock");
         canvas_draw_str(canvas, 2, 50, "L analyzer R pages");
+        /* y58 only — the old y63 "R=detail" row overdraw this line. */
         canvas_draw_str(canvas, 2, 58, "ScanWin in Settings");
-        canvas_draw_str(canvas, 2, 63, "R=detail");
         return;
     }
     if(page == 1) {
@@ -3670,7 +3688,7 @@ static void draw_ble_tab(Canvas* canvas, App* app) {
     canvas_draw_str(canvas, 2, 38, buf);
     if(dev.mac[0]) canvas_draw_str(canvas, 2, 48, dev.mac);
     else canvas_draw_str(canvas, 2, 48, "id: session ordinal");
-    canvas_draw_str(canvas, 2, 56, locked ? "LOCK on  HoldOK=unlock" : "adv  HoldOK=lock");
+    canvas_draw_str(canvas, 2, 56, locked ? "LOCK on  HoldOK=unlock" : UI_HINT_BT_ADV);
     canvas_draw_str(canvas, 2, 63, "U/D OK L=AN R=list");
 }
 
@@ -3705,7 +3723,12 @@ static void draw_gps_tab(Canvas* canvas, App* app) {
     canvas_set_font(canvas, FontKeyboard);
     canvas_draw_str(canvas, 34, 15, room_sweep_gps_status_text(status));
     canvas_draw_str(
-        canvas, 89, 12, room_sweep_gps_page_text(app->gps_page));
+        canvas,
+        room_sweep_ui_right_align_x(
+            UI_TEXT_RIGHT_EDGE,
+            canvas_string_width(canvas, room_sweep_gps_page_text(app->gps_page))),
+        12,
+        room_sweep_gps_page_text(app->gps_page));
 
     char buf[48];
     canvas_set_font(canvas, FontSecondary);
@@ -3726,8 +3749,8 @@ static void draw_gps_tab(Canvas* canvas, App* app) {
                 (app->serial ? "Awaiting NMEA response" : "Marauder unavailable"));
         canvas_draw_str(canvas, 2, 38, buf);
         canvas_set_font(canvas, FontKeyboard);
-        canvas_draw_str(canvas, 2, 51, "Source set in Settings");
-        canvas_draw_str(canvas, 2, 63, "OK/HOK=retry  U/D page");
+        canvas_draw_str(canvas, 2, 51, "Source: Settings");
+        canvas_draw_str(canvas, 2, 63, "OK=retry  U/D page");
         return;
     }
 
@@ -3757,13 +3780,14 @@ static void draw_gps_tab(Canvas* canvas, App* app) {
             snprintf(buf, sizeof(buf), "Date:---- -- -- Q:%u", gps.fix_quality);
         }
         canvas_draw_str(canvas, 2, 33, buf);
+        /* Byte count dropped from the row — it outgrew the line once UART
+         * traffic accumulated; totals live in the session CSV instead. */
         snprintf(
             buf,
             sizeof(buf),
-            "NMEA:%lu nav:%lu bytes:%lu",
+            "NMEA:%lu nav:%lu",
             (unsigned long)gps.sentences,
-            (unsigned long)gps.nav_sentences,
-            (unsigned long)gps.rx_bytes);
+            (unsigned long)gps.nav_sentences);
         canvas_draw_str(canvas, 2, 43, buf);
         if(gps_last_valid_tick > 0) {
             snprintf(
@@ -3820,7 +3844,8 @@ static void draw_gps_tab(Canvas* canvas, App* app) {
         canvas_draw_str(canvas, 2, 48, "spd/crs --");
     }
 
-    /* Mark distance */
+    /* Mark distance and the page hint share one footer row — the old y60
+     * mark line underlapped the y63 footer (QA 2026-09-04). */
     canvas_set_font(canvas, FontKeyboard);
     if(app->gps_mark_set && gps_fresh && gps.has_pos) {
         float dist = geo_distance_m(
@@ -3831,15 +3856,14 @@ static void draw_gps_tab(Canvas* canvas, App* app) {
         } else {
             snprintf(buf, sizeof(buf), "mark %.0fm", (double)dist);
         }
-        canvas_draw_str(canvas, 2, 60, buf);
+        canvas_draw_str(canvas, 2, UI_ROW_FOOTER_BASELINE, buf);
     } else if(app->gps_mark_set) {
-        canvas_draw_str(canvas, 2, 60, "mark set (no pos)");
+        canvas_draw_str(canvas, 2, UI_ROW_FOOTER_BASELINE, "mark set");
     } else {
-        canvas_draw_str(canvas, 2, 60, "OK=mark");
+        canvas_draw_str(canvas, 2, UI_ROW_FOOTER_BASELINE, "OK=mark");
     }
 
-    canvas_draw_str(canvas, 2, 63, "HOK=retry");
-    canvas_draw_str(canvas, 78, 63, "U/D page");
+    canvas_draw_str(canvas, 78, UI_ROW_FOOTER_BASELINE, "U/D page");
 }
 
 /* ================================================================== */
@@ -3960,13 +3984,17 @@ static void draw_nrf24_tab(Canvas* canvas, App* app) {
             canvas_draw_str(canvas, 2, 48, "RX RPD only");
             canvas_draw_str(canvas, 2, 56, "no jam modes");
         }
-        canvas_draw_str(canvas, 2, 63, "OK=scan L=AN R=results");
+        canvas_draw_str(canvas, 2, 63, UI_HINT_NR_STATUS);
         return;
     }
 
     /* RESULTS page */
     canvas_draw_str(canvas, 2, 14, "nR RESULTS");
-    canvas_draw_str(canvas, 90, 14, "R=st");
+    canvas_draw_str(
+        canvas,
+        room_sweep_ui_right_align_x(UI_TEXT_RIGHT_EDGE, canvas_string_width(canvas, "R=res")),
+        14,
+        "R=res");
     if(app->nrf24.phase == RoomSweepNrf24Scanning) {
         snprintf(
             buf,
@@ -3998,7 +4026,7 @@ static void draw_nrf24_tab(Canvas* canvas, App* app) {
     if(app->nrf24.active_channels == 0) {
         canvas_draw_str(canvas, 2, 40, "no RPD energy yet");
     }
-    canvas_draw_str(canvas, 2, 63, "OK=rescan L=AN R=status");
+    canvas_draw_str(canvas, 2, 63, UI_HINT_NR_RESULTS);
 }
 
 /* ================================================================== */
@@ -4033,22 +4061,22 @@ static void draw_tx_tab(Canvas* canvas, App* app) {
             canvas_draw_str(canvas, 2, 38, refusal);
             canvas_set_font(canvas, FontKeyboard);
             if(app->tx_refusal == RoomSweepTxRefusalInvalidFrequency && needs_int_only) {
-                canvas_draw_str(canvas, 2, 48, "300MHz needs INT radio");
+                canvas_draw_str(canvas, 2, 48, UI_HINT_TX_INT_REFUSAL);
             } else if(app->tx_refusal == RoomSweepTxRefusalPolicy) {
-                snprintf(buf, sizeof(buf), "region %s — U/D other freq", reg_name);
+                snprintf(buf, sizeof(buf), "%s: U/D freq", reg_name);
                 canvas_draw_str(canvas, 2, 48, buf);
             } else {
                 canvas_draw_str(canvas, 2, 48, "U/D other preset");
             }
         } else if(needs_int_only) {
-            canvas_draw_str(canvas, 2, 38, "300MHz: INT radio only");
-            canvas_draw_str(canvas, 2, 48, "U/D for 400/900 presets");
+            canvas_draw_str(canvas, 2, 38, UI_HINT_TX_INT_ONLY);
+            canvas_draw_str(canvas, 2, 48, UI_HINT_TX_OTHER);
         } else {
-            canvas_draw_str(canvas, 2, 38, "Carrier only; no replay");
+            canvas_draw_str(canvas, 2, 38, UI_HINT_TX_CARRIER);
             if(needs_board_400) {
-                canvas_draw_str(canvas, 2, 48, "Flip TOP switch to 400");
+                canvas_draw_str(canvas, 2, 48, UI_HINT_TX_SPI_400);
             } else if(needs_board_900) {
-                canvas_draw_str(canvas, 2, 48, "Flip TOP switch to 900");
+                canvas_draw_str(canvas, 2, 48, UI_HINT_TX_SPI_900);
             } else {
                 snprintf(
                     buf,
@@ -4109,11 +4137,11 @@ static void draw_tx_tab(Canvas* canvas, App* app) {
                 (unsigned long)age_s);
             canvas_draw_str(canvas, 2, 55, buf);
         } else {
-            canvas_draw_str(canvas, 2, 55, "U/D=freq HoldOK=TX");
+            canvas_draw_str(canvas, 2, 55, UI_HINT_TX_ARMED);
         }
 
         canvas_set_font(canvas, FontKeyboard);
-        canvas_draw_str(canvas, 2, 63, "LongOK=TX Up/Dn=freq B=disarm");
+        canvas_draw_str(canvas, 2, 63, UI_HINT_TX_DISARM);
 
     } else if(app->tx_state == TxStarting) {
         canvas_set_font(canvas, FontPrimary);
@@ -4126,7 +4154,11 @@ static void draw_tx_tab(Canvas* canvas, App* app) {
         canvas_draw_box(canvas, 0, 0, 128, 64);
         canvas_set_color(canvas, ColorWhite);
         canvas_set_font(canvas, FontPrimary);
-        canvas_draw_str(canvas, 12, 20, "TX API ACTIVE");
+        canvas_draw_str(
+            canvas,
+            room_sweep_ui_center_x(0, UI_W, canvas_string_width(canvas, "TX ACTIVE")),
+            20,
+            "TX ACTIVE");
 
         char fbuf[32];
         snprintf(fbuf, sizeof(fbuf), "%lu.%03lu MHz",
@@ -4170,10 +4202,18 @@ static void draw_info_tab(Canvas* canvas, App* app) {
             room_sweep_spi_path_label(app->spi_path));
         canvas_draw_str(canvas, UI_MARGIN_X, 24, buf);
 
-        snprintf(buf, sizeof(buf), "Marauder:%s GPS:%s",
-                 app->marauder_confirmed ? "confirmed" : app->serial ? "open" : "none",
-                 gps_has_sentences ? (gps_from_gpio ? "EXT" : "BFFB") : "wait");
+        snprintf(
+            buf,
+            sizeof(buf),
+            "Marauder:%s",
+            app->marauder_confirmed ? "confirmed" : app->serial ? "open" : "none");
         canvas_draw_str(canvas, UI_MARGIN_X, 34, buf);
+        snprintf(
+            buf,
+            sizeof(buf),
+            "GPS:%s",
+            gps_has_sentences ? (gps_from_gpio ? "EXT" : "BFFB") : "wait");
+        canvas_draw_str(canvas, UI_MARGIN_X, 44, buf);
         canvas_draw_str(canvas, UI_MARGIN_X, UI_ROW_FOOTER_BASELINE, "U/D or R page");
         return;
     }
@@ -4271,7 +4311,11 @@ static void draw_settings(Canvas* canvas, App* app) {
         (unsigned)group + 1U,
         (unsigned)RoomSweepSetGroupCount);
     canvas_draw_str(canvas, 4, 9, title);
-    canvas_draw_str(canvas, 100, 9, "HoldLR");
+    canvas_draw_str(
+        canvas,
+        room_sweep_ui_right_align_x(UI_TEXT_RIGHT_EDGE, canvas_string_width(canvas, "HoldLR")),
+        9,
+        "HoldLR");
 
     const char* labels[SET_COUNT] = {
         "Sound",
