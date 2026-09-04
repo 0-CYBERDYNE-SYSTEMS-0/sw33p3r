@@ -88,3 +88,53 @@ static inline uint8_t room_sweep_ui_center_x(uint8_t box_x, uint8_t box_w, uint8
     if(x > box_right) x = box_right;
     return (uint8_t)x;
 }
+
+/*
+ * Footer/hint copy budget. FontKeyboard averages ~6px/char, so a hint drawn
+ * at UI_MARGIN_X must stay <= UI_HINT_MAX_CHARS to clear the 128px screen
+ * (anything longer clips at the right edge — QA 2026-09-04). The static
+ * asserts make an over-long hint a compile error, not a device surprise.
+ *
+ * Same-x FontKeyboard rows also need >= 8px between baselines; draw at most
+ * one text row per baseline band (body rows use UI_ROW_BODY_PITCH = 10).
+ */
+#define UI_HINT_MAX_CHARS 20
+
+#define UI_HINT_RF_SWEEP "U/D OK L=AN R=band"
+#define UI_HINT_RF_PEAK "U/D mode OK refine"
+#define UI_HINT_AN_LIST "U/D=sel HoldL=exit"
+#define UI_HINT_AN_FIELD "L=list R=radar"
+#define UI_HINT_AN_RADAR "L=list R=meter"
+#define UI_HINT_NR_STATUS "OK=scan L=AN R=res"
+#define UI_HINT_NR_RESULTS "OK=rescan L=AN R=res"
+#define UI_HINT_TX_INT_ONLY "300MHz: INT only"
+#define UI_HINT_TX_INT_REFUSAL "300MHz needs INT"
+#define UI_HINT_TX_OTHER "U/D for 400/900"
+#define UI_HINT_TX_SPI_400 "Set SPI switch 400"
+#define UI_HINT_TX_SPI_900 "Set SPI switch 900"
+#define UI_HINT_TX_ARMED "U/D=freq HoldOK=TX"
+#define UI_HINT_TX_DISARM "B=disarm"
+#define UI_HINT_TX_CARRIER "Carrier, no replay"
+#define UI_HINT_BT_ADV "advert  HoldOK=lock"
+
+#define UI_ASSERT_HINT(s) \
+    _Static_assert( \
+        sizeof(s) - 1 <= UI_HINT_MAX_CHARS, \
+        "hint copy exceeds the 20-char line budget and clips at 128px")
+
+UI_ASSERT_HINT(UI_HINT_RF_SWEEP);
+UI_ASSERT_HINT(UI_HINT_RF_PEAK);
+UI_ASSERT_HINT(UI_HINT_AN_LIST);
+UI_ASSERT_HINT(UI_HINT_AN_FIELD);
+UI_ASSERT_HINT(UI_HINT_AN_RADAR);
+UI_ASSERT_HINT(UI_HINT_NR_STATUS);
+UI_ASSERT_HINT(UI_HINT_NR_RESULTS);
+UI_ASSERT_HINT(UI_HINT_TX_INT_ONLY);
+UI_ASSERT_HINT(UI_HINT_TX_INT_REFUSAL);
+UI_ASSERT_HINT(UI_HINT_TX_OTHER);
+UI_ASSERT_HINT(UI_HINT_TX_SPI_400);
+UI_ASSERT_HINT(UI_HINT_TX_SPI_900);
+UI_ASSERT_HINT(UI_HINT_TX_ARMED);
+UI_ASSERT_HINT(UI_HINT_TX_DISARM);
+UI_ASSERT_HINT(UI_HINT_TX_CARRIER);
+UI_ASSERT_HINT(UI_HINT_BT_ADV);

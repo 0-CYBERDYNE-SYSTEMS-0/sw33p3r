@@ -72,3 +72,13 @@
 - Verified: RMC COG already parsed (nmea.h speed_kts/course), logged, displayed
 - Docs: README limits + USER_GUIDE GPS radar + Pitfall #20 + spec addendum
 - Next candidate mission: course-up steering radar (bearing − COG, speed-gated)
+
+## Iteration: ui — on-device QA collision/overflow fixes (2026-09-04)
+- Headless RPC rig (screenshot + input injection over USB CDC) walked 65 UI states
+- Fixed: Wi/BT HELP y58+y63 overlap; GPS Summary mark/footer overlap; analyzer
+  radar rings-vs-header; meter trend overlap; footer band geometry; 15+ clipped
+  hints (TX presets, RF sweep/peak, analyzer footers, nR, i Marauder row, settings)
+- Hint copy moved to UI_HINT_* constants in room_sweep_ui_layout.h with
+  _Static_assert 20-char budget; radar rings now drawn via rssi_radius mapping
+- Verified: init.sh ALL PASS, _verify_api.py CLEAN, on-device re-walk screenshots
+  (.omo/evidence/ui-qa-2026-09-04.md)
