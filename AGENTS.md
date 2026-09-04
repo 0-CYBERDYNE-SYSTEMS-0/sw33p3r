@@ -14,7 +14,11 @@ requirement enforced by `MISSION.md`.
   radio code. Maintained log of verified API symbols and breakages.
 - `docs/BFFB_MOMENTUM.md` — source of truth for BFFB/Marauder/Momentum facts;
   check before changing any UART command or baud.
-- `DESIGN.md`, `USER_GUIDE.md`, `progress.log`, `specs/`.
+- `DESIGN.md`, `USER_GUIDE.md`, `progress.log`, `specs/` (one spec per
+  feature), `features.json` (QA feature checklist).
+- `docs/` — GitHub Pages landing: control map (`index.html` /
+  `room_sweep_control_map.html` + `.jpg` screenshots) and hardware guides
+  (`build-your-own-standalone.html`, `hardware-alternatives.html`).
 
 ## Build / test / deploy
 
@@ -118,3 +122,5 @@ attempt recorded as an event.
 - Branches: `main` trunk; `feat/*` feature work; `restore/*` are pre-overhaul
   snapshots for recovery (`git log --oneline` → checkout sha).
 - Commits: **no Anthropic/Claude co-author trailers, ever.**
+- `CLAUDE.md` mirrors these instructions for Claude Code sessions; keep the
+  two in sync when changing scope, workflow, or hard rules.
