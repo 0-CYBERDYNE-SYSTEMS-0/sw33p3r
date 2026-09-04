@@ -1,0 +1,1567 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Room Sweep — Field Guide (print)</title>
+<style>
+  :root{
+    --bg:#07101f;
+    --box:#101a32;
+    --head:#0c1730;
+    --line:#2c456e;
+    --fg:#ffc08a;
+    --dim:#c4895c;
+    --hi:#ffbf70;
+    --ivory:#f3ead6;
+  }
+  *{margin:0;padding:0;box-sizing:border-box;}
+  html{-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+  body{
+    background:var(--bg);
+    font-family:ui-monospace,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
+    color:var(--fg);
+  }
+  @page{size:A4 landscape;margin:0;}
+
+  .page{
+    position:relative;
+    width:297mm;height:210mm;
+    background:var(--bg);
+    padding:10mm 12mm 8mm;
+    overflow:hidden;
+    page-break-after:always;
+    display:flex;flex-direction:column;
+  }
+  .page.last{page-break-after:auto;}
+
+  /* ---------- header band ---------- */
+  .hdr{
+    background:var(--head);
+    border:1px solid var(--line);
+    border-radius:8px;
+    padding:11px 16px 12px;
+    margin-bottom:16px;
+    flex:0 0 auto;
+  }
+  .eyebrow-row{display:flex;align-items:center;gap:12px;margin-bottom:7px;}
+  .eyebrow{font-size:8pt;font-weight:700;letter-spacing:.26em;color:var(--accent);text-transform:uppercase;white-space:nowrap;}
+  .rule{flex:1;height:1px;background:var(--accent);opacity:.45;}
+  .pcode{font-size:7.5pt;letter-spacing:.2em;color:var(--dim);white-space:nowrap;}
+  h1.title{
+    font-size:19.5pt;font-weight:700;color:var(--ivory);
+    letter-spacing:.07em;text-transform:uppercase;line-height:1.18;
+  }
+  .lede{
+    margin-top:8px;font-size:9.5pt;line-height:1.4;color:var(--hi);
+    border-left:2px solid var(--accent);padding-left:10px;
+  }
+
+  /* ---------- body ---------- */
+  .body{flex:1;display:flex;gap:26px;align-items:center;min-height:0;}
+  .media{flex:0 0 auto;}
+  .text{flex:1;min-width:0;display:flex;flex-direction:column;gap:14px;}
+
+  /* ---------- LCD cards ---------- */
+  .lcd{
+    background:#f4f1ea;
+    border:1px solid var(--line);
+    border-radius:5px;
+    padding:10px;
+  }
+  .lcd img{display:block;image-rendering:pixelated;}
+  .lcd.lg img{width:448px;height:224px;}
+  .lcd.sm img{width:300px;height:150px;}
+  .cap{margin-top:7px;font-size:7.5pt;letter-spacing:.1em;color:var(--dim);text-transform:uppercase;line-height:1.35;}
+
+  .shotgrid{display:grid;gap:15px;align-items:start;}
+  .g1x2{grid-template-columns:repeat(2,auto);}
+  .g2x2{grid-template-columns:repeat(2,auto);}
+  .cell{display:flex;flex-direction:column;width:322px;}
+
+  /* ---------- text blocks ---------- */
+  .blocklabel{
+    font-size:8pt;font-weight:700;letter-spacing:.24em;
+    color:var(--accent);text-transform:uppercase;margin-bottom:5px;
+  }
+  .block p{font-size:9.5pt;line-height:1.52;color:var(--fg);}
+
+  /* ---------- chips ---------- */
+  .chips{display:flex;flex-wrap:wrap;gap:8px;}
+  .chip{
+    border:1px dashed var(--line);border-radius:6px;
+    padding:4px 9px;font-size:8pt;line-height:1.35;color:var(--fg);
+    white-space:nowrap;
+  }
+  .chip b{color:var(--hi);font-weight:700;}
+  .chip i{font-style:normal;color:var(--dim);padding:0 2px;}
+
+  /* ---------- footer ---------- */
+  .foot{
+    flex:0 0 auto;margin-top:10px;
+    display:flex;align-items:baseline;
+    border-top:1px solid var(--line);padding-top:8px;
+    font-size:7pt;letter-spacing:.18em;color:var(--dim);text-transform:uppercase;
+  }
+  .foot span{flex:1;white-space:nowrap;}
+  .foot .c{text-align:center;}
+  .foot .r{text-align:right;}
+
+  /* ---------- trio layout (3-up) ---------- */
+  .triowrap{flex:1;display:flex;flex-direction:column;justify-content:center;gap:18px;min-height:0;}
+  .trio-media{display:flex;gap:15px;justify-content:center;}
+  .trio-text{display:flex;gap:30px;align-items:flex-start;}
+  .trio-text .block{flex:1;min-width:0;}
+  .trio-chips{display:flex;justify-content:center;}
+
+  /* ---------- cover & back cover ---------- */
+  .cover{align-items:center;justify-content:center;text-align:center;gap:0;}
+  .cover .eyebrow2{font-size:9pt;font-weight:700;letter-spacing:.3em;color:var(--accent);text-transform:uppercase;}
+  .cover .bigtitle{
+    font-size:56pt;font-weight:700;color:var(--ivory);
+    letter-spacing:.16em;text-transform:uppercase;line-height:1.05;
+    margin:20px 0 14px;padding-left:.16em;
+  }
+  .cover .subtitle{font-size:11.5pt;color:var(--fg);letter-spacing:.06em;}
+  .cover .coverrule{width:120px;height:2px;background:var(--accent);opacity:.6;margin:22px auto;}
+  .cover .coverlede{max-width:660px;font-size:10pt;line-height:1.6;color:var(--fg);}
+  .cover .strip{display:flex;gap:16px;margin-top:30px;opacity:.5;}
+  .cover .strip .lcd{padding:7px;}
+  .cover .strip img{display:block;width:224px;height:112px;image-rendering:pixelated;}
+  .cover .warnline{
+    margin-top:26px;font-size:8.5pt;font-weight:700;letter-spacing:.14em;color:var(--hi);
+    border:1px dashed var(--line);border-radius:6px;padding:7px 14px;text-transform:uppercase;
+  }
+  .backcover{align-items:center;justify-content:center;text-align:center;}
+  .backcover .bigtitle{
+    font-size:38pt;font-weight:700;color:var(--ivory);
+    letter-spacing:.18em;text-transform:uppercase;padding-left:.18em;
+  }
+  .backcover .backlede{max-width:600px;font-size:10pt;line-height:1.65;color:var(--fg);margin-top:22px;}
+  .backcover .backlines{max-width:640px;font-size:8.5pt;line-height:1.8;color:var(--dim);margin-top:22px;}
+</style>
+</head>
+<body>
+
+<!-- ============ P01 · COVER ============ -->
+<section class="page cover" style="--accent:#f3ead6;">
+  <div class="eyebrow2">Flipper Zero External App &middot; MNTM-012 &middot; API 87.1</div>
+  <div class="bigtitle">Room Sweep</div>
+  <div class="subtitle">A field guide to the receive-side room survey app</div>
+  <div class="coverrule"></div>
+  <div class="coverlede">One Flipper. Every signal in the room, mapped: Sub-GHz RF, Wi-Fi beacons,
+  Bluetooth advertisements, 2.4&nbsp;GHz nRF24 energy, and GPS &mdash; surveyed passively, logged
+  honestly, and explained screen by screen.</div>
+  <div class="strip">
+    <div class="lcd"><img src="field_guide_shots/rf_survey.png" width="224" height="112" alt="RF Survey"></div>
+    <div class="lcd"><img src="field_guide_shots/wifi_analyzer_p2.png" width="224" height="112" alt="Wi-Fi analyzer radar"></div>
+    <div class="lcd"><img src="field_guide_shots/gp_summary.png" width="224" height="112" alt="GPS summary"></div>
+  </div>
+  <div class="warnline">Detect &amp; analyze only &mdash; no jamming, no deauth, no capture/replay.</div>
+  <div class="foot" style="align-self:stretch;">
+    <span>Room Sweep &mdash; Field Guide</span><span class="c">Cover</span><span class="r">01 / 39</span>
+  </div>
+</section>
+
+<!-- ============ P02 · Mission ============ -->
+<section class="page" style="--accent:#f3ead6;">
+  <div class="hdr">
+    <div class="eyebrow-row"><span class="eyebrow">Info</span><span class="rule"></span><span class="pcode">P02</span></div>
+    <h1 class="title">Hear the room. Touch nothing.</h1>
+  </div>
+  <div class="body">
+    <div class="media">
+      <div class="lcd lg"><img src="field_guide_shots/i_p4.png" width="448" height="224" alt="Info LIMITS page"></div>
+      <div class="cap">Info 5/5 &mdash; LIMITS: RSSI != distance &middot; no jam &middot; no deauth &middot; beacon != telemetry &middot; no hit != absence</div>
+    </div>
+    <div class="text">
+      <div class="block">
+        <div class="blocklabel">What it does</div>
+        <p>Room Sweep is a survey instrument, not a weapon. It listens to four radio fronts plus
+        GPS and turns what it hears into meters, maps, and session files. The LIMITS page is
+        printed on the device itself: RSSI is not distance, a beacon is not telemetry, and no hit
+        is not proof of absence.</p>
+      </div>
+      <div class="block">
+        <div class="blocklabel">How to use</div>
+        <p>Read the LIMITS page (Info tab, page 5/5) before you trust any reading. Every screen in
+        this guide keeps those honesty rules.</p>
+      </div>
+      <div class="chips">
+        <span class="chip"><b>L / R</b> <i>&rarr;</i> change tab</span>
+        <span class="chip"><b>Back</b> <i>&rarr;</i> settings</span>
+        <span class="chip"><b>Hold Back</b> <i>&rarr;</i> exit</span>
+      </div>
+    </div>
+  </div>
+  <div class="foot"><span>Room Sweep &mdash; Field Guide</span><span class="c">Info</span><span class="r">02 / 39</span></div>
+</section>
+
+<!-- ============ P03 · Quickstart ============ -->
+<section class="page" style="--accent:#f3ead6;">
+  <div class="hdr">
+    <div class="eyebrow-row"><span class="eyebrow">Info</span><span class="rule"></span><span class="pcode">P03</span></div>
+    <h1 class="title">Launch. Listen. Sweep left to right.</h1>
+  </div>
+  <div class="body">
+    <div class="media">
+      <div class="shotgrid g1x2">
+        <div class="cell">
+          <div class="lcd sm"><img src="field_guide_shots/00_launch.png" width="300" height="150" alt="Launch screen"></div>
+          <div class="cap">Launch lands on RF Survey, already listening</div>
+        </div>
+        <div class="cell">
+          <div class="lcd sm"><img src="field_guide_shots/i_p2.png" width="300" height="150" alt="Info KEYS page"></div>
+          <div class="cap">KEYS page &mdash; the whole control map, on device</div>
+        </div>
+      </div>
+    </div>
+    <div class="text">
+      <div class="block">
+        <div class="blocklabel">What it does</div>
+        <p>The app opens straight onto the RF Survey screen with the radio already running &mdash;
+        no menus to dig through. Seven tabs ride one Right-press apart:
+        RF &rarr; Wi &rarr; BT &rarr; nR &rarr; GP &rarr; TX &rarr; i.</p>
+      </div>
+      <div class="block">
+        <div class="blocklabel">How to use</div>
+        <p>Short Left/Right changes tab. Hold Left opens the analyzer. Hold Right pages inside a
+        mode. OK performs the main action, Back opens settings, Hold Back exits. Footers on every
+        screen remind you what L / R / OK do right there.</p>
+      </div>
+    </div>
+  </div>
+  <div class="foot"><span>Room Sweep &mdash; Field Guide</span><span class="c">Info</span><span class="r">03 / 39</span></div>
+</section>
+
+<!-- ============ P04 · RF Survey ============ -->
+<section class="page" style="--accent:#62d392;">
+  <div class="hdr">
+    <div class="eyebrow-row"><span class="eyebrow">RF</span><span class="rule"></span><span class="pcode">P04</span></div>
+    <h1 class="title">Survey &mdash; the room&rsquo;s RF pulse, live</h1>
+  </div>
+  <div class="body">
+    <div class="media">
+      <div class="lcd lg"><img src="field_guide_shots/rf_survey.png" width="448" height="224" alt="RF Survey"></div>
+      <div class="cap">RF Survey &mdash; live preset bank &middot; ruler 304 / 390 / 434 / 450</div>
+    </div>
+    <div class="text">
+      <div class="block">
+        <div class="blocklabel">What it does</div>
+        <p>Continuous listen across the CC1101 preset bank (300&ndash;348 / 387&ndash;464 /
+        779&ndash;928&nbsp;MHz hardware bands). Each bar is one preset; the ruler underneath marks
+        304 / 390 / 434 / 450. The header tracks the hottest preset&rsquo;s dBm and raises a
+        <b style="color:var(--hi);">SIGNAL!</b> badge when energy crosses the dashed alert line
+        &mdash; a fixed &minus;75&nbsp;dBm threshold. Baseline (Settings &rarr; Session &rarr;
+        Baseline) is a separate snapshot of the room&rsquo;s RF floor that the survey bars are
+        drawn against.</p>
+      </div>
+      <div class="block">
+        <div class="blocklabel">How to use</div>
+        <p>Leave it running and watch which bars breathe. Up/Down switches RF sub-mode
+        (Survey / Sweep / Peak / Waterfall). Hold Up/Down opens the lock card from anywhere;
+        Hold Left drops into the analyzer.</p>
+      </div>
+      <div class="chips">
+        <span class="chip"><b>Up/Down</b> <i>&rarr;</i> sub-mode</span>
+        <span class="chip"><b>Hold Up/Down</b> <i>&rarr;</i> lock card</span>
+        <span class="chip"><b>Hold Left</b> <i>&rarr;</i> analyzer</span>
+      </div>
+    </div>
+  </div>
+  <div class="foot"><span>Room Sweep &mdash; Field Guide</span><span class="c">RF</span><span class="r">04 / 39</span></div>
+</section>
+
+<!-- ============ P05 · RF Sweep ============ -->
+<section class="page" style="--accent:#62d392;">
+  <div class="hdr">
+    <div class="eyebrow-row"><span class="eyebrow">RF</span><span class="rule"></span><span class="pcode">P05</span></div>
+    <h1 class="title">Sweep &mdash; walk a whole band, mechanically</h1>
+  </div>
+  <div class="body">
+    <div class="media">
+      <div class="lcd lg"><img src="field_guide_shots/rf_sweep.png" width="448" height="224" alt="RF Sweep"></div>
+      <div class="cap">RF Sweep &mdash; [SWEEP EXT] &middot; 300&ndash;348 MHz, channel by channel</div>
+    </div>
+    <div class="text">
+      <div class="block">
+        <div class="blocklabel">What it does</div>
+        <p><b style="color:var(--hi);">[SWEEP EXT]</b> steps the external CC1101 across the
+        selected band (here 300&ndash;348&nbsp;MHz), measuring channel by channel instead of
+        preset hops. It is the slow, thorough cousin of Survey &mdash; the way to find a lone
+        device that never sits on a preset frequency.</p>
+      </div>
+      <div class="block">
+        <div class="blocklabel">How to use</div>
+        <p>OK starts or cancels the sweep. While idle on the map, Hold Right steps the band.
+        Results can be locked with Hold OK.</p>
+      </div>
+      <div class="chips">
+        <span class="chip"><b>OK</b> <i>&rarr;</i> start / cancel</span>
+        <span class="chip"><b>Hold Right</b> <i>&rarr;</i> step band</span>
+        <span class="chip"><b>Hold OK</b> <i>&rarr;</i> lock result</span>
+      </div>
+    </div>
+  </div>
+  <div class="foot"><span>Room Sweep &mdash; Field Guide</span><span class="c">RF</span><span class="r">05 / 39</span></div>
+</section>
+
+<!-- ============ P06 · RF Peak ============ -->
+<section class="page" style="--accent:#62d392;">
+  <div class="hdr">
+    <div class="eyebrow-row"><span class="eyebrow">RF</span><span class="rule"></span><span class="pcode">P06</span></div>
+    <h1 class="title">Peak &mdash; close in on one carrier</h1>
+  </div>
+  <div class="body">
+    <div class="media">
+      <div class="lcd lg"><img src="field_guide_shots/rf_peak.png" width="448" height="224" alt="RF Peak"></div>
+      <div class="cap">RF Peak &mdash; [PEAK EXT] &middot; center 329.999 MHz</div>
+    </div>
+    <div class="text">
+      <div class="block">
+        <div class="blocklabel">What it does</div>
+        <p><b style="color:var(--hi);">[PEAK EXT]</b> refines around the strongest carrier and
+        reports its center frequency &mdash; here 329.999&nbsp;MHz. Sweep finds the neighborhood;
+        Peak narrows to the doorstep.</p>
+      </div>
+      <div class="block">
+        <div class="blocklabel">How to use</div>
+        <p>OK starts or cancels a refine pass. Up/Down changes RF sub-mode; the result can be
+        locked from the lock card.</p>
+      </div>
+      <div class="chips">
+        <span class="chip"><b>OK</b> <i>&rarr;</i> start / cancel refine</span>
+        <span class="chip"><b>Hold OK</b> <i>&rarr;</i> lock result</span>
+      </div>
+    </div>
+  </div>
+  <div class="foot"><span>Room Sweep &mdash; Field Guide</span><span class="c">RF</span><span class="r">06 / 39</span></div>
+</section>
+
+<!-- ============ P07 · RF Waterfall ============ -->
+<section class="page" style="--accent:#62d392;">
+  <div class="hdr">
+    <div class="eyebrow-row"><span class="eyebrow">RF</span><span class="rule"></span><span class="pcode">P07</span></div>
+    <h1 class="title">Waterfall &mdash; ten seconds of RF history</h1>
+  </div>
+  <div class="body">
+    <div class="media">
+      <div class="lcd lg"><img src="field_guide_shots/rf_waterfall.png" width="448" height="224" alt="RF Waterfall"></div>
+      <div class="cap">RF Waterfall &mdash; 16 presets &middot; ~2.5 snapshots/s &middot; peak-hold dots</div>
+    </div>
+    <div class="text">
+      <div class="block">
+        <div class="blocklabel">What it does</div>
+        <p>A scrolling spectrum of the 16 presets: newest column on the right, roughly 2.5
+        snapshots per second, with per-channel peak-hold dots down the right edge and the dashed
+        alert-threshold line across the chart. Purely passive &mdash; bursty traffic that
+        Survey&rsquo;s eye might miss leaves a trail here.</p>
+      </div>
+      <div class="block">
+        <div class="blocklabel">How to use</div>
+        <p>Nothing to drive; read the room&rsquo;s last ~10 seconds at a glance. Hold Up/Down
+        opens the lock card, Hold Left opens the analyzer.</p>
+      </div>
+      <div class="chips">
+        <span class="chip"><b>passive</b> <i>&rarr;</i> just watch</span>
+        <span class="chip"><b>Hold Up/Down</b> <i>&rarr;</i> lock card</span>
+        <span class="chip"><b>Hold Left</b> <i>&rarr;</i> analyzer</span>
+      </div>
+    </div>
+  </div>
+  <div class="foot"><span>Room Sweep &mdash; Field Guide</span><span class="c">RF</span><span class="r">07 / 39</span></div>
+</section>
+
+<!-- ============ P08 · RF Lock card ============ -->
+<section class="page" style="--accent:#62d392;">
+  <div class="hdr">
+    <div class="eyebrow-row"><span class="eyebrow">RF</span><span class="rule"></span><span class="pcode">P08</span></div>
+    <h1 class="title">Lock card &mdash; name your target</h1>
+  </div>
+  <div class="body">
+    <div class="media">
+      <div class="lcd lg"><img src="field_guide_shots/rf_lockcard.png" width="448" height="224" alt="RF lock card"></div>
+      <div class="cap">Lock card &mdash; CANDIDATE 330.000 MHz &middot; -65 dBm &middot; fresh</div>
+    </div>
+    <div class="text">
+      <div class="block">
+        <div class="blocklabel">What it does</div>
+        <p><b style="color:var(--hi);">CANDIDATE 330.000 MHz &middot; -65 dBm &middot; fresh.</b>
+        From any RF sub-mode, Hold Up/Down slides the card over the map: the strongest candidate,
+        its exact frequency, level, and how fresh the hit is. Hold OK pins it as the lock target
+        that the analyzer then hunts.</p>
+      </div>
+      <div class="block">
+        <div class="blocklabel">How to use</div>
+        <p>Hold Up/Down opens/closes (press again to return to the map). Hold OK locks the
+        candidate; Up/Down backs out.</p>
+      </div>
+      <div class="chips">
+        <span class="chip"><b>Hold Up/Down</b> <i>&rarr;</i> open / close</span>
+        <span class="chip"><b>Hold OK</b> <i>&rarr;</i> lock target</span>
+      </div>
+    </div>
+  </div>
+  <div class="foot"><span>Room Sweep &mdash; Field Guide</span><span class="c">RF</span><span class="r">08 / 39</span></div>
+</section>
+
+<!-- ============ P09 · Analyzer suite (2x2) ============ -->
+<section class="page" style="--accent:#4fd5ce;">
+  <div class="hdr">
+    <div class="eyebrow-row"><span class="eyebrow">Analyzer</span><span class="rule"></span><span class="pcode">P09</span></div>
+    <h1 class="title">Hold Left: the four-page analyzer</h1>
+  </div>
+  <div class="body">
+    <div class="media">
+      <div class="shotgrid g2x2">
+        <div class="cell">
+          <div class="lcd sm"><img src="field_guide_shots/rf_analyzer_p0.png" width="300" height="150" alt="Analyzer HUNT"></div>
+          <div class="cap">HUNT</div>
+        </div>
+        <div class="cell">
+          <div class="lcd sm"><img src="field_guide_shots/rf_analyzer_p1.png" width="300" height="150" alt="Analyzer FIELD"></div>
+          <div class="cap">FIELD</div>
+        </div>
+        <div class="cell">
+          <div class="lcd sm"><img src="field_guide_shots/rf_analyzer_p2.png" width="300" height="150" alt="Analyzer RADAR"></div>
+          <div class="cap">RADAR</div>
+        </div>
+        <div class="cell">
+          <div class="lcd sm"><img src="field_guide_shots/rf_analyzer_p3.png" width="300" height="150" alt="Analyzer METER"></div>
+          <div class="cap">METER</div>
+        </div>
+      </div>
+    </div>
+    <div class="text">
+      <div class="block">
+        <div class="blocklabel">What it does</div>
+        <p>On RF, Wi-Fi, BLE, and nRF24 alike, Hold Left opens a four-page analyzer tuned to the
+        selected (or locked) source. HUNT: one fat proximity bar with CLOSER / FARTHER / STABLE /
+        STALE / LOST verdicts. FIELD: spectrum/peer bars for context. RADAR: polar view where rings are
+        RSSI (labeled on screen &mdash; not meters) and a locked target blinks as a diamond.
+        METER: a big-number dBm read with peak hold and trend.</p>
+      </div>
+      <div class="block">
+        <div class="blocklabel">How to use</div>
+        <p>Hold Right turns the analyzer&rsquo;s pages. Fresh samples move the bar; silence ages
+        it out &mdash; on Wi-Fi/BLE the bar fades after ~2&nbsp;s and reads LOST by ~6&nbsp;s.
+        The scan stays alive while the analyzer is open.</p>
+      </div>
+      <div class="chips">
+        <span class="chip"><b>Hold Left</b> <i>&rarr;</i> analyzer on/off</span>
+        <span class="chip"><b>Hold Right</b> <i>&rarr;</i> analyzer page</span>
+      </div>
+    </div>
+  </div>
+  <div class="foot"><span>Room Sweep &mdash; Field Guide</span><span class="c">Analyzer</span><span class="r">09 / 39</span></div>
+</section>
+
+<!-- ============ P10 · Analyzer Wi-Fi (2x2) ============ -->
+<section class="page" style="--accent:#4fd5ce;">
+  <div class="hdr">
+    <div class="eyebrow-row"><span class="eyebrow">Analyzer</span><span class="rule"></span><span class="pcode">P10</span></div>
+    <h1 class="title">Wi-Fi analyzer &mdash; walk an AP to its door</h1>
+  </div>
+  <div class="body">
+    <div class="media">
+      <div class="shotgrid g2x2">
+        <div class="cell">
+          <div class="lcd sm"><img src="field_guide_shots/wifi_analyzer_p0.png" width="300" height="150" alt="Wi-Fi analyzer HUNT"></div>
+          <div class="cap">HUNT</div>
+        </div>
+        <div class="cell">
+          <div class="lcd sm"><img src="field_guide_shots/wifi_analyzer_p1.png" width="300" height="150" alt="Wi-Fi analyzer FIELD"></div>
+          <div class="cap">FIELD</div>
+        </div>
+        <div class="cell">
+          <div class="lcd sm"><img src="field_guide_shots/wifi_analyzer_p2.png" width="300" height="150" alt="Wi-Fi analyzer RADAR"></div>
+          <div class="cap">RADAR</div>
+        </div>
+        <div class="cell">
+          <div class="lcd sm"><img src="field_guide_shots/wifi_analyzer_p3.png" width="300" height="150" alt="Wi-Fi analyzer METER"></div>
+          <div class="cap">METER</div>
+        </div>
+      </div>
+    </div>
+    <div class="text">
+      <div class="lede">Hunting <b>REDACTED-SSID_3TFXQX</b> at -37&nbsp;dBm, CLOSER 91%.</div>
+      <div class="block">
+        <div class="blocklabel">What it does</div>
+        <p>The Hunt bar tracks that one AP&rsquo;s live table RSSI from the Marauder beacon
+        stream. If beacons stop, the bar fades to LOST rather than pretending &mdash; the meter
+        tells the truth about silence.</p>
+      </div>
+      <div class="block">
+        <div class="blocklabel">How to use</div>
+        <p>From the Wi-Fi tab, select the AP with Up/Down, then Hold Left. Hold Right pages
+        Hunt &rarr; Field &rarr; Radar &rarr; Meter.</p>
+      </div>
+    </div>
+  </div>
+  <div class="foot"><span>Room Sweep &mdash; Field Guide</span><span class="c">Analyzer</span><span class="r">10 / 39</span></div>
+</section>
+
+<!-- ============ P11 · Analyzer BLE (2x2) ============ -->
+<section class="page" style="--accent:#4fd5ce;">
+  <div class="hdr">
+    <div class="eyebrow-row"><span class="eyebrow">Analyzer</span><span class="rule"></span><span class="pcode">P11</span></div>
+    <h1 class="title">BLE analyzer &mdash; chase an advertisement</h1>
+  </div>
+  <div class="body">
+    <div class="media">
+      <div class="shotgrid g2x2">
+        <div class="cell">
+          <div class="lcd sm"><img src="field_guide_shots/bt_analyzer_p0.png" width="300" height="150" alt="BLE analyzer HUNT"></div>
+          <div class="cap">HUNT</div>
+        </div>
+        <div class="cell">
+          <div class="lcd sm"><img src="field_guide_shots/bt_analyzer_p1.png" width="300" height="150" alt="BLE analyzer FIELD"></div>
+          <div class="cap">FIELD</div>
+        </div>
+        <div class="cell">
+          <div class="lcd sm"><img src="field_guide_shots/bt_analyzer_p2.png" width="300" height="150" alt="BLE analyzer RADAR"></div>
+          <div class="cap">RADAR</div>
+        </div>
+        <div class="cell">
+          <div class="lcd sm"><img src="field_guide_shots/bt_analyzer_p3.png" width="300" height="150" alt="BLE analyzer METER"></div>
+          <div class="cap">METER</div>
+        </div>
+      </div>
+    </div>
+    <div class="text">
+      <div class="lede">One device, <b>00:11:22:33:44:5a</b>, from -72&nbsp;dBm, CLOSER at 47%.</div>
+      <div class="block">
+        <div class="blocklabel">What it does</div>
+        <p>Same four pages, aimed at a BLE advertiser. The radar&rsquo;s sweep line and blinking
+        diamond mark your locked target; the meter&rsquo;s PK value keeps the strongest sighting
+        while the trend arrow says whether you&rsquo;re gaining.</p>
+      </div>
+      <div class="block">
+        <div class="blocklabel">How to use</div>
+        <p>Select the device in the BT tab, Hold Left to open, Hold Right to page. The analyzer
+        feeds from <b style="color:var(--hi);">sniffbt</b> and keeps it running.</p>
+      </div>
+    </div>
+  </div>
+  <div class="foot"><span>Room Sweep &mdash; Field Guide</span><span class="c">Analyzer</span><span class="r">11 / 39</span></div>
+</section>
+
+<!-- ============ P12 · Analyzer nRF24 (2x2) ============ -->
+<section class="page" style="--accent:#4fd5ce;">
+  <div class="hdr">
+    <div class="eyebrow-row"><span class="eyebrow">Analyzer</span><span class="rule"></span><span class="pcode">P12</span></div>
+    <h1 class="title">nRF24 analyzer &mdash; 2.4&nbsp;GHz, the honest zero</h1>
+  </div>
+  <div class="body">
+    <div class="media">
+      <div class="shotgrid g2x2">
+        <div class="cell">
+          <div class="lcd sm"><img src="field_guide_shots/nr_analyzer_p0.png" width="300" height="150" alt="nRF24 analyzer HUNT"></div>
+          <div class="cap">HUNT</div>
+        </div>
+        <div class="cell">
+          <div class="lcd sm"><img src="field_guide_shots/nr_analyzer_p1.png" width="300" height="150" alt="nRF24 analyzer FIELD"></div>
+          <div class="cap">FIELD</div>
+        </div>
+        <div class="cell">
+          <div class="lcd sm"><img src="field_guide_shots/nr_analyzer_p2.png" width="300" height="150" alt="nRF24 analyzer RADAR"></div>
+          <div class="cap">RADAR</div>
+        </div>
+        <div class="cell">
+          <div class="lcd sm"><img src="field_guide_shots/nr_analyzer_p3.png" width="300" height="150" alt="nRF24 analyzer METER"></div>
+          <div class="cap">METER</div>
+        </div>
+      </div>
+    </div>
+    <div class="text">
+      <div class="lede"><b>2.4G RPD</b> with nothing to hear reads LOST 0% &mdash; and says so.</div>
+      <div class="block">
+        <div class="blocklabel">What it does</div>
+        <p>The analyzer works over the nRF24 RPD (receive power detector) energy survey. Empty
+        spectrum shows an empty instrument, not a fake signal: -127&nbsp;dBm, LOST 0%.</p>
+      </div>
+      <div class="block">
+        <div class="blocklabel">How to use</div>
+        <p>Open from the nR tab with Hold Left. Requires SPI Path = nRF24 and the BFFB bottom
+        switch DOWN.</p>
+      </div>
+    </div>
+  </div>
+  <div class="foot"><span>Room Sweep &mdash; Field Guide</span><span class="c">Analyzer</span><span class="r">12 / 39</span></div>
+</section>
+
+<!-- ============ P13 · Wi-Fi Listening ============ -->
+<section class="page" style="--accent:#4fd5ce;">
+  <div class="hdr">
+    <div class="eyebrow-row"><span class="eyebrow">Wi-Fi</span><span class="rule"></span><span class="pcode">P13</span></div>
+    <h1 class="title">Beacon listening, on your marks</h1>
+  </div>
+  <div class="body">
+    <div class="media">
+      <div class="lcd lg"><img src="field_guide_shots/wifi_p0.png" width="448" height="224" alt="Wi-Fi listening"></div>
+      <div class="cap">Wi-Fi &mdash; Wi scan 0/0 &middot; Listening&hellip; &middot; beacon only</div>
+    </div>
+    <div class="text">
+      <div class="block">
+        <div class="blocklabel">What it does</div>
+        <p><b style="color:var(--hi);">Wi scan 0/0 &middot; Listening&hellip; &middot; beacon
+        only.</b> The Wi-Fi tab drives a fixed Marauder scan
+        (<b style="color:var(--hi);">sniffbeacon</b>) &mdash; access-point beacons only. The
+        window length comes from Settings &rarr; Wireless &rarr; ScanWin (15 / 30 / 60&nbsp;s).</p>
+      </div>
+      <div class="block">
+        <div class="blocklabel">How to use</div>
+        <p>OK restarts the scan; the <b style="color:var(--hi);">Wi scan a/b</b> counter is your
+        selection position within the APs heard (<b style="color:var(--hi);">0/0</b> = none yet,
+        <b style="color:var(--hi);">1/2</b> = first of two). Hold Right pages Detail / List /
+        Help; Hold Left opens the analyzer.</p>
+      </div>
+      <div class="chips">
+        <span class="chip"><b>OK</b> <i>&rarr;</i> start / restart scan</span>
+        <span class="chip"><b>Hold Right</b> <i>&rarr;</i> page</span>
+        <span class="chip"><b>Hold Left</b> <i>&rarr;</i> analyzer</span>
+      </div>
+    </div>
+  </div>
+  <div class="foot"><span>Room Sweep &mdash; Field Guide</span><span class="c">Wi-Fi</span><span class="r">13 / 39</span></div>
+</section>
+
+<!-- ============ P14 · Wi-Fi Detail ============ -->
+<section class="page" style="--accent:#4fd5ce;">
+  <div class="hdr">
+    <div class="eyebrow-row"><span class="eyebrow">Wi-Fi</span><span class="rule"></span><span class="pcode">P14</span></div>
+    <h1 class="title">Detail &mdash; one AP, four facts</h1>
+  </div>
+  <div class="body">
+    <div class="media">
+      <div class="lcd lg"><img src="field_guide_shots/01_after_right.png" width="448" height="224" alt="Wi-Fi detail"></div>
+      <div class="cap">Wi-Fi Detail &mdash; GIII Mechanical &middot; -49 dBm &middot; Ch2</div>
+    </div>
+    <div class="text">
+      <div class="lede"><b>GIII Mechanical</b> &middot; -49&nbsp;dBm &middot; Ch2 &middot;
+      00:11:22:33:44:5b</div>
+      <div class="block">
+        <div class="blocklabel">What it does</div>
+        <p>The Detail page shows the selected AP&rsquo;s name, live RSSI, channel, and MAC, plus
+        a status line that reads <b style="color:var(--hi);">beacon</b> when unlocked and
+        <b style="color:var(--hi);">LOCK on</b> once you lock the AP. This is the record you lock
+        for the analyzer.</p>
+      </div>
+      <div class="block">
+        <div class="blocklabel">How to use</div>
+        <p>Up/Down selects; Hold OK locks/unlocks the AP for follow; Hold Left analyzes the
+        selected or locked AP.</p>
+      </div>
+      <div class="chips">
+        <span class="chip"><b>Up/Down</b> <i>&rarr;</i> select AP</span>
+        <span class="chip"><b>Hold OK</b> <i>&rarr;</i> lock / unlock</span>
+        <span class="chip"><b>Hold Left</b> <i>&rarr;</i> analyzer</span>
+      </div>
+    </div>
+  </div>
+  <div class="foot"><span>Room Sweep &mdash; Field Guide</span><span class="c">Wi-Fi</span><span class="r">14 / 39</span></div>
+</section>
+
+<!-- ============ P15 · Wi-Fi List + Help (2-up) ============ -->
+<section class="page" style="--accent:#4fd5ce;">
+  <div class="hdr">
+    <div class="eyebrow-row"><span class="eyebrow">Wi-Fi</span><span class="rule"></span><span class="pcode">P15</span></div>
+    <h1 class="title">List the room, then read the help</h1>
+  </div>
+  <div class="body">
+    <div class="media">
+      <div class="shotgrid g1x2">
+        <div class="cell">
+          <div class="lcd sm"><img src="field_guide_shots/wifi_p1.png" width="300" height="150" alt="Wi-Fi list"></div>
+          <div class="cap">LIST &mdash; strongest first, inverted row is your selection</div>
+        </div>
+        <div class="cell">
+          <div class="lcd sm"><img src="field_guide_shots/wifi_p2.png" width="300" height="150" alt="Wi-Fi help"></div>
+          <div class="cap">HELP &mdash; the page&rsquo;s controls, on screen</div>
+        </div>
+      </div>
+    </div>
+    <div class="text">
+      <div class="block">
+        <div class="blocklabel">What it does</div>
+        <p>The List page stacks the heard APs, strongest first, with your selection inverted. The
+        Help page prints the controls so the app teaches itself on a device with no manual.</p>
+      </div>
+      <div class="block">
+        <div class="blocklabel">How to use</div>
+        <p>Up/Down moves the selection; the footer always states what L / R / OK do here.</p>
+      </div>
+      <div class="chips">
+        <span class="chip"><b>Up/Down</b> <i>&rarr;</i> browse</span>
+        <span class="chip"><b>R</b> <i>&rarr;</i> next page</span>
+        <span class="chip"><b>ScanWin</b> <i>&rarr;</i> window in Settings</span>
+      </div>
+    </div>
+  </div>
+  <div class="foot"><span>Room Sweep &mdash; Field Guide</span><span class="c">Wi-Fi</span><span class="r">15 / 39</span></div>
+</section>
+
+<!-- ============ P16 · BLE Detail ============ -->
+<section class="page" style="--accent:#91baff;">
+  <div class="hdr">
+    <div class="eyebrow-row"><span class="eyebrow">BLE</span><span class="rule"></span><span class="pcode">P16</span></div>
+    <h1 class="title">Bluetooth &mdash; same discipline, different traffic</h1>
+  </div>
+  <div class="body">
+    <div class="media">
+      <div class="lcd lg"><img src="field_guide_shots/bt_p0.png" width="448" height="224" alt="BLE detail"></div>
+      <div class="cap">BLE Detail &mdash; 00:11:22:33:44:5a &middot; -73 dBm &middot; n1 &middot; adv</div>
+    </div>
+    <div class="text">
+      <div class="lede"><b>00:11:22:33:44:5a</b> &middot; -73&nbsp;dBm &middot; n1 &middot; adv</div>
+      <div class="block">
+        <div class="blocklabel">What it does</div>
+        <p>The BT tab runs Marauder&rsquo;s <b style="color:var(--hi);">sniffbt</b> and shows
+        advertisements: MAC, level, count, and advertisement type. Everything the Wi-Fi tab does,
+        it does for BLE.</p>
+      </div>
+      <div class="block">
+        <div class="blocklabel">How to use</div>
+        <p>OK restarts the scan, Hold OK locks the device, Hold Left opens its analyzer, Hold
+        Right pages Detail / List / Help.</p>
+      </div>
+      <div class="chips">
+        <span class="chip"><b>OK</b> <i>&rarr;</i> scan</span>
+        <span class="chip"><b>Hold OK</b> <i>&rarr;</i> lock</span>
+        <span class="chip"><b>Hold Left</b> <i>&rarr;</i> analyzer</span>
+      </div>
+    </div>
+  </div>
+  <div class="foot"><span>Room Sweep &mdash; Field Guide</span><span class="c">BLE</span><span class="r">16 / 39</span></div>
+</section>
+
+<!-- ============ P17 · BLE List + Help (2-up) ============ -->
+<section class="page" style="--accent:#91baff;">
+  <div class="hdr">
+    <div class="eyebrow-row"><span class="eyebrow">BLE</span><span class="rule"></span><span class="pcode">P17</span></div>
+    <h1 class="title">Lock a tracer, keep your place</h1>
+  </div>
+  <div class="body">
+    <div class="media">
+      <div class="shotgrid g1x2">
+        <div class="cell">
+          <div class="lcd sm"><img src="field_guide_shots/bt_p1.png" width="300" height="150" alt="BLE list"></div>
+          <div class="cap">LIST &mdash; strongest first; the inverted row is your selection</div>
+        </div>
+        <div class="cell">
+          <div class="lcd sm"><img src="field_guide_shots/bt_p2.png" width="300" height="150" alt="BLE help"></div>
+          <div class="cap">HELP &mdash; ScanWin window applies here too</div>
+        </div>
+      </div>
+    </div>
+    <div class="text">
+      <div class="block">
+        <div class="blocklabel">What it does</div>
+        <p>Locking a device tags the page header with <b style="color:var(--hi);">L</b> and flips
+        the Detail line to <b style="color:var(--hi);">LOCK on</b>; newer advertisements keep
+        arriving around your selection. The help page mirrors the BT controls.</p>
+      </div>
+      <div class="block">
+        <div class="blocklabel">How to use</div>
+        <p>Up/Down browse, Hold OK lock/unlock, R page.</p>
+      </div>
+      <div class="chips">
+        <span class="chip"><b>Hold OK</b> <i>&rarr;</i> lock / unlock</span>
+        <span class="chip"><b>R</b> <i>&rarr;</i> next page</span>
+      </div>
+    </div>
+  </div>
+  <div class="foot"><span>Room Sweep &mdash; Field Guide</span><span class="c">BLE</span><span class="r">17 / 39</span></div>
+</section>
+
+<!-- ============ P18 · nRF24 Status ============ -->
+<section class="page" style="--accent:#7ee0a3;">
+  <div class="hdr">
+    <div class="eyebrow-row"><span class="eyebrow">nRF24</span><span class="rule"></span><span class="pcode">P18</span></div>
+    <h1 class="title">nRF24 &mdash; the 2.4&nbsp;GHz energy survey</h1>
+  </div>
+  <div class="body">
+    <div class="media">
+      <div class="lcd lg"><img src="field_guide_shots/nr_p0.png" width="448" height="224" alt="nRF24 status"></div>
+      <div class="cap">nRF24 STATUS &mdash; SPI CC1101 &middot; phase idle</div>
+    </div>
+    <div class="text">
+      <div class="block">
+        <div class="blocklabel">What it does</div>
+        <p><b style="color:var(--hi);">nR STATUS &middot; SPI CC1101 &middot; phase idle.</b>
+        This tab surveys raw 2.4&nbsp;GHz channel energy with the nRF24 in RPD mode &mdash;
+        receive only, by design. The status page names your wiring truth: it needs SPI Path =
+        nRF24 and the BFFB bottom switch DOWN, and while nRF24 is selected the Sub-GHz radio
+        falls back to the Flipper&rsquo;s internal CC1101.</p>
+      </div>
+      <div class="block">
+        <div class="blocklabel">How to use</div>
+        <p>OK starts/stops an RPD pass; Hold Left or Hold OK opens the analyzer; Right shows
+        results.</p>
+      </div>
+      <div class="chips">
+        <span class="chip"><b>OK</b> <i>&rarr;</i> start / stop pass</span>
+        <span class="chip"><b>Hold Left</b> <i>&rarr;</i> analyzer</span>
+        <span class="chip"><b>R</b> <i>&rarr;</i> results</span>
+      </div>
+    </div>
+  </div>
+  <div class="foot"><span>Room Sweep &mdash; Field Guide</span><span class="c">nRF24</span><span class="r">18 / 39</span></div>
+</section>
+
+<!-- ============ P19 · nRF24 Results ============ -->
+<section class="page" style="--accent:#7ee0a3;">
+  <div class="hdr">
+    <div class="eyebrow-row"><span class="eyebrow">nRF24</span><span class="rule"></span><span class="pcode">P19</span></div>
+    <h1 class="title">Results &mdash; active channels, top hitters</h1>
+  </div>
+  <div class="body">
+    <div class="media">
+      <div class="lcd lg"><img src="field_guide_shots/nr_p1.png" width="448" height="224" alt="nRF24 results"></div>
+      <div class="cap">nRF24 RESULTS &mdash; active 0 &middot; hits 0 &middot; an honest empty</div>
+    </div>
+    <div class="text">
+      <div class="lede"><b>active 0 &middot; hits 0</b> &middot; no RPD energy yet &mdash; an
+      honest empty.</div>
+      <div class="block">
+        <div class="blocklabel">What it does</div>
+        <p>After a pass, Results lists how many 2.4&nbsp;GHz channels showed energy and which
+        channels hit hardest. Cordless phones, keyboards, drones, Wi-Fi overlap &mdash; anything
+        pulsing 2.4&nbsp;GHz leaves a count.</p>
+      </div>
+      <div class="block">
+        <div class="blocklabel">How to use</div>
+        <p>OK rescan; Hold Left opens the analyzer on the results.</p>
+      </div>
+      <div class="chips">
+        <span class="chip"><b>OK</b> <i>&rarr;</i> rescan</span>
+        <span class="chip"><b>Hold Left / Hold OK</b> <i>&rarr;</i> analyzer</span>
+      </div>
+    </div>
+  </div>
+  <div class="foot"><span>Room Sweep &mdash; Field Guide</span><span class="c">nRF24</span><span class="r">19 / 39</span></div>
+</section>
+
+<!-- ============ P20 · GPS Summary ============ -->
+<section class="page" style="--accent:#ffcf87;">
+  <div class="hdr">
+    <div class="eyebrow-row"><span class="eyebrow">GPS</span><span class="rule"></span><span class="pcode">P20</span></div>
+    <h1 class="title">GPS &mdash; the room gets coordinates</h1>
+  </div>
+  <div class="body">
+    <div class="media">
+      <div class="lcd lg"><img src="field_guide_shots/gp_summary.png" width="448" height="224" alt="GPS summary"></div>
+      <div class="cap">GPS Summary &mdash; satellite bar 0/0 &middot; position &middot; speed/course</div>
+    </div>
+    <div class="text">
+      <div class="block">
+        <div class="blocklabel">What it does</div>
+        <p>The Summary page carries time, a satellite bar (here 0/0, no fix), position, and
+        speed/course once a fix lands. OK drops a mark when the NMEA stream is fresh; if the fix
+        is stale or silent, the same press retries the source.</p>
+      </div>
+      <div class="block">
+        <div class="blocklabel">How to use</div>
+        <p>Hold OK always retries the source &mdash; reinit the stream, swap the GPIO baud
+        9600&nbsp;&harr;&nbsp;115200, or fall back to Marauder&rsquo;s
+        <b style="color:var(--hi);">nmea</b>. Up/Down pages Summary &rarr; Detail &rarr; Radar.</p>
+      </div>
+      <div class="chips">
+        <span class="chip"><b>OK</b> <i>&rarr;</i> set mark / retry</span>
+        <span class="chip"><b>Hold OK</b> <i>&rarr;</i> retry source</span>
+        <span class="chip"><b>Up/Down</b> <i>&rarr;</i> page</span>
+      </div>
+    </div>
+  </div>
+  <div class="foot"><span>Room Sweep &mdash; Field Guide</span><span class="c">GPS</span><span class="r">20 / 39</span></div>
+</section>
+
+<!-- ============ P21 · GPS Detail ============ -->
+<section class="page" style="--accent:#ffcf87;">
+  <div class="hdr">
+    <div class="eyebrow-row"><span class="eyebrow">GPS</span><span class="rule"></span><span class="pcode">P21</span></div>
+    <h1 class="title">Detail &mdash; trust, but count the sentences</h1>
+  </div>
+  <div class="body">
+    <div class="media">
+      <div class="lcd lg"><img src="field_guide_shots/gp_detail.png" width="448" height="224" alt="GPS detail"></div>
+      <div class="cap">GPS Detail &mdash; Src:BFFB Marauder &middot; NMEA:12 nav:5 &middot; Age:0s drops:0</div>
+    </div>
+    <div class="text">
+      <div class="block">
+        <div class="blocklabel">What it does</div>
+        <p><b style="color:var(--hi);">Src:BFFB Marauder &middot; NMEA:12 nav:5 bytes:5 &middot;
+        Age:0s drops:0.</b> The Detail page shows which GPS source is live, the date, NMEA/nav
+        counters, the age of the last fix, and dropped sentences &mdash; so a confident-looking
+        position can be checked against its plumbing.</p>
+      </div>
+      <div class="block">
+        <div class="blocklabel">How to use</div>
+        <p>Read Age before trusting the Radar. OK still sets a mark from here; Up/Down or Right
+        pages on.</p>
+      </div>
+      <div class="chips">
+        <span class="chip"><b>OK</b> <i>&rarr;</i> mark</span>
+        <span class="chip"><b>Hold OK</b> <i>&rarr;</i> retry source</span>
+        <span class="chip"><b>U/D | R</b> <i>&rarr;</i> page</span>
+      </div>
+    </div>
+  </div>
+  <div class="foot"><span>Room Sweep &mdash; Field Guide</span><span class="c">GPS</span><span class="r">21 / 39</span></div>
+</section>
+
+<!-- ============ P22 · GPS Radar ============ -->
+<section class="page" style="--accent:#ffcf87;">
+  <div class="hdr">
+    <div class="eyebrow-row"><span class="eyebrow">GPS</span><span class="rule"></span><span class="pcode">P22</span></div>
+    <h1 class="title">Radar &mdash; real meters, walk to the mark</h1>
+  </div>
+  <div class="body">
+    <div class="media">
+      <div class="lcd lg"><img src="field_guide_shots/gp_radar.png" width="448" height="224" alt="GPS radar"></div>
+      <div class="cap">GPS Radar &mdash; north-up &middot; rings 2 m to 1 km &middot; trail in RAM</div>
+    </div>
+    <div class="text">
+      <div class="lede"><b>Radar needs a mark</b> &middot; OK=mark, then walk</div>
+      <div class="block">
+        <div class="blocklabel">What it does</div>
+        <p>Set a mark and the radar centers on it, north-up, in real meters: your live position
+        is the blip at true bearing and true haversine distance, rings auto-scale from 2&nbsp;m
+        to 1&nbsp;km, and your last ~8 fixes draw the approach trail. The Flipper has no compass
+        &mdash; face the blip toward the top of the screen and walk straight at it. The trail
+        lives in RAM only and is never logged.</p>
+      </div>
+      <div class="block">
+        <div class="blocklabel">How to use</div>
+        <p>OK sets the mark (needs a fresh fix), then walk. The cross at center is the mark;
+        distance to it shows in the header.</p>
+      </div>
+      <div class="chips">
+        <span class="chip"><b>OK</b> <i>&rarr;</i> set mark</span>
+        <span class="chip"><b>north-up</b> <i>&rarr;</i> steer blip to screen-top</span>
+      </div>
+    </div>
+  </div>
+  <div class="foot"><span>Room Sweep &mdash; Field Guide</span><span class="c">GPS</span><span class="r">22 / 39</span></div>
+</section>
+
+<!-- ============ P23 · TX Disarmed ============ -->
+<section class="page" style="--accent:#ffb45b;">
+  <div class="hdr">
+    <div class="eyebrow-row"><span class="eyebrow">TX</span><span class="rule"></span><span class="pcode">P23</span></div>
+    <h1 class="title">TX &mdash; a bounded carrier tool, born disarmed</h1>
+  </div>
+  <div class="body">
+    <div class="media">
+      <div class="lcd lg"><img src="field_guide_shots/tx_default_300.png" width="448" height="224" alt="TX disarmed"></div>
+      <div class="cap">TX &mdash; DISARMED &middot; 300MHz: INT radio on</div>
+    </div>
+    <div class="text">
+      <div class="block">
+        <div class="blocklabel">What it does</div>
+        <p><b style="color:var(--hi);">DISARMED &middot; 300MHz: INT radio on.</b> The TX tab is
+        a test transmitter, not an attack mode: it keys a plain OOK carrier on a preset &mdash;
+        never replay, never blocking, never continuous. It wakes up DISARMED every single launch,
+        and preflight checks frequency validity, regional rules, and the external-band policy
+        before anything radiates.</p>
+      </div>
+      <div class="block">
+        <div class="blocklabel">How to use</div>
+        <p>Short OK arms. Up/Down steps presets (300 / 400 / 900 families). Back disarms at any
+        moment.</p>
+      </div>
+      <div class="chips">
+        <span class="chip"><b>OK</b> <i>&rarr;</i> arm</span>
+        <span class="chip"><b>Up/Down</b> <i>&rarr;</i> preset</span>
+        <span class="chip"><b>Back</b> <i>&rarr;</i> disarm</span>
+      </div>
+    </div>
+  </div>
+  <div class="foot"><span>Room Sweep &mdash; Field Guide</span><span class="c">TX</span><span class="r">23 / 39</span></div>
+</section>
+
+<!-- ============ P24 · TX Armed ============ -->
+<section class="page" style="--accent:#ffb45b;">
+  <div class="hdr">
+    <div class="eyebrow-row"><span class="eyebrow">TX</span><span class="rule"></span><span class="pcode">P24</span></div>
+    <h1 class="title">ARMED &mdash; the radio knows its limit</h1>
+  </div>
+  <div class="body">
+    <div class="media">
+      <div class="lcd lg"><img src="field_guide_shots/tx_armed.png" width="448" height="224" alt="TX armed"></div>
+      <div class="cap">TX &mdash; !! ARMED !! &middot; preset carrier only &middot; 434.420 MHz 3s max</div>
+    </div>
+    <div class="text">
+      <div class="block">
+        <div class="blocklabel">What it does</div>
+        <p><b style="color:var(--hi);">!! ARMED !! &middot; Preset carrier only &middot; 434.420
+        MHz 3s max.</b> The banner is impossible to miss, the screen names the ceiling, and the
+        length comes from Settings &rarr; Radio &rarr; TXDur (1&ndash;10&nbsp;s, never more).</p>
+      </div>
+      <div class="block">
+        <div class="blocklabel">How to use</div>
+        <p>Hold OK transmits the bounded carrier and the countdown starts. Nothing here latches:
+        the arm state exists only to make a deliberate press required.</p>
+      </div>
+      <div class="chips">
+        <span class="chip"><b>Hold OK</b> <i>&rarr;</i> transmit (bounded)</span>
+        <span class="chip"><b>U/D</b> <i>&rarr;</i> change preset first</span>
+      </div>
+    </div>
+  </div>
+  <div class="foot"><span>Room Sweep &mdash; Field Guide</span><span class="c">TX</span><span class="r">24 / 39</span></div>
+</section>
+
+<!-- ============ P25 · TX Transmitting ============ -->
+<section class="page" style="--accent:#ffb45b;">
+  <div class="hdr">
+    <div class="eyebrow-row"><span class="eyebrow">TX</span><span class="rule"></span><span class="pcode">P25</span></div>
+    <h1 class="title">TX API ACTIVE &mdash; seconds, not minutes</h1>
+  </div>
+  <div class="body">
+    <div class="media">
+      <div class="lcd lg"><img src="field_guide_shots/tx_transmitting.png" width="448" height="224" alt="TX transmitting"></div>
+      <div class="cap">TX API ACTIVE &mdash; 434.419 MHz &middot; 2.1s remaining &middot; Back=stop</div>
+    </div>
+    <div class="text">
+      <div class="block">
+        <div class="blocklabel">What it does</div>
+        <p><b style="color:var(--hi);">434.419 MHz &middot; 2.1s remaining &middot;
+        Back=stop.</b> A live carrier shows its own countdown and its own kill switch. At zero
+        the radio disarms itself; Back ends it early; every attempt is written to the session log
+        as an event.</p>
+      </div>
+      <div class="block">
+        <div class="blocklabel">How to use</div>
+        <p>Back stops immediately. That is the whole interaction &mdash; a keyed burst with a
+        visible fuse.</p>
+      </div>
+      <div class="chips">
+        <span class="chip"><b>Back</b> <i>&rarr;</i> stop now</span>
+        <span class="chip"><b>auto</b> <i>&rarr;</i> disarm at 0 s</span>
+      </div>
+    </div>
+  </div>
+  <div class="foot"><span>Room Sweep &mdash; Field Guide</span><span class="c">TX</span><span class="r">25 / 39</span></div>
+</section>
+
+<!-- ============ P26 · TX After disarm ============ -->
+<section class="page" style="--accent:#ffb45b;">
+  <div class="hdr">
+    <div class="eyebrow-row"><span class="eyebrow">TX</span><span class="rule"></span><span class="pcode">P26</span></div>
+    <h1 class="title">Back to DISARMED &mdash; hardware tells the truth too</h1>
+  </div>
+  <div class="body">
+    <div class="media">
+      <div class="lcd lg"><img src="field_guide_shots/tx_after_disarm.png" width="448" height="224" alt="TX after disarm"></div>
+      <div class="cap">TX &mdash; DISARMED &middot; carrier only; no replay &middot; sw:400</div>
+    </div>
+    <div class="text">
+      <div class="block">
+        <div class="blocklabel">What it does</div>
+        <p>After auto-disarm the tab returns to <b style="color:var(--hi);">DISARMED</b> and
+        states its guardrails in plain text:
+        <b style="color:var(--hi);">Carrier only; no replay.</b> <b style="color:var(--hi);">sw:400</b>
+        reads the physical BFFB top switch so the screen always agrees with the hardware band you
+        actually selected.</p>
+      </div>
+      <div class="block">
+        <div class="blocklabel">How to use</div>
+        <p>While DISARMED on the external CC1101, Hold Left/Right steps ExtBand
+        (AUTO / 400 / 900). Flip the top switch to match.</p>
+      </div>
+      <div class="chips">
+        <span class="chip"><b>Hold L/R</b> <i>&rarr;</i> ExtBand (disarmed, ext radio)</span>
+        <span class="chip"><b>top switch</b> <i>&rarr;</i> 400 / 900</span>
+      </div>
+    </div>
+  </div>
+  <div class="foot"><span>Room Sweep &mdash; Field Guide</span><span class="c">TX</span><span class="r">26 / 39</span></div>
+</section>
+
+<!-- ============ P27 · TX Presets ============ -->
+<section class="page" style="--accent:#ffb45b;">
+  <div class="hdr">
+    <div class="eyebrow-row"><span class="eyebrow">TX</span><span class="rule"></span><span class="pcode">P27</span></div>
+    <h1 class="title">Presets &mdash; 300, 434, 450, and a wall of rules</h1>
+  </div>
+  <div class="body">
+    <div class="media">
+      <div class="lcd lg"><img src="field_guide_shots/tx_preset_down2.png" width="448" height="224" alt="TX preset 450"></div>
+      <div class="cap">TX &mdash; 450.000 &middot; 3s &middot; sw:400</div>
+    </div>
+    <div class="text">
+      <div class="lede"><b>450.000</b> &middot; 3s &middot; sw:400</div>
+      <div class="block">
+        <div class="blocklabel">What it does</div>
+        <p>Preset stepping walks twelve stops across the 300 / 400 / 900&nbsp;MHz families and
+        back; the CC1101&rsquo;s real band gaps (300&ndash;348 / 387&ndash;464 /
+        779&ndash;928&nbsp;MHz) are enforced in hardware, not politely suggested. Regional
+        allow-lists and the ExtBand policy gate every attempt in preflight.</p>
+      </div>
+      <div class="block">
+        <div class="blocklabel">How to use</div>
+        <p>Up/Down cycles presets while armed or disarmed; the footer repeats the active preset
+        and duration.</p>
+      </div>
+      <div class="chips">
+        <span class="chip"><b>Up/Down</b> <i>&rarr;</i> step preset</span>
+        <span class="chip"><b>TXDur</b> <i>&rarr;</i> 1&ndash;10 s in Settings</span>
+      </div>
+    </div>
+  </div>
+  <div class="foot"><span>Room Sweep &mdash; Field Guide</span><span class="c">TX</span><span class="r">27 / 39</span></div>
+</section>
+
+<!-- ============ P28 · Info Radio & State (2-up) ============ -->
+<section class="page" style="--accent:#f3ead6;">
+  <div class="hdr">
+    <div class="eyebrow-row"><span class="eyebrow">Info</span><span class="rule"></span><span class="pcode">P28</span></div>
+    <h1 class="title">The Info tab: what the app believes, published</h1>
+  </div>
+  <div class="body">
+    <div class="media">
+      <div class="shotgrid g1x2">
+        <div class="cell">
+          <div class="lcd sm"><img src="field_guide_shots/i_p0.png" width="300" height="150" alt="Info RADIO"></div>
+          <div class="cap">1/5 RADIO &mdash; path, SPI, Marauder, GPS source</div>
+        </div>
+        <div class="cell">
+          <div class="lcd sm"><img src="field_guide_shots/i_p1.png" width="300" height="150" alt="Info STATE"></div>
+          <div class="cap">2/5 STATE &mdash; record, baseline, lock, UART</div>
+        </div>
+      </div>
+    </div>
+    <div class="text">
+      <div class="block">
+        <div class="blocklabel">What it does</div>
+        <p>Page 1/5 prints the live radio path
+        (<b style="color:var(--hi);">RF:EXT SPI:CC1101</b>,
+        <b style="color:var(--hi);">Marauder:confirmed</b> &mdash; confirmed means a real Marauder
+        response, not just a cable). Page 2/5 prints session state: record on/off and drops,
+        baseline, lock target, dump lines, UART counters.</p>
+      </div>
+      <div class="block">
+        <div class="blocklabel">How to use</div>
+        <p>Hold Right pages through Info; everything here is also in the session files.</p>
+      </div>
+      <div class="chips">
+        <span class="chip"><b>Hold Right</b> <i>&rarr;</i> next page</span>
+      </div>
+    </div>
+  </div>
+  <div class="foot"><span>Room Sweep &mdash; Field Guide</span><span class="c">Info</span><span class="r">28 / 39</span></div>
+</section>
+
+<!-- ============ P29 · Info Keys/Files/Limits (3-up) ============ -->
+<section class="page" style="--accent:#f3ead6;">
+  <div class="hdr">
+    <div class="eyebrow-row"><span class="eyebrow">Info</span><span class="rule"></span><span class="pcode">P29</span></div>
+    <h1 class="title">A cheat sheet, a paper trail, and a conscience</h1>
+  </div>
+  <div class="triowrap">
+    <div class="trio-media">
+      <div class="cell">
+        <div class="lcd sm"><img src="field_guide_shots/i_p2.png" width="300" height="150" alt="Info KEYS"></div>
+        <div class="cap">KEYS</div>
+      </div>
+      <div class="cell">
+        <div class="lcd sm"><img src="field_guide_shots/i_p3.png" width="300" height="150" alt="Info FILES"></div>
+        <div class="cap">FILES</div>
+      </div>
+      <div class="cell">
+        <div class="lcd sm"><img src="field_guide_shots/i_p4.png" width="300" height="150" alt="Info LIMITS"></div>
+        <div class="cap">LIMITS</div>
+      </div>
+    </div>
+    <div class="trio-text">
+      <div class="block">
+        <div class="blocklabel">What it does</div>
+        <p>Pages 3&ndash;5: KEYS (the full control map), FILES (SD path and the last report
+        number), LIMITS (the honesty page &mdash; the same rules this guide opened with). The app
+        carries its own manual and its own disclaimers.</p>
+      </div>
+      <div class="block">
+        <div class="blocklabel">How to use</div>
+        <p>Everything on these pages is on-device &mdash; no website required in the field.</p>
+      </div>
+    </div>
+    <div class="trio-chips">
+      <div class="chips">
+        <span class="chip"><b>Hold Right</b> <i>&rarr;</i> next page</span>
+      </div>
+    </div>
+  </div>
+  <div class="foot"><span>Room Sweep &mdash; Field Guide</span><span class="c">Info</span><span class="r">29 / 39</span></div>
+</section>
+
+<!-- ============ P30 · Settings Feedback (2-up) ============ -->
+<section class="page" style="--accent:#c4895c;">
+  <div class="hdr">
+    <div class="eyebrow-row"><span class="eyebrow">Settings</span><span class="rule"></span><span class="pcode">P30</span></div>
+    <h1 class="title">Settings: feedback you can feel, silence you can keep</h1>
+  </div>
+  <div class="body">
+    <div class="media">
+      <div class="shotgrid g1x2">
+        <div class="cell">
+          <div class="lcd sm"><img src="field_guide_shots/set_feedback_sound.png" width="300" height="150" alt="Settings sound"></div>
+          <div class="cap">Sound &mdash; off by default</div>
+        </div>
+        <div class="cell">
+          <div class="lcd sm"><img src="field_guide_shots/set_feedback_vibro.png" width="300" height="150" alt="Settings vibro"></div>
+          <div class="cap">Vibro &mdash; off by default</div>
+        </div>
+      </div>
+    </div>
+    <div class="text">
+      <div class="block">
+        <div class="blocklabel">What it does</div>
+        <p>Back from any tab opens Settings. Feedback groups Sound and Vibro, both defaulting
+        off. With Vibro on, a short tap gives one soft pulse and a hold a double pulse on release
+        &mdash; holds register distinctly without looking at the screen. Every toggle confirms
+        with the same tick.</p>
+      </div>
+      <div class="block">
+        <div class="blocklabel">How to use</div>
+        <p>Hold Left/Right (or short) changes group; Up/Down moves inside the group; OK
+        toggles.</p>
+      </div>
+      <div class="chips">
+        <span class="chip"><b>Back</b> <i>&rarr;</i> open settings</span>
+        <span class="chip"><b>L / R</b> <i>&rarr;</i> group</span>
+        <span class="chip"><b>OK</b> <i>&rarr;</i> toggle</span>
+      </div>
+    </div>
+  </div>
+  <div class="foot"><span>Room Sweep &mdash; Field Guide</span><span class="c">Settings</span><span class="r">30 / 39</span></div>
+</section>
+
+<!-- ============ P31 · Settings Wireless (2-up) ============ -->
+<section class="page" style="--accent:#c4895c;">
+  <div class="hdr">
+    <div class="eyebrow-row"><span class="eyebrow">Settings</span><span class="rule"></span><span class="pcode">P31</span></div>
+    <h1 class="title">Wireless: keep the windows open</h1>
+  </div>
+  <div class="body">
+    <div class="media">
+      <div class="shotgrid g1x2">
+        <div class="cell">
+          <div class="lcd sm"><img src="field_guide_shots/set_wireless_rescan.png" width="300" height="150" alt="Settings rescan"></div>
+          <div class="cap">Rescan &mdash; auto-restart the Wi/BT window</div>
+        </div>
+        <div class="cell">
+          <div class="lcd sm"><img src="field_guide_shots/set_wireless_scanwin.png" width="300" height="150" alt="Settings scanwin"></div>
+          <div class="cap">ScanWin &mdash; 15 / 30 / 60 s</div>
+        </div>
+      </div>
+    </div>
+    <div class="text">
+      <div class="block">
+        <div class="blocklabel">What it does</div>
+        <p>Rescan ON restarts the Wi-Fi/BLE scan window automatically so a busy room keeps
+        refreshing instead of freezing on one pass. ScanWin sets that window: 15, 30, or 60
+        seconds.</p>
+      </div>
+      <div class="block">
+        <div class="blocklabel">How to use</div>
+        <p>Defaults are sensible; shorten ScanWin for snappier lists, lengthen it for quiet
+        rooms.</p>
+      </div>
+      <div class="chips">
+        <span class="chip"><b>OK</b> <i>&rarr;</i> toggle / cycle</span>
+      </div>
+    </div>
+  </div>
+  <div class="foot"><span>Room Sweep &mdash; Field Guide</span><span class="c">Settings</span><span class="r">31 / 39</span></div>
+</section>
+
+<!-- ============ P32 · Settings Radio (3-up) ============ -->
+<section class="page" style="--accent:#c4895c;">
+  <div class="hdr">
+    <div class="eyebrow-row"><span class="eyebrow">Settings</span><span class="rule"></span><span class="pcode">P32</span></div>
+    <h1 class="title">Radio: one SPI bus, two front-ends, one fuse</h1>
+  </div>
+  <div class="triowrap">
+    <div class="trio-media">
+      <div class="cell">
+        <div class="lcd sm"><img src="field_guide_shots/set_radio_extband.png" width="300" height="150" alt="Settings ExtBand"></div>
+        <div class="cap">ExtBand</div>
+      </div>
+      <div class="cell">
+        <div class="lcd sm"><img src="field_guide_shots/set_radio_spipath.png" width="300" height="150" alt="Settings SPI path"></div>
+        <div class="cap">SPI Path</div>
+      </div>
+      <div class="cell">
+        <div class="lcd sm"><img src="field_guide_shots/set_radio_txdur.png" width="300" height="150" alt="Settings TXDur"></div>
+        <div class="cap">TXDur</div>
+      </div>
+    </div>
+    <div class="trio-text">
+      <div class="block">
+        <div class="blocklabel">What it does</div>
+        <p>ExtBand picks the external CC1101 band policy (AUTO / 400 / 900). SPI Path switches
+        the BFFB&rsquo;s bottom SPI switch role between CC1101 and nRF24 &mdash; and choosing
+        nRF24 forces Sub-GHz onto the internal CC1101 so the two radios can never fight. TXDur
+        caps every carrier at 1&ndash;10&nbsp;s.</p>
+      </div>
+      <div class="block">
+        <div class="blocklabel">How to use</div>
+        <p>Set SPI Path to nRF24 only with the bottom switch DOWN; the nR tab status page repeats
+        the requirement.</p>
+      </div>
+    </div>
+    <div class="trio-chips">
+      <div class="chips">
+        <span class="chip"><b>ExtBand</b> <i>&rarr;</i> AUTO/400/900</span>
+        <span class="chip"><b>SPI Path</b> <i>&rarr;</i> CC1101/nRF24</span>
+        <span class="chip"><b>TXDur</b> <i>&rarr;</i> 1&ndash;10 s</span>
+      </div>
+    </div>
+  </div>
+  <div class="foot"><span>Room Sweep &mdash; Field Guide</span><span class="c">Settings</span><span class="r">32 / 39</span></div>
+</section>
+
+<!-- ============ P33 · Settings GPS (2-up) ============ -->
+<section class="page" style="--accent:#c4895c;">
+  <div class="hdr">
+    <div class="eyebrow-row"><span class="eyebrow">Settings</span><span class="rule"></span><span class="pcode">P33</span></div>
+    <h1 class="title">GPS: pick the pipe, gate the privacy</h1>
+  </div>
+  <div class="body">
+    <div class="media">
+      <div class="shotgrid g1x2">
+        <div class="cell">
+          <div class="lcd sm"><img src="field_guide_shots/set_gps_src.png" width="300" height="150" alt="Settings GPS source"></div>
+          <div class="cap">GPS Src &mdash; BFFB stream or GPIO LPUART</div>
+        </div>
+        <div class="cell">
+          <div class="lcd sm"><img src="field_guide_shots/set_gps_log.png" width="300" height="150" alt="Settings GPS log"></div>
+          <div class="cap">GPS Log &mdash; coordinates on/off</div>
+        </div>
+      </div>
+    </div>
+    <div class="text">
+      <div class="block">
+        <div class="blocklabel">What it does</div>
+        <p>GPS Src chooses between the BFFB Marauder NMEA stream and the Flipper GPIO LPUART
+        (15/16 @ 9600). GPS Log decides whether coordinates are written to session files at all
+        &mdash; off, and the logs stay coordinate-free by design.</p>
+      </div>
+      <div class="block">
+        <div class="blocklabel">How to use</div>
+        <p>If the source goes quiet, Hold OK on any GPS page retries it &mdash; including a GPIO
+        baud swap 9600&nbsp;&harr;&nbsp;115200.</p>
+      </div>
+      <div class="chips">
+        <span class="chip"><b>GPS Src</b> <i>&rarr;</i> BFFB / GPIO</span>
+        <span class="chip"><b>GPS Log</b> <i>&rarr;</i> on / off</span>
+      </div>
+    </div>
+  </div>
+  <div class="foot"><span>Room Sweep &mdash; Field Guide</span><span class="c">Settings</span><span class="r">33 / 39</span></div>
+</section>
+
+<!-- ============ P34 · Settings Session (4-up) ============ -->
+<section class="page" style="--accent:#c4895c;">
+  <div class="hdr">
+    <div class="eyebrow-row"><span class="eyebrow">Settings</span><span class="rule"></span><span class="pcode">P34</span></div>
+    <h1 class="title">Session: evidence, not noise</h1>
+  </div>
+  <div class="body">
+    <div class="media">
+      <div class="shotgrid g2x2">
+        <div class="cell">
+          <div class="lcd sm"><img src="field_guide_shots/set_session_record.png" width="300" height="150" alt="Settings record"></div>
+          <div class="cap">RECORD</div>
+        </div>
+        <div class="cell">
+          <div class="lcd sm"><img src="field_guide_shots/set_session_baseline.png" width="300" height="150" alt="Settings baseline"></div>
+          <div class="cap">BASELINE</div>
+        </div>
+        <div class="cell">
+          <div class="lcd sm"><img src="field_guide_shots/set_session_dump.png" width="300" height="150" alt="Settings raw dump"></div>
+          <div class="cap">RAW DUMP</div>
+        </div>
+        <div class="cell">
+          <div class="lcd sm"><img src="field_guide_shots/set_session_fullsweep.png" width="300" height="150" alt="Settings fullsweep"></div>
+          <div class="cap">FULLSWEEP</div>
+        </div>
+      </div>
+    </div>
+    <div class="text">
+      <div class="block">
+        <div class="blocklabel">What it does</div>
+        <p>Record opens session N and writes <b style="color:var(--hi);">session-N.csv</b> plus a
+        Room Report. Baseline snapshots the RF survey floor so
+        <b style="color:var(--hi);">SIGNAL!</b> means something. Raw Dump captures a bounded UART
+        snapshot (<b style="color:var(--hi);">uart-N.txt</b>) &mdash; the only file that can
+        contain raw identifiers. FullSweep launches the whole-room sequence.</p>
+      </div>
+      <div class="block">
+        <div class="blocklabel">How to use</div>
+        <p>Recording is size-capped; if logging stops, scanning doesn&rsquo;t.</p>
+      </div>
+      <div class="chips">
+        <span class="chip"><b>OK</b> <i>&rarr;</i> start / stop</span>
+        <span class="chip"><b>Baseline</b> <i>&rarr;</i> snapshot floor</span>
+      </div>
+    </div>
+  </div>
+  <div class="foot"><span>Room Sweep &mdash; Field Guide</span><span class="c">Settings</span><span class="r">34 / 39</span></div>
+</section>
+
+<!-- ============ P35 · FullSweep ============ -->
+<section class="page" style="--accent:#c4895c;">
+  <div class="hdr">
+    <div class="eyebrow-row"><span class="eyebrow">Settings</span><span class="rule"></span><span class="pcode">P35</span></div>
+    <h1 class="title">FullSweep &mdash; one press, the whole room, a report</h1>
+  </div>
+  <div class="body">
+    <div class="media">
+      <div class="lcd lg"><img src="field_guide_shots/set_session_fullsweep.png" width="448" height="224" alt="FullSweep"></div>
+      <div class="cap">FullSweep &mdash; SWEEP DONE &middot; saved report-N</div>
+    </div>
+    <div class="text">
+      <div class="block">
+        <div class="blocklabel">What it does</div>
+        <p>FullSweep sequences RF (10&nbsp;s) &rarr; Wi-Fi (15&nbsp;s) &rarr; BLE (15&nbsp;s)
+        &rarr; nRF24 (12&nbsp;s) &rarr; GPS (8&nbsp;s) with hard timeouts, skipping nRF24
+        immediately if the SPI path isn&rsquo;t nRF24. It closes the session, writes
+        <b style="color:var(--hi);">report-N.txt</b>, and prints an inverted
+        <b style="color:var(--hi);">SWEEP DONE &middot; saved report-N</b> banner. Progress rides
+        the top strip (<b style="color:var(--hi);">FULL RF 10s</b>) while tab footers stay
+        visible.</p>
+      </div>
+      <div class="block">
+        <div class="blocklabel">How to use</div>
+        <p>Settings &rarr; Session &rarr; FullSweep &rarr; OK, pocket the Flipper, walk the room,
+        come back to a finished report.</p>
+      </div>
+      <div class="chips">
+        <span class="chip"><b>OK</b> <i>&rarr;</i> start sequence</span>
+        <span class="chip"><b>top strip</b> <i>&rarr;</i> live phase</span>
+      </div>
+    </div>
+  </div>
+  <div class="foot"><span>Room Sweep &mdash; Field Guide</span><span class="c">Settings</span><span class="r">35 / 39</span></div>
+</section>
+
+<!-- ============ P36 · Session files ============ -->
+<section class="page" style="--accent:#f3ead6;">
+  <div class="hdr">
+    <div class="eyebrow-row"><span class="eyebrow">Info</span><span class="rule"></span><span class="pcode">P36</span></div>
+    <h1 class="title">The paper trail: three files, no surprises</h1>
+  </div>
+  <div class="body">
+    <div class="media">
+      <div class="lcd lg"><img src="field_guide_shots/i_p3.png" width="448" height="224" alt="Info FILES page"></div>
+      <div class="cap">Info FILES &mdash; /ext/apps_data/room_sweep/ &middot; last report number</div>
+    </div>
+    <div class="text">
+      <div class="block">
+        <div class="blocklabel">What it does</div>
+        <p>Everything lands in <b style="color:var(--hi);">/ext/apps_data/room_sweep/</b>:
+        <b style="color:var(--hi);">session-N.csv</b> (events, with Wi-Fi/BLE identifiers as
+        session ordinals, not raw names), <b style="color:var(--hi);">report-N.txt</b> (the
+        plain-text Room Report), and <b style="color:var(--hi);">uart-N.txt</b> (only if you
+        asked for Raw Dump). Every TX attempt is recorded as an event.</p>
+      </div>
+      <div class="block">
+        <div class="blocklabel">How to use</div>
+        <p>Copy the three files off SD after a job; the Info &rarr; FILES page shows the path and
+        last report number on device.</p>
+      </div>
+      <div class="chips">
+        <span class="chip"><b>csv</b> <i>&rarr;</i> events</span>
+        <span class="chip"><b>txt</b> <i>&rarr;</i> report</span>
+        <span class="chip"><b>uart</b> <i>&rarr;</i> only on request</span>
+      </div>
+    </div>
+  </div>
+  <div class="foot"><span>Room Sweep &mdash; Field Guide</span><span class="c">Info</span><span class="r">36 / 39</span></div>
+</section>
+
+<!-- ============ P37 · BFFB and without it ============ -->
+<section class="page" style="--accent:#f3ead6;">
+  <div class="hdr">
+    <div class="eyebrow-row"><span class="eyebrow">Info</span><span class="rule"></span><span class="pcode">P37</span></div>
+    <h1 class="title">Plays with the big board, works with the little one</h1>
+  </div>
+  <div class="body">
+    <div class="media">
+      <div class="lcd lg"><img src="field_guide_shots/i_p0.png" width="448" height="224" alt="Info RADIO page"></div>
+      <div class="cap">Info RADIO &mdash; RF:EXT SPI:CC1101 &middot; Marauder:confirmed</div>
+    </div>
+    <div class="text">
+      <div class="block">
+        <div class="blocklabel">What it does</div>
+        <p>With a BFFB attached, Room Sweep drives the dual CC1101 and the nRF24 over the Flipper
+        SPI bus and talks to the Marauder ESP32 over USART 13/14 @ 115200 &mdash; the Marauder
+        stream carries the Wi-Fi/BLE scans, while GPS prefers the Flipper GPIO LPUART (15/16 @
+        9600) with Marauder <b style="color:var(--hi);">nmea</b> as the fallback. Without it, the
+        app falls back to the Flipper&rsquo;s internal CC1101 &mdash; RF survey and TX still
+        work, honestly labeled <b style="color:var(--hi);">INT</b>.</p>
+      </div>
+      <div class="block">
+        <div class="blocklabel">How to use</div>
+        <p>The Info &rarr; RADIO page tells you which world you&rsquo;re in: EXT vs INT, SPI
+        path, <b style="color:var(--hi);">Marauder:confirmed</b>.</p>
+      </div>
+      <div class="chips">
+        <span class="chip"><b>BFFB</b> <i>&rarr;</i> optional</span>
+        <span class="chip"><b>internal CC1101</b> <i>&rarr;</i> fallback</span>
+      </div>
+    </div>
+  </div>
+  <div class="foot"><span>Room Sweep &mdash; Field Guide</span><span class="c">Info</span><span class="r">37 / 39</span></div>
+</section>
+
+<!-- ============ P38 · Clean exit ============ -->
+<section class="page" style="--accent:#f3ead6;">
+  <div class="hdr">
+    <div class="eyebrow-row"><span class="eyebrow">Info</span><span class="rule"></span><span class="pcode">P38</span></div>
+    <h1 class="title">Leaves as quietly as it listens</h1>
+  </div>
+  <div class="body">
+    <div class="media">
+      <div class="lcd lg"><img src="field_guide_shots/99_desktop_after_exit.png" width="448" height="224" alt="Momentum desktop after exit"></div>
+      <div class="cap">Momentum desktop &mdash; after a clean exit</div>
+    </div>
+    <div class="text">
+      <div class="block">
+        <div class="blocklabel">What it does</div>
+        <p>Hold Back exits; the radio closes, the UART expansion port is restored, and the
+        Momentum desktop comes back untouched. Nothing keeps running after the app is gone.</p>
+      </div>
+      <div class="block">
+        <div class="blocklabel">How to use</div>
+        <p>Build from source with <b style="color:var(--hi);">./init.sh</b> (host tests + firmware
+        build), deploy with <b style="color:var(--hi);">ufbt launch</b>. Targets Momentum
+        mntm-012, API 87.1.</p>
+      </div>
+      <div class="chips">
+        <span class="chip"><b>Hold Back</b> <i>&rarr;</i> exit</span>
+        <span class="chip"><b>./init.sh</b> <i>&rarr;</i> build gate</span>
+      </div>
+    </div>
+  </div>
+  <div class="foot"><span>Room Sweep &mdash; Field Guide</span><span class="c">Info</span><span class="r">38 / 39</span></div>
+</section>
+
+<!-- ============ P39 · Back cover ============ -->
+<section class="page backcover last" style="--accent:#f3ead6;">
+  <div class="eyebrow2" style="font-size:9pt;font-weight:700;letter-spacing:.3em;color:var(--dim);text-transform:uppercase;">Flipper Zero External App</div>
+  <div class="bigtitle" style="margin-top:18px;">Room Sweep</div>
+  <div class="coverrule" style="width:120px;height:2px;background:var(--accent);opacity:.6;margin:24px auto;"></div>
+  <div class="backlede">Detect &amp; analyze only. No jamming, no deauth, no capture/replay, no
+  denial. RSSI is not distance; a beacon is not telemetry; no hit is not proof of absence.</div>
+  <div class="backlines">Companion files: room_sweep_control_map.html (one-page control map)
+  &middot; this guide as PDF &middot; USER_GUIDE.md in the repo.<br>
+  Firmware: Momentum mntm-012 &middot; API 87.1 &middot; appid room_sweep</div>
+  <div class="foot" style="align-self:stretch;">
+    <span>Room Sweep &mdash; Field Guide</span><span class="c">Back Cover</span><span class="r">39 / 39</span>
+  </div>
+</section>
+
+</body>
+</html>
