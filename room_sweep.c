@@ -40,6 +40,7 @@
 #include "room_sweep_radio_path.h"
 #include "room_sweep_nrf24_state.h"
 #include "room_sweep_analyzer.h"
+#include "room_sweep_feedback.h"
 #include "nrf24_survey.h"
 #include "session_log.h"
 #include "nmea.h"
@@ -310,6 +311,7 @@ typedef struct {
     bool sound_on;
     bool vibro_on;
     uint32_t tick_count;
+    uint32_t feedback_last_tick; /* feedback cadence throttle stamp */
     uint32_t last_click_ms;
     uint32_t last_vibro_ms;
     bool was_alerting;
@@ -2157,6 +2159,13 @@ static void led_from_gps(
 
 static void feedback_tick(App* app) {
     uint32_t now = furi_get_tick();
+    /* Stable cadence: held buttons can feed events continuously, and the
+     * input-timeout path plus the top-of-loop call can land back-to-back.
+     * Skip if the last pass started < 40 ms ago. */
+    if(app->feedback_last_tick != 0 && (now - app->feedback_last_tick) < 40U) {
+        return;
+    }
+    app->feedback_last_tick = now;
     static bool blink_phase = false;
     if((now / 250) % 2 == 0) blink_phase = true;
     else blink_phase = false;
@@ -2182,8 +2191,10 @@ static void feedback_tick(App* app) {
         }
     }
 
-    /* Target lock overrides ambient peak for Geiger */
-    if(app->target_kind != TargetNone && app->target_rssi > -127) {
+    /* RF target lock overrides ambient peak for Geiger (live RF-thread RSSI;
+     * the 30 s candidate expiry above clears it). WiFi/BLE locks are graded
+     * with aged identity-aware selection inside their tab cases instead. */
+    if(app->target_kind == TargetRF && app->target_rssi > -127) {
         peak = (float)app->target_rssi;
         alerting = (peak > RF_ALERT_THRESHOLD);
         use_rssi_geiger = true;
@@ -2199,29 +2210,143 @@ static void feedback_tick(App* app) {
         use_rssi_geiger = true;
         led_from_rssi(app->notif, peak, blink_phase);
         break;
-    case SweepModeWifi:
-        peak = (app->wifi_strongest > -127) ? (float)app->wifi_strongest : -120.0f;
-        alerting = (peak > RF_ALERT_THRESHOLD);
-        use_rssi_geiger = true;
-        led_from_rssi(app->notif, peak, blink_phase);
-        break;
-    case SweepModeBle:
-        peak = (app->ble_strongest > -127) ? (float)app->ble_strongest : -120.0f;
-        alerting = (peak > RF_ALERT_THRESHOLD);
-        use_rssi_geiger = true;
-        led_from_rssi(app->notif, peak, blink_phase);
-        break;
-    case SweepModeNrf24: {
-        float nrf_peak = -120.0f;
-        if(app->nrf24.phase == RoomSweepNrf24Scanning) {
-            nrf_peak = -90.0f + (float)(app->nrf24.channel % 40);
-        } else if(app->nrf24.top_hits[0] > 0) {
-            nrf_peak = -100.0f + (float)app->nrf24.top_hits[0] * 4.0f;
-            if(nrf_peak > -40.0f) nrf_peak = -40.0f;
+    case SweepModeWifi: {
+        /* Identity-aware peak: locked target > selected row > strongest,
+         * each aged so leaving range decays to silence (never frozen max).
+         * Rows are gathered under the mutex; notifications happen after. */
+        bool t_found = false, s_found = false, g_found = false;
+        int8_t t_rssi = -127, s_rssi = -127, g_rssi = -127;
+        uint32_t t_age = ROOM_SWEEP_ANALYZER_DEAD_MS;
+        uint32_t s_age = ROOM_SWEEP_ANALYZER_DEAD_MS;
+        uint32_t g_age = ROOM_SWEEP_ANALYZER_DEAD_MS;
+        furi_mutex_acquire(app->mutex, FuriWaitForever);
+        if(app->target_kind == TargetWifi && app->target_id[0]) {
+            for(uint8_t i = 0; i < MAX_WIFI_APS; i++) {
+                if(!app->wifi_aps[i].valid) continue;
+                if(strcmp(app->target_id, app->wifi_aps[i].ssid) == 0 ||
+                   (app->wifi_aps[i].bssid[0] &&
+                    strcmp(app->target_id, app->wifi_aps[i].bssid) == 0)) {
+                    t_found = true;
+                    t_rssi = app->wifi_aps[i].rssi;
+                    t_age = app->wifi_aps[i].last_seen > 0 ?
+                                now - app->wifi_aps[i].last_seen :
+                                ROOM_SWEEP_ANALYZER_DEAD_MS;
+                    /* Keep lock display in sync with live row (parity). */
+                    app->target_rssi = app->wifi_aps[i].rssi;
+                    break;
+                }
+            }
         }
-        peak = nrf_peak;
-        alerting = app->nrf24.top_hits[0] > 0 ||
-                   app->nrf24.phase == RoomSweepNrf24Scanning;
+        if(app->wifi_count > 0) {
+            uint8_t sel = app->wifi_scroll < app->wifi_count ? app->wifi_scroll : 0;
+            if(app->wifi_aps[sel].valid) {
+                s_found = true;
+                s_rssi = app->wifi_aps[sel].rssi;
+                s_age = app->wifi_aps[sel].last_seen > 0 ?
+                            now - app->wifi_aps[sel].last_seen :
+                            ROOM_SWEEP_ANALYZER_DEAD_MS;
+            }
+        }
+        for(uint8_t i = 0; i < MAX_WIFI_APS; i++) {
+            if(!app->wifi_aps[i].valid) continue;
+            if(!g_found || app->wifi_aps[i].rssi > g_rssi) {
+                g_found = true;
+                g_rssi = app->wifi_aps[i].rssi;
+                g_age = app->wifi_aps[i].last_seen > 0 ?
+                            now - app->wifi_aps[i].last_seen :
+                            ROOM_SWEEP_ANALYZER_DEAD_MS;
+            }
+        }
+        furi_mutex_release(app->mutex);
+        bool wifi_valid = false;
+        peak = room_sweep_feedback_pick_wireless(
+            t_found,
+            t_rssi,
+            t_age,
+            s_found,
+            s_rssi,
+            s_age,
+            g_found,
+            g_rssi,
+            g_age,
+            &wifi_valid);
+        if(!wifi_valid) peak = -120.0f;
+        alerting = (peak > RF_ALERT_THRESHOLD);
+        use_rssi_geiger = true;
+        led_from_rssi(app->notif, peak, blink_phase);
+        break;
+    }
+    case SweepModeBle: {
+        /* Same identity-aware aged selection as WiFi, over the BLE table. */
+        bool t_found = false, s_found = false, g_found = false;
+        int8_t t_rssi = -127, s_rssi = -127, g_rssi = -127;
+        uint32_t t_age = ROOM_SWEEP_ANALYZER_DEAD_MS;
+        uint32_t s_age = ROOM_SWEEP_ANALYZER_DEAD_MS;
+        uint32_t g_age = ROOM_SWEEP_ANALYZER_DEAD_MS;
+        furi_mutex_acquire(app->mutex, FuriWaitForever);
+        if(app->target_kind == TargetBle && app->target_id[0]) {
+            for(uint8_t i = 0; i < MAX_BLE_DEVS; i++) {
+                if(!app->ble_devs[i].valid) continue;
+                if(strcmp(app->target_id, app->ble_devs[i].name) == 0 ||
+                   (app->ble_devs[i].mac[0] &&
+                    strcmp(app->target_id, app->ble_devs[i].mac) == 0)) {
+                    t_found = true;
+                    t_rssi = app->ble_devs[i].rssi;
+                    t_age = app->ble_devs[i].last_seen > 0 ?
+                                now - app->ble_devs[i].last_seen :
+                                ROOM_SWEEP_ANALYZER_DEAD_MS;
+                    app->target_rssi = app->ble_devs[i].rssi;
+                    break;
+                }
+            }
+        }
+        if(app->ble_count > 0) {
+            uint8_t sel = app->ble_scroll < app->ble_count ? app->ble_scroll : 0;
+            if(app->ble_devs[sel].valid) {
+                s_found = true;
+                s_rssi = app->ble_devs[sel].rssi;
+                s_age = app->ble_devs[sel].last_seen > 0 ?
+                            now - app->ble_devs[sel].last_seen :
+                            ROOM_SWEEP_ANALYZER_DEAD_MS;
+            }
+        }
+        for(uint8_t i = 0; i < MAX_BLE_DEVS; i++) {
+            if(!app->ble_devs[i].valid) continue;
+            if(!g_found || app->ble_devs[i].rssi > g_rssi) {
+                g_found = true;
+                g_rssi = app->ble_devs[i].rssi;
+                g_age = app->ble_devs[i].last_seen > 0 ?
+                            now - app->ble_devs[i].last_seen :
+                            ROOM_SWEEP_ANALYZER_DEAD_MS;
+            }
+        }
+        furi_mutex_release(app->mutex);
+        bool ble_valid = false;
+        peak = room_sweep_feedback_pick_wireless(
+            t_found,
+            t_rssi,
+            t_age,
+            s_found,
+            s_rssi,
+            s_age,
+            g_found,
+            g_rssi,
+            g_age,
+            &ble_valid);
+        if(!ble_valid) peak = -120.0f;
+        alerting = (peak > RF_ALERT_THRESHOLD);
+        use_rssi_geiger = true;
+        led_from_rssi(app->notif, peak, blink_phase);
+        break;
+    }
+    case SweepModeNrf24: {
+        /* Real RPD activity integrator — not the channel counter. */
+        room_sweep_nrf24_activity_tick(&app->nrf24, now);
+        bool nrf_live = (app->nrf24.phase == RoomSweepNrf24Scanning ||
+                         app->nrf24.phase == RoomSweepNrf24Done) &&
+                        app->nrf24.module_present;
+        peak = nrf_live ? (float)room_sweep_nrf24_activity_to_rssi(&app->nrf24) : -120.0f;
+        alerting = nrf_live && (peak > RF_ALERT_THRESHOLD);
         use_rssi_geiger = true;
         led_from_rssi(app->notif, peak, blink_phase);
         break;
@@ -2276,21 +2401,10 @@ feedback_sound:
 
     if(app->sound_on && use_rssi_geiger) {
         uint32_t interval;
-        if(gps_mode) {
-            if(peak > -70.0f) interval = 200;
-            else if(peak > -90.0f) interval = 500;
-            else if(peak > -110.0f) interval = 1000;
-            else interval = 2000;
-        } else if(tx_mode && app->tx_state == TxTransmitting) {
-            interval = 120;
+        if(tx_mode && app->tx_state == TxTransmitting) {
+            interval = 120; /* fixed TX transmit cadence, never graded */
         } else {
-            if(peak > -50.0f) interval = 60;
-            else if(peak > -60.0f) interval = 100;
-            else if(peak > -70.0f) interval = 180;
-            else if(peak > -80.0f) interval = 350;
-            else if(peak > -90.0f) interval = 700;
-            else if(peak > -100.0f) interval = 1200;
-            else interval = 2000;
+            interval = room_sweep_feedback_sound_interval_ms(peak, gps_mode);
         }
 
         if(now - app->last_click_ms >= interval) {
@@ -2309,12 +2423,24 @@ feedback_sound:
     if(app->vibro_on && !gps_mode) {
         if(alerting && !app->was_alerting) {
             notification_message(app->notif, &seq_vibro_pulse);
+            /* Scanner/info: restart the graded cadence from the edge pulse.
+             * TX keeps its legacy fixed cadence (edge does not restamp). */
+            if(!tx_mode) app->last_vibro_ms = now;
         }
-        if(app->lock_ticks > 5 && now - app->last_vibro_ms >= 800) {
-            app->last_vibro_ms = now;
-            notification_message(app->notif, &seq_vibro_pulse);
-        }
-        if(!alerting && now - app->last_vibro_ms >= 4000) {
+        if(tx_mode) {
+            /* TX keeps its legacy arm-edge + 800 ms lock pulses + 4 s idle. */
+            if(app->lock_ticks > 5 && now - app->last_vibro_ms >= 800) {
+                app->last_vibro_ms = now;
+                notification_message(app->notif, &seq_vibro_pulse);
+            }
+            if(!alerting && now - app->last_vibro_ms >= 4000) {
+                app->last_vibro_ms = now;
+                notification_message(app->notif, &seq_vibro_pulse);
+            }
+        } else if(now - app->last_vibro_ms >=
+                  room_sweep_feedback_vibro_interval_ms(peak)) {
+            /* Graded ladder: closer signal => shorter interval; silent peak
+             * (-120) lands on the 5000 ms idle heartbeat. */
             app->last_vibro_ms = now;
             notification_message(app->notif, &seq_vibro_pulse);
         }
@@ -4800,6 +4926,7 @@ int32_t room_sweep_app(void* p) {
     app->analyzer_last_push_tick = 0;
     app->analyzer_source_stale = false;
     app->analyzer_source_dead = true;
+    app->feedback_last_tick = 0; /* throttle: run on the first loop pass */
     app->wifi_ui_page = 0;
     app->ble_ui_page = 0;
     app->rf_ui_page = 0;
@@ -4856,6 +4983,10 @@ int32_t room_sweep_app(void* p) {
     InputEvent event;
     RoomSweepInputTouchState touch_state = {0};
     while(app->running) {
+        /* Run feedback at the top of every pass so cadence stays stable even
+         * while input events flow (the timeout-path call below is then a
+         * throttled no-op). */
+        feedback_tick(app);
         tx_thread_cleanup(app);
         if(furi_message_queue_get(input_queue, &event, 100) != FuriStatusOk) {
             app->tick_count++;

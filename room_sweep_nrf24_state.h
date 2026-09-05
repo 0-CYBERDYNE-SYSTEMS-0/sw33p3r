@@ -4,6 +4,8 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "room_sweep_analyzer.h"
+
 /*
  * Host-testable nRF24 channel-activity survey state (detect / RPD only).
  * Channel count matches nRF24L01+ RF_CH range 0..125.
@@ -11,6 +13,15 @@
 
 #define ROOM_SWEEP_NRF24_CHANNELS 126U
 #define ROOM_SWEEP_NRF24_TOP_N 5U
+
+/*
+ * Recent-activity integrator for live feedback (Geiger/vibro/LED on the nR
+ * tab). Sustained RPD traffic at the ~500 samples/s cadence saturates the
+ * score in well under a second; idle time decays it lazily so the feedback
+ * peak falls back to silence instead of sticking. Integer math only.
+ */
+#define ROOM_SWEEP_NRF24_ACTIVITY_MAX 1000U
+#define ROOM_SWEEP_NRF24_ACTIVITY_STEP 8U
 
 typedef enum {
     RoomSweepNrf24Idle = 0,
@@ -29,12 +40,17 @@ typedef struct {
     uint8_t top_hits[ROOM_SWEEP_NRF24_TOP_N];
     bool module_present;
     bool present_checked;
+    /* Recent RPD activity 0..ROOM_SWEEP_NRF24_ACTIVITY_MAX (feedback peak). */
+    uint16_t activity_score;
+    uint32_t activity_last_tick; /* ms stamp of last decay accounting */
 } RoomSweepNrf24State;
 
 static inline void room_sweep_nrf24_init(RoomSweepNrf24State* s) {
     if(!s) return;
     memset(s, 0, sizeof(*s));
     s->phase = RoomSweepNrf24Idle;
+    s->activity_score = 0;
+    s->activity_last_tick = 0;
 }
 
 static inline void room_sweep_nrf24_clear_hits(RoomSweepNrf24State* s) {
@@ -45,6 +61,8 @@ static inline void room_sweep_nrf24_clear_hits(RoomSweepNrf24State* s) {
     s->total_hits = 0;
     s->active_channels = 0;
     s->channel = 0;
+    s->activity_score = 0;
+    s->activity_last_tick = 0;
 }
 
 static inline bool room_sweep_nrf24_start(RoomSweepNrf24State* s) {
@@ -95,8 +113,49 @@ static inline bool room_sweep_nrf24_note_sample(
     if(channel >= ROOM_SWEEP_NRF24_CHANNELS) return false;
     if(active) {
         if(s->hits[channel] < 255U) s->hits[channel]++;
+        uint32_t raised = (uint32_t)s->activity_score + ROOM_SWEEP_NRF24_ACTIVITY_STEP;
+        if(raised > ROOM_SWEEP_NRF24_ACTIVITY_MAX) raised = ROOM_SWEEP_NRF24_ACTIVITY_MAX;
+        s->activity_score = (uint16_t)raised;
     }
     return true;
+}
+
+/*
+ * Lazy decay of the activity integrator; call from the feedback path.
+ * Per full 100 ms elapsed the score drops by score/10 + 2 (integer), so a
+ * saturated score falls to silence in roughly 4 s of idle. The loop is
+ * bounded (anything older than the cap simply goes to 0) and the stamp only
+ * advances by consumed time, so sub-100 ms calls are exact no-ops. Elapsed
+ * uses unsigned subtraction, matching the codebase's tick-wrap handling.
+ */
+static inline void room_sweep_nrf24_activity_tick(RoomSweepNrf24State* s, uint32_t now_ms) {
+    if(!s) return;
+    uint32_t elapsed = now_ms - s->activity_last_tick;
+    uint32_t steps = elapsed / 100U;
+    if(steps == 0U) return;
+    if(steps > 40U) {
+        /* Older than the bounded decay window: silence, consume everything. */
+        s->activity_score = 0;
+        s->activity_last_tick = now_ms;
+        return;
+    }
+    for(uint32_t i = 0; i < steps; i++) {
+        uint32_t decay = (uint32_t)(s->activity_score / 10U) + 2U;
+        if(decay > (uint32_t)s->activity_score) decay = s->activity_score;
+        s->activity_score = (uint16_t)(s->activity_score - decay);
+    }
+    s->activity_last_tick += steps * 100U;
+}
+
+/*
+ * Map the current activity score into a feedback peak (int dBm) through the
+ * shared analyzer activity mapping (0 -> -110 dBm, hot -> ~-30 dBm).
+ */
+static inline int room_sweep_nrf24_activity_to_rssi(const RoomSweepNrf24State* s) {
+    if(!s) return -127;
+    uint16_t scaled = (uint16_t)(s->activity_score / 4U);
+    if(scaled > 255U) scaled = 255U;
+    return room_sweep_analyzer_activity_to_rssi((uint8_t)scaled);
 }
 
 /* Advance scan cursor; returns true when a full pass finished. */

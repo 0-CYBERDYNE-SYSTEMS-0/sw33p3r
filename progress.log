@@ -82,3 +82,23 @@
   _Static_assert 20-char budget; radar rings now drawn via rssi_radius mapping
 - Verified: init.sh ALL PASS, _verify_api.py CLEAN, on-device re-walk screenshots
   (.omo/evidence/ui-qa-2026-09-04.md)
+
+## Iteration: feedback — graded per-tab Geiger/vibro parity (2026-09-05)
+- WiFi/BLE peak now identity-aware: locked target > selected scroll row >
+  strongest table row, aged 2s fresh -> 6s silence via analyzer aging
+  (room_sweep_feedback.h pick_wireless) — walking out of range no longer
+  freezes the click rate; locked row keeps target_rssi synced (parity with
+  the analyzer HUD)
+- nRF24 Geiger: synthetic -90+channel%40 counter replaced by the real RPD
+  activity integrator (room_sweep_nrf24_state.h: +8 per active sample,
+  lazy 100ms decay score/10+2, ~4s idle to silence, dBm mapping via
+  room_sweep_analyzer_activity_to_rssi)
+- Vibro graded ladder 150/300/600/1200/2500/5000 ms (monotonic; GPS fix
+  heartbeat and TX arm/800ms-lock cadence preserved); sound scanner+GPS
+  ladders moved verbatim into room_sweep_feedback_sound_interval_ms
+- Cadence: feedback_tick throttled to >=40ms and now called at the top of
+  every main-loop pass — held buttons no longer starve sound/vibro/LED
+- New: room_sweep_feedback.h + tests/test_feedback.c (17 host suites);
+  extended tests/test_nrf24_state.c with activity integrator checks
+- Verified: ./init.sh ALL PASS + ufbt Target 7 API 87.1; _verify_api.py
+  64/64 CLEAN; -pedantic header purity OK for both touched headers
