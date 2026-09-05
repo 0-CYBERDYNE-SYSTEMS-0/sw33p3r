@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Build Your Own Standalone Survey Device</title>
+<style>
+  :root {
+    --bg: #0a0a0f; --surface: #12121a; --surface2: #1a1a26; --border: #252538;
+    --text: #c8c8d4; --text-dim: #6e6e82; --accent: #00e5a0; --accent-dim: #007a56;
+    --warn: #f0a030; --danger: #e04060; --blue: #4090e0;
+    --mono: 'SF Mono','Fira Code','JetBrains Mono','Consolas',monospace;
+    --sans: -apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:var(--bg); color:var(--text); font-family:var(--sans); line-height:1.6; }
+  .hero {
+    background:linear-gradient(135deg,#0a0f1a 0%,#0d1a14 40%,#0a0f1a 100%);
+    border-bottom:1px solid var(--border); padding:56px 24px 44px; text-align:center;
+    position:relative; overflow:hidden;
+  }
+  .hero::before{content:'';position:absolute;inset:0;background:radial-gradient(ellipse 60% 50% at 50% 0%,rgba(0,229,160,.07) 0%,transparent 70%);pointer-events:none;}
+  .hero h1{font-size:clamp(26px,5vw,44px);font-weight:700;color:#fff;position:relative;}
+  .hero h1 span{color:var(--accent);}
+  .hero .sub{margin-top:12px;color:var(--text-dim);font-size:15px;max-width:700px;margin-inline:auto;position:relative;}
+  .container{max-width:1040px;margin:0 auto;padding:0 24px;}
+  section{padding:52px 0;border-bottom:1px solid var(--border);}
+  section:last-of-type{border-bottom:none;}
+  h2{font-size:21px;font-weight:700;color:#fff;margin-bottom:6px;}
+  h3{font-size:16px;font-weight:600;color:#e0e0ea;margin:26px 0 8px;}
+  p,li{color:var(--text);font-size:15px;} .dim{color:var(--text-dim);font-size:13px;}
+  ul{padding-left:20px;margin:8px 0 14px;} li{margin-bottom:4px;}
+  code{font-family:var(--mono);font-size:13px;background:var(--surface2);padding:1px 6px;border-radius:4px;color:var(--accent);}
+  .alert{background:var(--surface);border:1px solid var(--border);border-left:3px solid var(--accent);border-radius:0 8px 8px 0;padding:14px 18px;margin:16px 0;font-size:14px;}
+  .alert.warn{border-left-color:var(--warn);} .alert.info{border-left-color:var(--blue);} .alert.red{border-left-color:var(--danger);}
+  .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(480px,1fr));gap:16px;margin-top:18px;}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:22px 20px;}
+  .card .tag{display:inline-block;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;padding:3px 10px;border-radius:10px;margin-bottom:10px;}
+  .tag-green{background:rgba(0,229,160,.12);color:var(--accent);} .tag-blue{background:rgba(64,144,224,.12);color:var(--blue);}
+  .tag-amber{background:rgba(240,160,48,.12);color:var(--warn);} .tag-red{background:rgba(224,64,96,.12);color:var(--danger);}
+  .card h4{font-size:16px;font-weight:600;color:#fff;margin:4px 0 6px;}
+  .card .price{font-size:20px;font-weight:700;color:var(--accent);margin:6px 0;}
+  pre{background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:14px 16px;overflow-x:auto;font-family:var(--mono);font-size:13px;color:#d0e8e0;line-height:1.5;}
+  .table-wrap{overflow-x:auto;margin-top:16px;}
+  table{width:100%;border-collapse:collapse;font-size:14px;}
+  th,td{padding:9px 13px;text-align:left;border-bottom:1px solid var(--border);vertical-align:top;}
+  th{color:var(--text-dim);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap;}
+  tr:hover td{background:rgba(255,255,255,.02);}
+  .check{color:var(--accent);font-weight:700;} .cross{color:var(--danger);} .maybe{color:var(--warn);}
+  footer{text-align:center;padding:36px 24px;color:var(--text-dim);font-size:13px;border-top:1px solid var(--border);}
+  footer a{color:var(--accent-dim);text-decoration:none;} footer a:hover{color:var(--accent);}
+  @media(max-width:640px){.hero{padding:36px 16px 28px;}section{padding:36px 0;}.cards{grid-template-columns:1fr;}}
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <h1>Build Your Own <span>Standalone Survey</span> Device</h1>
+  <p class="sub">Four architectures to recreate Room Sweep's detect-only mission (sub‑GHz CC1101 scan · WiFi/BLE survey · GPS logging · session logs) on hardware that is not a Flipper and not running Momentum.</p>
+</header>
+
+<div class="container">
+
+<!-- ═══════════════════ WHAT YOU'RE REPLICATING ═══════════════ -->
+<section>
+  <h2>🧭 What Room Sweep Actually Needs From Hardware</h2>
+  <p>Before choosing a build path, the feature set that must be satisfied:</p>
+  <table>
+    <tr><th>Feature</th><th>Required radio / hardware</th><th>Detect-only?</th></tr>
+    <tr><td>Sub‑GHz RF scan</td><td>CC1101 transceiver (300–348 / 387–464 / 779–928 MHz)</td><td class="check">RX only — reads carrier/RSSI/decodes OOK-FSK</td></tr>
+    <tr><td>WiFi survey</td><td>2.4 GHz — MCU's native radio or an ESP32</td><td class="check">passive scan / monitor mode</td></tr>
+    <tr><td>BLE survey</td><td>2.4 GHz BLE radio</td><td class="check">passive advertise scan</td></tr>
+    <tr><td>2.4 GHz RPD channel power</td><td>nRF24L01 (optional, from the current nR tab)</td><td class="check">channel energy, never transmit</td></tr>
+    <tr><td>GPS logging</td><td>UART GPS module</td><td class="check">receive-only</td></tr>
+    <tr><td>Session logging</td><td>MicroSD slot</td><td>—</td></tr>
+    <tr><td>UI / input</td><td>Small display + buttons/rotary, battery</td><td>—</td></tr>
+  </table>
+  <p class="dim">The trick is that <strong>none of these radios can transmit in your design</strong> — you either leave radios physically RX-only (omit the TX path / control regs) or simply never issue transmit commands. That's the whole point of staying within the MISSION.md contract.</p>
+</section>
+
+<!-- ═══════════════════ ARCH 1: SINGLE-CHIP ESP32 ═════════════ -->
+<section>
+  <h2>🏗️ Architecture 1 — Single-Chip ESP32-S3 <span style="color:var(--accent)">(Recommended)</span></h2>
+  <p>The most faithful standalone recreation. WiFi and BLE are <em>already on the same silicon</em> as the CPU, so there is no second processor, no UART handoff, and no separate Marauder firmware — you write one C program that reads CC1101, scans WiFi/BLE, logs to SD, and draws the UI.</p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Board choice</th><th>Why</th><th>What you'd add</th></tr>
+      <tr>
+        <td><strong>LilyGo T-Embed CC1101</strong> ~$30–45</td>
+        <td>Already has onboard CC1101, 1.9" display, rotary encoder, battery, MicroSD</td>
+        <td>Optional nRF24 module (~$2, wired to free SPI CS)</td>
+      </tr>
+      <tr>
+        <td>M5Stack Cardputer ADV ~$30–40</td>
+        <td>Keyboard + display + battery + MicroSD</td>
+        <td>External CC1101 (~$3) + nRF24 via GPIO (no onboard radios)</td>
+      </tr>
+      <tr>
+        <td>Bare ESP32-S3 + any display</td>
+        <td>Maximum control, cheapest</td>
+        <td>Everything: CC1101 + nRF24 + display + battery + SD</td>
+      </tr>
+    </table>
+  </div>
+
+  <h3>Wiring (if not using a pre-integrated board)</h3>
+  <pre> CC1101 module          nRF24L01 module        Display (e.g. ST7789/ILI9341)
+  ------------------      -----------------      ------------------
+  MOSI/SCK/MISO/CS ─────► shared ESP32 SPI      (second SPI controller or addl CS)
+  GD02 (GDO2) ──────────► GPIO (RX-ready IRQ)   backlight + touch/key fob
+  </pre>
+  <p>Unlike the Flipper — which shares one SPI bus between internal CC1101 and nRF24 and needs a hardware switch — the ESP32 has multiple SPI controllers and plenty of GPIO, so each radio gets its own <code>CS</code>. No bus arbitration needed. Both radios are driven by a small SPI driver (ESP‑IDF <code>spi_master</code> or Arduino <code>SPI</code>).</p>
+
+  <h3>Firmware plan (all in one C project)</h3>
+  <ul>
+    <li><strong>Framework:</strong> ESP‑IDF (C, closest to Room Sweep's style) or Arduino (fastest to prototype).</li>
+    <li><strong>Sub‑GHz loop:</strong> SPI driver for CC1101; poke registers to RX on each band; read RSSI / OOK-FSK decode. Same radio work the current sub‑GHz engine does, minus the Flipper subghz API.</li>
+    <li><strong>WiFi/BLE:</strong> ESP-IDF <code>esp_wifi_scan</code> + <code>esp_ble_gap_scan</code> — pure passive scans → per-AP / per-device RSSI list, exactly matching the Wi / BT tabs.</li>
+    <li><strong>nRF24 RPD (optional):</strong> simple SPI channel-energy read.</li>
+    <li><strong>Logging + GPS:</strong> <code>esp_vfs_fat_sdmmc</code> for the SD card; UART driver for GPS NMEA (you already have <code>nmea.c</code> — reuse it).</li>
+    <li><strong>UI:</strong> LVGL or a light custom framebuffer for the small touch/OLED screen.</li>
+  </ul>
+
+  <div class="alert">
+    <strong>Why this is the cleanest:</strong> you fully own the code, so there are no attack modes by construction. Every radio only ever configures RX. It directly matches Room Sweep's features with no translation layer, and total BOM is ~$35–50.
+  </div>
+
+  <h3>Notable + shared pitfalls</h3>
+  <ul>
+    <li>CC1101 and nRF24 <strong>share SPI</strong> — each needs its own CS line. On the T‑Embed CC1101 there's only one CC1101, so add the nRF24 to a separate controller.</li>
+    <li>ESP32 real-time limits: use a dedicated task for the RF loop (RFID timing logic stays small, like the current <code>&lt;64-byte</code> stack rule).</li>
+    <li>OOK/FSK decode is the hardest part — carry over your existing signal-decoding code rather than reinventing it.</li>
+  </ul>
+</section>
+
+<!-- ═══════════════════ ARCH 2: CONTROL MCU + MODULES ═════════ -->
+<section>
+  <h2>🧰 Architecture 2 — Control MCU + Radio Modules (Flipper-style Split)</h2>
+  <p>This mirrors how the Flipper itself is built: a small main MCU drives the sub‑GHz radios directly, and a separate ESP32 handles WiFi/BLE. The advantage is that you can <strong>reuse standard ESP32 firmware and the exact UART protocol Room Sweep already speaks</strong>, so you write almost no WiFi/BLE code.</p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>MU</th><th>Board</th><th>Price</th><th>Drives</th></tr>
+      <tr><td rowspan="2">Controller</td><td>Raspberry Pi Pico (RP2040)</td><td>~$4–6</td><td>CC1101 + nRF24 via SPI, SD, display</td></tr>
+      <tr><td>STM32 dev board</td><td>~$8–15</td><td>Same as above</td></tr>
+      <tr><td rowspan="2">WiFi/BLE buddy</td><td>ESP32-C3 dev board</td><td>~$3–5</td><td>Runs <strong>standard Marauder</strong> firmware</td></tr>
+      <tr><td>ESP32-C3 (already in BFFB-like add-on)</td><td>—</td><td>Same</td></tr>
+    </table>
+  </div>
+
+  <h3>The clever reuse: UART protocol parity</h3>
+  <pre>  Pico / STM32 ──UART/115200──► ESP32-C3 (runs Marauder)
+      │   send: "sniffbeacon" / "sniffbt" / "stopscan"
+      │   ←─  stream of AP/device scan results
+      │
+      ├──SPI──► CC1101  (sub‑GHz, you own the decoder)
+      ├──SPI──► nRF24   (2.4 GHz RPD, you own the decoder)
+      ├──► SD / display / buttons
+  </pre>
+  <p>Because Room Sweep <em>already</em> drives a Marauder over UART, this is the shortest path to parity. You reuse your existing UART command layer and NMEA parser verbatim.</p>
+
+  <h3>Detect-only note</h3>
+  <p>Marauder includes attack commands. You simply <strong>never send them</strong> — the controller only ever issues <code>sniffbeacon</code>, <code>sniffbt</code>, <code>stopscan</code>. The passive-scan firmware doing the work only ever receives. This is exactly how the current BFFB + Room Sweep setup stays clean.</p>
+
+  <div class="alert warn">
+    <strong>Trade-off:</strong> two MCUs means more wiring, more code to integrate, and you still rely on Marauder's scan output formats. Only worth it if you specifically want to avoid writing your own WiFi/BLE scan code. Estimated BOM ~$20–30.
+  </div>
+</section>
+
+<!-- ═══════════════════ ARCH 3: SDR ══════════════════════════ -->
+<section>
+  <h2>📡 Architecture 3 — Software-Defined Radio (Wideband)</h2>
+  <p>SDR trades pocketability for <em>coverage</em>. Instead of discrete radios tuned to the three CC1101 bands, an SDR sees the whole spectrum at once.</p>
+
+  <table>
+    <tr><th>Path</th><th>Hardware</th><th>BOM</th><th>Coverage</th><th>Detect-only?</th></tr>
+    <tr>
+      <td>RTL-SDR + Pi Zero 2 W</td>
+      <td>RTL-SDR v4 (~$30) + Pi (~$15) + display</td>
+      <td>~$45–60</td>
+      <td>500 kHz – 1.7 GHz</td>
+      <td class="check">By design (no TX)</td>
+    </tr>
+    <tr>
+      <td>HackRF clone + PortaPack</td>
+      <td>HackRF clone (~$100) + PortaPack H4M (~$80)</td>
+      <td>~$180–220</td>
+      <td>1 MHz – 6 GHz</td>
+      <td class="check">RX so long as you never key TX</td>
+    </tr>
+    <tr>
+      <td>PortaPack H4M with Mayhem</td>
+      <td>All-in-one handheld, no Pi</td>
+      <td>~$180–220</td>
+      <td>1 MHz – 6 GHz</td>
+      <td class="check">RX unless you use TX tools</td>
+    </tr>
+  </table>
+
+  <h3>How it does "sweep"</h3>
+  <ul>
+    <li><strong>rtl_433</strong> on a Pi decodes a huge library of ISM-band protocols (OOK / FSK / rolling-code remotes, sensors) — plug-and-play sub‑GHz identification.</li>
+    <li><strong>GNU Radio</strong> lets you build a custom continuous spectrum analyzer that sweeps the entire 1.7 MHz–1.7 GHz span in one pass — broader than any CC1101 device.</li>
+    <li><strong>Mayhem firmware</strong> on HackRF + PortaPack adds a GUI spectrum analyzer, signal generator, and protocol decoders in a handheld.</li>
+  </ul>
+
+  <div class="alert info">
+    <strong>Which to pick:</strong> if the goal is a truly <em>broad</em> survey ("is anything transmitting anywhere I can reach?"), SDR is the answer. If you need the CC1101-band decode depth, battery-portable audio/buzzer feedback, and a pocket form factor like Room Sweep, it's the wrong tool — SDR can't sit comfortably on the CC1101 API the way a CC1101 driver can.
+  </div>
+</section>
+
+<!-- ═══════════════════ ARCH 4: BFFB STANDALONE ═══════════════ -->
+<section>
+  <h2>🔄 Architecture 4 — Repurpose the BFFB as a Standalone</h2>
+  <p>The BFFB is <em>just</em> an ESP32 + dual CC1101 + nRF24 + GPS + MicroSD on a board. Nothing in that hardware requires a Flipper — the Flipper is only there for power, display, and input. Standalone, it's already most of what Room Sweep needs.</p>
+
+  <ul>
+    <li><strong>Power</strong> it from a LiPo / USB-C directly to the ESP32's 3.3 V rail.</li>
+    <li><strong>Drive</strong> it with your own ESP‑IDF firmware — the same CC1101 + nRF24 drivers and Wi/BT scan logic as Architecture 1, because the BFFB's MCU is an ESP32-WROOM.</li>
+    <li><strong>UI:</strong> add a small I2C/SPI OLED or LCD (SVGA) + buttons, or run it headless over its UART to a serial terminal.</li>
+    <li>The onboard <strong>MicroSD + GPS</strong> become your session logger and locator.</li>
+  </ul>
+
+  <div class="alert red">
+    <strong>Downside:</strong> the BFFB alone costs ~$146 and is often out of stock. You'd be paying a premium to shell a Flipper-only board and then <em>not</em> using a Flipper. Only a good pick if you already own one or can source it cheaply.
+  </div>
+</section>
+
+<!-- ═══════════════════ COMPARISON ═══════════════════════════ -->
+<section>
+  <h2>⚖️ Full Comparison</h2>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Architecture</th><th>BOM</th><th>Skill</th><th>Sub-GHz</th><th>WiFi/BLE</th><th>nRF24</th><th>GPS/logging</th><th>Detect-only</th></tr>
+      <tr>
+        <td><strong>1. Single-chip ESP32-S3</strong></td>
+        <td>~$35–50</td><td>Medium</td>
+        <td class="check">CC1101 (own driver)</td><td class="check">onboard</td><td class="check">add $2</td>
+        <td class="check">SD + GPS</td><td class="check">you own the code</td>
+      </tr>
+      <tr>
+        <td><strong>2. Pico/STM32 + ESP32-C3</strong></td>
+        <td>~$20–30</td><td>High</td>
+        <td class="check">CC1101</td><td class="check">via UART/Marauder</td><td class="check">module</td>
+        <td class="check">SD + GPS</td><td class="check">if you never send attack cmds</td>
+      </tr>
+      <tr>
+        <td><strong>3a. RTL-SDR + Pi</strong></td>
+        <td>~$45–60</td><td>High</td>
+        <td class="maybe">wideband (not the CC1101 API)</td><td class="cross">hardware n/a</td><td class="cross">n/a</td>
+        <td class="cross">none integrated</td><td class="check">by design</td>
+      </tr>
+      <tr>
+        <td><strong>3b. HackRF + PortaPack</strong></td>
+        <td>~$180–220</td><td>Medium</td>
+        <td class="maybe">1 MHz–6 GHz</td><td class="cross">n/a</td><td class="cross">n/a</td>
+        <td class="check">GPS on PortaPack</td><td class="check">RX so long as not keyed</td>
+      </tr>
+      <tr>
+        <td><strong>4. BFFB standalone</strong></td>
+        <td>~$146</td><td>Low–Med</td>
+        <td class="check">dual CC1101</td><td class="check">onboard ESP32</td><td class="check">onboard</td>
+        <td class="check">onboard GPS+SD</td><td class="check">your firmware</td>
+      </tr>
+    </table>
+  </div>
+</section>
+
+<!-- ═══════════════════ RECOMMENDATION ═══════════════════════ -->
+<section>
+  <h2>🎯 Recommendation</h2>
+
+  <div class="alert">
+    <strong>Start with Architecture 1 on a LilyGo T‑Embed CC1101 (~$30–45).</strong> It already ships with the CC1101, display, rotary input, battery, and MicroSD. Add a ~$2 nRF24 module if you want the 2.4 GHz RPD tab, wire a UART GPS if you want location logging, and write the firmware in ESP‑IDF. Because all radios live on one ESP32 and you own every line, you get <strong>detect-only by construction</strong> — no attack modes, no translation layer, and a BOM under $50.
+  </div>
+
+  <p>If you only care about sub‑GHz decoding and already have decoders you want to keep in C, Architecture 2 with a Pico + CC1101 lets you reuse your existing NMEA parser and decoder code while leaning on off‑the‑shelf Marauder over UART for WiFi/BLE. If you want the <em>widest</em> possible spectrum survey, SDR is the complement — it just won't match Room Sweep's CC1101-band decode depth or pocket form factor.</p>
+</section>
+
+</div>
+
+<footer>
+  Design research — August 2026 · Reuses Room Sweep's radio/UART/NMEA work · <a href="#">Back to top ↑</a>
+</footer>
+
+</body>
+</html>
