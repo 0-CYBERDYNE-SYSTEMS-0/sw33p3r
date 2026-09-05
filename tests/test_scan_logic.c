@@ -72,10 +72,10 @@ int main(void) {
     /* Live BFFB format from uart-4.txt snapshot */
     expect_true(
         "ble accepts RSSI: Device: form",
-        room_sweep_uart_is_ble_result_line("RSSI: -37 Device: 00:11:22:33:44:55"));
+        room_sweep_uart_is_ble_result_line("RSSI: -37 Device: 02:5a:9c:11:22:33"));
     expect_true(
         "ble accepts prompt-prefixed RSSI form",
-        room_sweep_uart_is_ble_result_line(">  RSSI: -70 Device: 00:11:22:33:44:56"));
+        room_sweep_uart_is_ble_result_line(">  RSSI: -70 Device: 02:5a:9c:77:88:99"));
     expect_true(
         "ble accepts legacy -NN Device form",
         room_sweep_uart_is_ble_result_line("-60 Device: AirPods"));
@@ -92,8 +92,8 @@ int main(void) {
         RoomSweepUartLineAccum acc;
         char out[ROOM_SWEEP_UART_LINE_MAX];
         const char* stream =
-            ">  RSSI: -37 Device: 00:11:22:33:44:55 RSSI: -50 Device: 00:11:22:33:44:58 "
-            "RSSI: -78 Device: 00:11:22:33:44:57#stopscan";
+            ">  RSSI: -37 Device: 02:5a:9c:11:22:33 RSSI: -50 Device: 02:5a:9c:44:55:66 "
+            "RSSI: -78 Device: 02:5a:9c:aa:bb:cc#stopscan";
         room_sweep_uart_line_reset(&acc);
         int emitted = 0;
         for(const char* p = stream; *p; p++) {
@@ -102,7 +102,7 @@ int main(void) {
                 if(emitted == 1) {
                     expect_true(
                         "first live ble record",
-                        strstr(out, "00:11:22:33:44:55") != NULL &&
+                        strstr(out, "02:5a:9c:11:22:33") != NULL &&
                             strstr(out, "-37") != NULL);
                 }
             }
@@ -112,8 +112,8 @@ int main(void) {
         if(room_sweep_uart_flush_ble_idle(&acc, out, sizeof(out))) {
             expect_true(
                 "idle/final has third mac or stopscan remnant",
-                strstr(out, "00:11:22:33:44:57") != NULL ||
-                    strstr(out, "00:11:22:33:44:58") != NULL || out[0] != '\0');
+                strstr(out, "02:5a:9c:aa:bb:cc") != NULL ||
+                    strstr(out, "02:5a:9c:44:55:66") != NULL || out[0] != '\0');
             emitted++;
         }
         expect_true("at least 3 ble frames total", emitted >= 3);
@@ -122,20 +122,20 @@ int main(void) {
     {
         RoomSweepUartLineAccum acc;
         char out[ROOM_SWEEP_UART_LINE_MAX];
-        const char* wifi = "> RSSI: -38 Ch: 5 BSSID: 00:11:22:33:44:59 ESSID: REDACTED-SSID\n";
+        const char* wifi = "> RSSI: -38 Ch: 5 BSSID: 02:5a:9c:dd:ee:ff ESSID: FakeNet\n";
         room_sweep_uart_line_reset(&acc);
         int emitted = 0;
         for(const char* p = wifi; *p; p++) {
             if(room_sweep_uart_feed_byte(&acc, *p, out, sizeof(out))) {
                 emitted++;
-                expect_true("wifi line kept with newline", strstr(out, "REDACTED-SSID") != NULL);
+                expect_true("wifi line kept with newline", strstr(out, "FakeNet") != NULL);
             }
         }
         expect_true("one wifi line", emitted == 1);
     }
 
     {
-        const char* rec = "RSSI: -37 Device: 00:11:22:33:44:55 RSSI: -50 Device: 00:11:22:33:44:58";
+        const char* rec = "RSSI: -37 Device: 02:5a:9c:11:22:33 RSSI: -50 Device: 02:5a:9c:44:55:66";
         const char* a = room_sweep_uart_find_ble_record(rec);
         const char* b = room_sweep_uart_ble_record_end(a);
         expect_true("find first record", a == rec);

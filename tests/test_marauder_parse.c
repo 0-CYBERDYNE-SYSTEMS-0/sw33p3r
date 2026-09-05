@@ -91,10 +91,10 @@ int main(void) {
         /* Captured BFFB: RSSI key + device MAC as the identifier. */
         check("ble: MAC device recognized",
               room_sweep_marauder_parse_ble_record(
-                  "RSSI: -37 Device: 00:11:22:33:44:55", &r));
+                  "RSSI: -37 Device: 02:5a:9c:11:22:33", &r));
         check("ble: MAC device rssi", r.rssi == -37);
-        check_str("ble: MAC device name is the mac", r.name, "00:11:22:33:44:55");
-        check_str("ble: MAC captured", r.mac, "00:11:22:33:44:55");
+        check_str("ble: MAC device name is the mac", r.name, "02:5a:9c:11:22:33");
+        check_str("ble: MAC captured", r.mac, "02:5a:9c:11:22:33");
     }
     {
         RoomSweepBleRecord r;
@@ -134,7 +134,7 @@ int main(void) {
         /* Captured BFFB headless: many records abutting on one line. */
         RoomSweepBleRecord out[8];
         uint8_t n = room_sweep_marauder_parse_ble(
-            "RSSI: -37 Device: 00:11:22:33:44:55 RSSI: -50 Device: bb:cc:dd:ee:ff:01",
+            "RSSI: -37 Device: 02:5a:9c:11:22:33 RSSI: -50 Device: bb:cc:dd:ee:ff:01",
             out,
             8);
         check("ble-line: two abutting records framed", n == 2);
@@ -146,9 +146,9 @@ int main(void) {
         /* A stopscan echo abuts the last MAC — must not merge into it. */
         RoomSweepBleRecord out[8];
         uint8_t n = room_sweep_marauder_parse_ble(
-            "RSSI: -37 Device: 00:11:22:33:44:55#stopscan", out, 8);
+            "RSSI: -37 Device: 02:5a:9c:11:22:33#stopscan", out, 8);
         check("ble-line: record abutting # framed once", n == 1);
-        check_str("ble-line: #-abutting record name", out[0].name, "00:11:22:33:44:55");
+        check_str("ble-line: #-abutting record name", out[0].name, "02:5a:9c:11:22:33");
     }
     {
         RoomSweepBleRecord out[8];
