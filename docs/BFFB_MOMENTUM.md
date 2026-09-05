@@ -56,7 +56,7 @@ From `esp32_marauder/CommandLine.h` + companion menu (current main):
 **BLE (`sniffbt`) — live BFFB capture (uart-4.txt):**
 ```text
 Started BLE Scan
->  RSSI: -37 Device: 00:11:22:33:44:55 RSSI: -50 Device: 00:11:22:33:44:58#stopscan
+>  RSSI: -37 Device: 02:5a:9c:11:22:33 RSSI: -50 Device: 02:5a:9c:44:55:66#stopscan
 ```
 Also may appear as wiki form `-60 Device: name`. Updates for already-seen devices can be silent.
 

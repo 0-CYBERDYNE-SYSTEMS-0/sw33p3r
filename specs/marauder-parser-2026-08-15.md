@@ -130,7 +130,7 @@ These are the load-bearing semantics; golden tests assert them.
 - `tests/test_marauder_parse.c` — repo `CHECK(cond,msg)` style. Fixtures:
   - Captured BFFB lines (WiFi `-45 Ch: 6 AA:BB:CC:DD:EE:FF ESSID: Name 00 00`,
     `> RSSI: -38 Ch: 5 BSSID: aa:… ESSID: Name`, BLE `-60 Device: AirPods`,
-    `RSSI: -37 Device: 00:11:22:33:44:55`).
+    `RSSI: -37 Device: 02:5a:9c:11:22:33`).
   - Edge cases: bare leading RSSI, `#` echo, `"Hidden/unknown"` fallback,
     MAC-only BLE, abutting records + `#stopscan`, trailing capability bytes,
     leaked `" RSSI"` token in the name, `rssi` out of range, prompt `"> "`.
