@@ -115,7 +115,7 @@ static inline uint8_t room_sweep_ui_center_x(uint8_t box_x, uint8_t box_w, uint8
 #define UI_HINT_TX_ARMED "U/D=freq HoldOK=TX"
 #define UI_HINT_TX_DISARM "B=disarm"
 #define UI_HINT_TX_CARRIER "Carrier, no replay"
-#define UI_HINT_BT_ADV "advert  HoldOK=lock"
+#define UI_HINT_BT_ADV "adv OK=lock HOK=scan"
 
 #define UI_ASSERT_HINT(s) \
     _Static_assert( \

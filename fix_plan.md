@@ -36,6 +36,24 @@ Restore: tag `restore/pre-meter-suite-2026-08-13` @ 0397d5d.
 
 Plan: `specs/per-tab-feedback.md`.
 
+## DONE (2026-09-05 — continuous proximity feedback + OK=lock)
+
+[x] Continuous dB-linear feedback curves replace the step ladders: sound
+    2000→60 ms (~24 ms/dB, ~80 distinct speeds), vibro 5000→150 ms
+    (~61 ms/dB), new GPS curve 2000→200 ms over [-100,-60] via sats proxy
+    (room_sweep_feedback.h); TX 120 ms fixed cadence + GPS/TX legacy vibro
+    preserved; monotonic non-increasing by construction
+[x] Hunting keep-alive: analyzer open OR WiFi/BLE target locked restarts
+    scan windows with a 250 ms gap (was 5 s dead gap > 2 s meter stale
+    time); windows still stop + log scan_end, restarts keep table/lock
+[x] WiFi/BLE controls: short OK = lock/unlock selected row (populated
+    list) or start first scan (empty); Hold OK = manual rescan (clears
+    table + lock); footer hints updated; RF/nR/GPS/TX handlers untouched
+[x] Gates: ./init.sh ALL PASS, ufbt Target 7 API 87.1, _verify_api.py
+    CLEAN, room_sweep_feedback.h -pedantic -fsyntax-only clean
+
+Plan: `specs/per-tab-feedback.md`.
+
 ## PENDING (user)
 
 [ ] Visual QA on device: radar sweep/blips, waterfall scroll, big meter,

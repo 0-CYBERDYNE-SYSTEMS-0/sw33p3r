@@ -2403,8 +2403,10 @@ feedback_sound:
         uint32_t interval;
         if(tx_mode && app->tx_state == TxTransmitting) {
             interval = 120; /* fixed TX transmit cadence, never graded */
+        } else if(gps_mode) {
+            interval = room_sweep_feedback_gps_interval_ms(peak);
         } else {
-            interval = room_sweep_feedback_sound_interval_ms(peak, gps_mode);
+            interval = room_sweep_feedback_sound_interval_ms(peak);
         }
 
         if(now - app->last_click_ms >= interval) {
@@ -2439,8 +2441,8 @@ feedback_sound:
             }
         } else if(now - app->last_vibro_ms >=
                   room_sweep_feedback_vibro_interval_ms(peak)) {
-            /* Graded ladder: closer signal => shorter interval; silent peak
-             * (-120) lands on the 5000 ms idle heartbeat. */
+            /* Continuous dB-linear curve: closer signal => shorter interval;
+             * silent peak (-120) clamps onto the 5000 ms idle heartbeat. */
             app->last_vibro_ms = now;
             notification_message(app->notif, &seq_vibro_pulse);
         }
@@ -3628,7 +3630,7 @@ static void draw_wifi_tab(Canvas* canvas, App* app) {
         canvas_set_font(canvas, FontKeyboard);
         canvas_draw_str(canvas, 2, 24, "Wi HELP");
         canvas_draw_str(canvas, 2, 34, "U/D select AP");
-        canvas_draw_str(canvas, 2, 42, "OK scan  HoldOK lock");
+        canvas_draw_str(canvas, 2, 42, "OK lock  HoldOK scan");
         canvas_draw_str(canvas, 2, 50, "L analyzer R pages");
         /* y58 only — the old y63 "R=detail" row overdraw this line. */
         canvas_draw_str(canvas, 2, 58, "ScanWin in Settings");
@@ -3686,7 +3688,7 @@ static void draw_wifi_tab(Canvas* canvas, App* app) {
     } else {
         canvas_draw_str(canvas, 2, 48, "id: session ordinal");
     }
-    canvas_draw_str(canvas, 2, 56, locked ? "LOCK on  HoldOK=unlock" : "beacon  HoldOK=lock");
+    canvas_draw_str(canvas, 2, 56, locked ? "LOCK on  OK=unlock" : "AP OK=lock HOK=scan");
     canvas_draw_str(canvas, 2, 63, "U/D OK L=AN R=list");
 }
 
@@ -3761,7 +3763,7 @@ static void draw_ble_tab(Canvas* canvas, App* app) {
         canvas_set_font(canvas, FontKeyboard);
         canvas_draw_str(canvas, 2, 24, "BT HELP");
         canvas_draw_str(canvas, 2, 34, "U/D select device");
-        canvas_draw_str(canvas, 2, 42, "OK scan  HoldOK lock");
+        canvas_draw_str(canvas, 2, 42, "OK lock  HoldOK scan");
         canvas_draw_str(canvas, 2, 50, "L analyzer R pages");
         /* y58 only — the old y63 "R=detail" row overdraw this line. */
         canvas_draw_str(canvas, 2, 58, "ScanWin in Settings");
@@ -3814,7 +3816,7 @@ static void draw_ble_tab(Canvas* canvas, App* app) {
     canvas_draw_str(canvas, 2, 38, buf);
     if(dev.mac[0]) canvas_draw_str(canvas, 2, 48, dev.mac);
     else canvas_draw_str(canvas, 2, 48, "id: session ordinal");
-    canvas_draw_str(canvas, 2, 56, locked ? "LOCK on  HoldOK=unlock" : UI_HINT_BT_ADV);
+    canvas_draw_str(canvas, 2, 56, locked ? "LOCK on  OK=unlock" : UI_HINT_BT_ADV);
     canvas_draw_str(canvas, 2, 63, "U/D OK L=AN R=list");
 }
 
@@ -4386,7 +4388,7 @@ static void draw_info_tab(Canvas* canvas, App* app) {
         canvas_draw_str(canvas, 2, 14, "KEYS 3/5");
         canvas_draw_str(canvas, 2, 24, "L/R tab  HoldL AN");
         canvas_draw_str(canvas, 2, 34, "HoldR page in mode");
-        canvas_draw_str(canvas, 2, 44, "OK act  HoldOK lock");
+        canvas_draw_str(canvas, 2, 44, "OK+HOK act per tab");
         canvas_draw_str(canvas, 2, 54, "Back set  HoldB exit");
         canvas_draw_str(canvas, 2, 63, "U/D or R next");
         return;
@@ -5097,8 +5099,17 @@ int32_t room_sweep_app(void* p) {
 
             if(app->serial && (app->mode == SweepModeWifi || app->mode == SweepModeBle)) {
                 uint32_t now = furi_get_tick();
-                /* Analyzer needs continuous samples: do not stop the window while open. */
-                bool keep_alive = app->analyzer_view;
+                /* Hunting contract: analyzer open OR a WiFi/BLE target locked
+                 * means the user is actively hunting a source — scan windows
+                 * restart within ~250 ms so the meters/feedback never starve
+                 * (the 5 s idle gap is longer than the 2 s meter stale time).
+                 * The window timeout below still stops + logs scan_end each
+                 * window (evidence model preserved), and restarts use
+                 * marauder_start_scan(..., clear=false) so the table and the
+                 * lock survive. Non-hunting auto_rescan keeps the old gap. */
+                bool keep_alive = app->analyzer_view ||
+                                  app->target_kind == TargetWifi ||
+                                  app->target_kind == TargetBle;
                 if(!keep_alive && app->marauder_state == MarauderScanning &&
                    (uint32_t)(now - app->last_rescan_tick) >=
                        room_sweep_scan_timeout_ms(app->scan_timeout_idx)) {
@@ -5126,8 +5137,8 @@ int32_t room_sweep_app(void* p) {
                         0,
                         scan_detail);
                 }
-                /* While analyzer is open, restart immediately if scan is not running. */
-                uint32_t rescan_gap = keep_alive ? 500U : RESCAN_INTERVAL_MS;
+                /* Hunting states restart immediately; idle auto_rescan waits. */
+                uint32_t rescan_gap = keep_alive ? 250U : RESCAN_INTERVAL_MS;
                 bool want_rescan =
                     keep_alive || app->auto_rescan;
                 if(want_rescan &&
@@ -5754,44 +5765,53 @@ int32_t room_sweep_app(void* p) {
                     app->wifi_scroll, app->wifi_count, input_action);
                 furi_mutex_release(app->mutex);
             } else if(input_action == RoomSweepInputPrimary && app->serial) {
-                marauder_start_for_mode(app);
-            } else if(input_action == RoomSweepInputSecondary && app->wifi_count > 0) {
-                furi_mutex_acquire(app->mutex, FuriWaitForever);
-                if(app->target_kind == TargetWifi) {
-                    record_enqueue(
-                        app,
-                        "unlock",
-                        "WIFI",
-                        app->target_id,
-                        app->target_rssi,
-                        0,
-                        0,
-                        "selected AP follow stopped");
-                    app->target_kind = TargetNone;
-                    app->target_id[0] = '\0';
-                    app->target_rssi = -127;
+                if(app->wifi_count == 0) {
+                    /* Empty list: first press starts a scan. */
+                    marauder_start_for_mode(app);
                 } else {
-                    uint8_t selected = app->wifi_scroll < app->wifi_count ?
-                                           app->wifi_scroll : 0;
-                    WifiAp* ap = &app->wifi_aps[selected];
-                    app->target_kind = TargetWifi;
-                    strncpy(
-                        app->target_id, ap->bssid[0] ? ap->bssid : ap->ssid, 32);
-                    app->target_id[32] = '\0';
-                    app->target_rssi = ap->rssi;
-                    app->target_freq_hz = 0;
-                    record_enqueue(
-                        app,
-                        "lock",
-                        "WIFI",
-                        app->target_id,
-                        app->target_rssi,
-                        0,
-                        ap->channel,
-                        "selected AP beacon follow");
-                    if(app->sound_on) notification_message(app->notif, &seq_lock_tone);
+                    /* Populated list: OK = lock/unlock the selected AP. */
+                    furi_mutex_acquire(app->mutex, FuriWaitForever);
+                    if(app->target_kind == TargetWifi) {
+                        record_enqueue(
+                            app,
+                            "unlock",
+                            "WIFI",
+                            app->target_id,
+                            app->target_rssi,
+                            0,
+                            0,
+                            "selected AP follow stopped");
+                        app->target_kind = TargetNone;
+                        app->target_id[0] = '\0';
+                        app->target_rssi = -127;
+                    } else {
+                        uint8_t selected = app->wifi_scroll < app->wifi_count ?
+                                               app->wifi_scroll : 0;
+                        WifiAp* ap = &app->wifi_aps[selected];
+                        app->target_kind = TargetWifi;
+                        strncpy(
+                            app->target_id, ap->bssid[0] ? ap->bssid : ap->ssid, 32);
+                        app->target_id[32] = '\0';
+                        app->target_rssi = ap->rssi;
+                        app->target_freq_hz = 0;
+                        record_enqueue(
+                            app,
+                            "lock",
+                            "WIFI",
+                            app->target_id,
+                            app->target_rssi,
+                            0,
+                            ap->channel,
+                            "selected AP beacon follow");
+                        if(app->sound_on)
+                            notification_message(app->notif, &seq_lock_tone);
+                    }
+                    furi_mutex_release(app->mutex);
                 }
-                furi_mutex_release(app->mutex);
+            } else if(input_action == RoomSweepInputSecondary && app->serial) {
+                /* Hold OK = manual rescan; intentionally clears the table and
+                 * the lock (clear=true) — that is what "rescan" means. */
+                marauder_start_for_mode(app);
             }
             continue;
         }
@@ -5806,44 +5826,53 @@ int32_t room_sweep_app(void* p) {
                     app->ble_scroll, app->ble_count, input_action);
                 furi_mutex_release(app->mutex);
             } else if(input_action == RoomSweepInputPrimary && app->serial) {
-                marauder_start_for_mode(app);
-            } else if(input_action == RoomSweepInputSecondary && app->ble_count > 0) {
-                furi_mutex_acquire(app->mutex, FuriWaitForever);
-                if(app->target_kind == TargetBle) {
-                    record_enqueue(
-                        app,
-                        "unlock",
-                        "BLE",
-                        app->target_id,
-                        app->target_rssi,
-                        0,
-                        0,
-                        "selected BLE follow stopped");
-                    app->target_kind = TargetNone;
-                    app->target_id[0] = '\0';
-                    app->target_rssi = -127;
+                if(app->ble_count == 0) {
+                    /* Empty list: first press starts a scan. */
+                    marauder_start_for_mode(app);
                 } else {
-                    uint8_t selected = app->ble_scroll < app->ble_count ?
-                                           app->ble_scroll : 0;
-                    BleDev* dev = &app->ble_devs[selected];
-                    app->target_kind = TargetBle;
-                    strncpy(
-                        app->target_id, dev->mac[0] ? dev->mac : dev->name, 32);
-                    app->target_id[32] = '\0';
-                    app->target_rssi = dev->rssi;
-                    app->target_freq_hz = 0;
-                    record_enqueue(
-                        app,
-                        "lock",
-                        "BLE",
-                        app->target_id,
-                        app->target_rssi,
-                        0,
-                        0,
-                        "selected active-scan observation follow");
-                    if(app->sound_on) notification_message(app->notif, &seq_lock_tone);
+                    /* Populated list: OK = lock/unlock the selected device. */
+                    furi_mutex_acquire(app->mutex, FuriWaitForever);
+                    if(app->target_kind == TargetBle) {
+                        record_enqueue(
+                            app,
+                            "unlock",
+                            "BLE",
+                            app->target_id,
+                            app->target_rssi,
+                            0,
+                            0,
+                            "selected BLE follow stopped");
+                        app->target_kind = TargetNone;
+                        app->target_id[0] = '\0';
+                        app->target_rssi = -127;
+                    } else {
+                        uint8_t selected = app->ble_scroll < app->ble_count ?
+                                               app->ble_scroll : 0;
+                        BleDev* dev = &app->ble_devs[selected];
+                        app->target_kind = TargetBle;
+                        strncpy(
+                            app->target_id, dev->mac[0] ? dev->mac : dev->name, 32);
+                        app->target_id[32] = '\0';
+                        app->target_rssi = dev->rssi;
+                        app->target_freq_hz = 0;
+                        record_enqueue(
+                            app,
+                            "lock",
+                            "BLE",
+                            app->target_id,
+                            app->target_rssi,
+                            0,
+                            0,
+                            "selected active-scan observation follow");
+                        if(app->sound_on)
+                            notification_message(app->notif, &seq_lock_tone);
+                    }
+                    furi_mutex_release(app->mutex);
                 }
-                furi_mutex_release(app->mutex);
+            } else if(input_action == RoomSweepInputSecondary && app->serial) {
+                /* Hold OK = manual rescan; intentionally clears the table and
+                 * the lock (clear=true) — that is what "rescan" means. */
+                marauder_start_for_mode(app);
             }
             continue;
         }
