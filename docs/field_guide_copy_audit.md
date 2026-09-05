@@ -27,13 +27,13 @@ honest-limits lines are not weakened.
 | P07 | PASS | Waterfall facts (16 presets, ~2.5 snapshots/s, peak-hold dots right edge, dashed threshold, ~10 s) match `rf_waterfall.png` and specs. |
 | P08 | PASS | `rf_lockcard.png` shows "CANDIDATE / 330.000 MHz / -65 dBm fresh", "U/D back HoldOK lock"; open/close and lock semantics match USER_GUIDE. |
 | P09 | ISSUE | Verdict list omits STABLE, which is on-screen in `rf_analyzer_p0.png` ("= STABLE 61%") and in `room_sweep_analyzer.h` (correction 2). Grid layout, page roles, ~2 s fade / ~6 s LOST, scan-kept-alive all verified. |
-| P10 | PASS | `wifi_analyzer_p0.png`: "REDACTED-SSID_3TFXQX", "-37dBm", "CLOSER 91%" — lede matches exactly. FIELD/RADAR/METER cells verified. |
-| P11 | PASS | `bt_analyzer_p0.png`: "00:11:22:33:44:5a", "-72dBm" — matches lede. PK/trend claims match `bt_analyzer_p3.png` ("PK -72"). (Minor prose nit, see notes.) |
+| P10 | PASS | `wifi_analyzer_p0.png`: "[redacted SSID]", "-37dBm", "CLOSER 91%" — lede matches exactly. FIELD/RADAR/METER cells verified. |
+| P11 | PASS | `bt_analyzer_p0.png`: "[redacted MAC]", "-72dBm" — matches lede. PK/trend claims match `bt_analyzer_p3.png` ("PK -72"). (Minor prose nit, see notes.) |
 | P12 | ISSUE | "RPD (radio-path detection)" mis-expands RPD; spec says "receive power detector" (correction 3). Ledes "-127 dBm, LOST 0%", "2.4G RPD", SPI Path/switch requirements all match captures and specs. |
 | P13 | ISSUE (x2) | Title word "capture" conflicts with the detect/analyze wording contract (correction 4); "counter shows windows completed" is wrong — `Wi scan a/b` is selection position over APs heard (correction 5). Quoted screen text "Wi scan 0/0 · Listening… · beacon only" matches `wifi_p0.png`. |
-| P14 | ISSUE | "security/BEACON line" — no security is displayed; the status line reads `beacon` / `LOCK on` (correction 6). Lede "GIII Mechanical · -49 dBm · Ch2 · 00:11:22:33:44:5b" matches `01_after_right.png` exactly. |
+| P14 | ISSUE | "security/BEACON line" — no security is displayed; the status line reads `beacon` / `LOCK on` (correction 6). Lede "[redacted SSID] · -49 dBm · Ch2 · [redacted BSSID]" matches `01_after_right.png` exactly. |
 | P15 | PASS | `wifi_p1.png` list strongest-first with inverted selection row; `wifi_p2.png` help page; ScanWin chip correct. |
-| P16 | PASS | `bt_p0.png`: "00:11:22:33:44:5a / -73dBm n1 / adv" — lede matches exactly; sniffbt controls match. |
+| P16 | PASS | `bt_p0.png`: "[redacted MAC] / -73dBm n1 / adv" — lede matches exactly; sniffbt controls match. |
 | P17 | ISSUE | "a locked device stays marked (`LOCKED`)" and the LIST caption are not supported: the lock appears as a header ` L` tag and `LOCK on` on Detail, rows invert only for selection; `bt_p1.png` shows no LOCKED tag (correction 7). HELP caption is fine. |
 | P18 | PASS | `nr_p0.png` matches quoted "nR STATUS · SPI CC1101 · phase idle" plus "need SPI=nRF24 / BFFB bottom DOWN"; internal-CC1101 fallback matches nrf24-survey spec. |
 | P19 | ISSUE | "Left opens the analyzer" should be "Hold Left" (USER_GUIDE; the page's own chip and `nr_p1.png` footer "L=AN" say Hold) (correction 8). Lede "active 0 · hits 0 · no RPD energy yet" matches exactly. |

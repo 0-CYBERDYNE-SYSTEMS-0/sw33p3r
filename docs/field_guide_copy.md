@@ -176,7 +176,7 @@ Page order and content follow §2 exactly. Thirty-nine pages (P01–P39).
   `wifi_analyzer_p3.png` 2x2 grid (HUNT / FIELD / RADAR / METER)
 - section: Analyzer
 - title: `Wi-Fi analyzer — walk an AP to its door`
-- lede: Hunting `REDACTED-SSID_3TFXQX` at -37 dBm, CLOSER 91%.
+- lede: Hunting the selected AP at -37 dBm, CLOSER 91%.
 - what-it-does: The Hunt bar tracks that one AP's live table RSSI from the
   Marauder beacon stream. If beacons stop, the bar fades to LOST rather than
   pretending — the meter tells the truth about silence.
@@ -188,7 +188,7 @@ Page order and content follow §2 exactly. Thirty-nine pages (P01–P39).
   `bt_analyzer_p3.png` 2x2 grid (HUNT / FIELD / RADAR / METER)
 - section: Analyzer
 - title: `BLE analyzer — chase an advertisement`
-- lede: One device, `00:11:22:33:44:5a`, from -72 dBm, CLOSER at 47%.
+- lede: One device, from -72 dBm, CLOSER at 47%.
 - what-it-does: Same four pages, aimed at a BLE advertiser. The radar's sweep
   line and blinking diamond mark your locked target; the meter's PK value keeps
   the strongest sighting while the trend arrow says whether you're gaining.
@@ -223,7 +223,7 @@ Page order and content follow §2 exactly. Thirty-nine pages (P01–P39).
 - shot: `01_after_right.png`
 - section: Wi-Fi
 - title: `Detail — one AP, four facts`
-- lede: `GIII Mechanical · -49 dBm · Ch2 · 00:11:22:33:44:5b`
+- lede: `SSID · -49 dBm · Ch2 · BSSID` — identity fields redacted in the capture
 - what-it-does: The Detail page shows the selected AP's name, live RSSI, channel,
   and MAC, plus a status line that reads `beacon` when unlocked and `LOCK on`
   once you lock the AP. This is the record you lock for the analyzer.
@@ -247,7 +247,7 @@ Page order and content follow §2 exactly. Thirty-nine pages (P01–P39).
 - shot: `bt_p0.png`
 - section: BLE · accent `#91baff`
 - title: `Bluetooth — same discipline, different traffic`
-- lede: `00:11:22:33:44:5a · -73 dBm · n1 · adv`
+- lede: `MAC · -73 dBm · n1 · adv` — identity redacted in the capture
 - what-it-does: The BT tab runs Marauder's `sniffbt` and shows advertisements:
   MAC, level, count, and advertisement type. Everything the Wi-Fi tab does, it
   does for BLE.
