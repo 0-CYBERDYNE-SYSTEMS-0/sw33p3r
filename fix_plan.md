@@ -20,6 +20,22 @@
 Plan: `specs/meter-suite-2026-08-13.md` (mission contract graph).
 Restore: tag `restore/pre-meter-suite-2026-08-13` @ 0397d5d.
 
+## DONE (2026-09-05 — per-tab feedback parity)
+
+[x] WiFi/BLE Geiger: identity-aware aged peak (locked target > selected
+    row > strongest), 2s→6s fade to silence — no more frozen
+    strongest-of-table (room_sweep_feedback.h)
+[x] nRF24 Geiger: real RPD activity integrator replaces the channel-counter
+    synthetic (room_sweep_nrf24_state.h activity_score, ~4s idle decay)
+[x] Vibro graded ladder 150/300/600/1200/2500/5000 ms (GPS/TX exempt);
+    sound ladders centralized in room_sweep_feedback_sound_interval_ms
+[x] feedback_tick ~40 ms throttle + unconditional top-of-main-loop call
+    (held buttons no longer starve feedback)
+[x] Gates: ./init.sh ALL PASS (17 suites), ufbt Target 7 API 87.1,
+    _verify_api.py CLEAN, header purity -pedantic OK
+
+Plan: `specs/per-tab-feedback.md`.
+
 ## PENDING (user)
 
 [ ] Visual QA on device: radar sweep/blips, waterfall scroll, big meter,

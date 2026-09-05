@@ -94,5 +94,15 @@
       "ufbt launch on flip_XXXX0"
     ],
     "passes": true
+  },
+  {
+    "category": "functional",
+    "description": "Per-tab feedback parity: identity-aware aged WiFi/BLE Geiger, real nRF24 RPD activity peak, graded vibro ladder, stable cadence during input",
+    "steps": [
+      "room_sweep_feedback.h: pick_wireless priority (locked target > selected row > strongest) with 2s->6s aging + sound/vibro interval ladders + host tests",
+      "room_sweep_nrf24_state.h: RPD activity integrator (+8/sample, 100ms lazy decay, ~4s to silence) replaces channel-counter synthetic + host tests",
+      "feedback_tick wiring: 3-candidate gather under mutex, target_rssi sync, 40ms throttle + top-of-loop call; GPS/TX fixed cadences preserved"
+    ],
+    "passes": true
   }
 ]
