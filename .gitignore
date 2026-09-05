@@ -17,3 +17,7 @@ __pycache__/
 # Diagnostic scratch scripts (kept in history, not tracked going forward)
 diag_*.py
 bisect_ladder.py
+
+# Unredacted original captures — never publish (see redacted copies in docs/field_guide_shots)
+.omo/evidence/ui-qa-shots-2026-09-04/
+.omo/evidence/ui-qa-shots-2026-09-04.tar.gz

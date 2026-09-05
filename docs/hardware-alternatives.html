@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Room Sweep — Alternative Hardware Landscape</title>
+<style>
+  :root {
+    --bg: #0a0a0f;
+    --surface: #12121a;
+    --surface2: #1a1a26;
+    --border: #252538;
+    --text: #c8c8d4;
+    --text-dim: #6e6e82;
+    --accent: #00e5a0;
+    --accent-dim: #007a56;
+    --warn: #f0a030;
+    --danger: #e04060;
+    --blue: #4090e0;
+    --mono: 'SF Mono', 'Fira Code', 'JetBrains Mono', 'Consolas', monospace;
+    --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    line-height: 1.6;
+    overflow-x: hidden;
+  }
+  /* ── hero ────────────────────────────────────── */
+  .hero {
+    background: linear-gradient(135deg, #0a0f1a 0%, #0d1a14 40%, #0a0f1a 100%);
+    border-bottom: 1px solid var(--border);
+    padding: 64px 24px 48px;
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+  }
+  .hero::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: radial-gradient(ellipse 60% 50% at 50% 0%, rgba(0,229,160,0.06) 0%, transparent 70%);
+    pointer-events: none;
+  }
+  .hero h1 {
+    font-size: clamp(28px, 5vw, 48px);
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: #fff;
+    position: relative;
+  }
+  .hero h1 span { color: var(--accent); }
+  .hero .sub {
+    margin-top: 12px;
+    color: var(--text-dim);
+    font-size: 16px;
+    max-width: 620px;
+    margin-inline: auto;
+    position: relative;
+  }
+  .hero .quick {
+    margin-top: 28px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    justify-content: center;
+    position: relative;
+  }
+  .hero .quick a {
+    display: inline-block;
+    padding: 8px 20px;
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    color: var(--text);
+    text-decoration: none;
+    font-size: 14px;
+    transition: all 0.2s;
+  }
+  .hero .quick a:hover { border-color: var(--accent); color: var(--accent); background: rgba(0,229,160,0.06); }
+
+  /* ── layout ──────────────────────────────────── */
+  .container { max-width: 1000px; margin: 0 auto; padding: 0 24px; }
+  section { padding: 56px 0; border-bottom: 1px solid var(--border); }
+  section:last-of-type { border-bottom: none; }
+  h2 {
+    font-size: 22px;
+    font-weight: 700;
+    color: #fff;
+    margin-bottom: 8px;
+    letter-spacing: -0.01em;
+  }
+  h3 {
+    font-size: 17px;
+    font-weight: 600;
+    color: #e0e0ea;
+    margin: 28px 0 10px;
+    letter-spacing: -0.01em;
+  }
+  p, li { color: var(--text); font-size: 15px; }
+  .dim { color: var(--text-dim); font-size: 13px; }
+  ul { padding-left: 20px; margin: 8px 0 16px; }
+  li { margin-bottom: 4px; }
+  code {
+    font-family: var(--mono);
+    font-size: 13px;
+    background: var(--surface2);
+    padding: 1px 6px;
+    border-radius: 4px;
+    color: var(--accent);
+  }
+  strong { color: #e8e8f0; }
+
+  /* ── cards ───────────────────────────────────── */
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; margin-top: 20px; }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 22px 20px;
+    transition: border-color 0.2s;
+  }
+  .card:hover { border-color: #3a3a50; }
+  .card .tag {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 3px 10px;
+    border-radius: 10px;
+    margin-bottom: 10px;
+  }
+  .tag-green { background: rgba(0,229,160,0.12); color: var(--accent); }
+  .tag-blue  { background: rgba(64,144,224,0.12); color: var(--blue); }
+  .tag-amber { background: rgba(240,160,48,0.12); color: var(--warn); }
+  .tag-red   { background: rgba(224,64,96,0.12); color: var(--danger); }
+  .card h4 { font-size: 16px; font-weight: 600; color: #fff; margin: 4px 0 6px; }
+  .card .price { font-size: 22px; font-weight: 700; color: var(--accent); margin: 8px 0; }
+  .card .specs { font-size: 13px; color: var(--text-dim); margin-top: 8px; line-height: 1.7; }
+
+  /* ── comparison table ────────────────────────── */
+  .table-wrap { overflow-x: auto; margin-top: 20px; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { padding: 10px 14px; text-align: left; border-bottom: 1px solid var(--border); }
+  th { color: var(--text-dim); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; white-space: nowrap; }
+  td { color: var(--text); vertical-align: top; }
+  tr:hover td { background: rgba(255,255,255,0.02); }
+  .check { color: var(--accent); font-weight: 700; }
+  .cross { color: var(--danger); }
+  .maybe { color: var(--warn); }
+
+  /* ── alert ───────────────────────────────────── */
+  .alert {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: 0 8px 8px 0;
+    padding: 16px 20px;
+    margin: 20px 0;
+    font-size: 14px;
+  }
+  .alert.warn { border-left-color: var(--warn); }
+  .alert.info { border-left-color: var(--blue); }
+
+  /* ── footer ──────────────────────────────────── */
+  footer {
+    text-align: center;
+    padding: 40px 24px;
+    color: var(--text-dim);
+    font-size: 13px;
+    border-top: 1px solid var(--border);
+  }
+  footer a { color: var(--accent-dim); text-decoration: none; }
+  footer a:hover { color: var(--accent); }
+
+  /* ── pulse dot ───────────────────────────────── */
+  @keyframes pulse { 0%,100% { opacity: 0.4; } 50% { opacity: 1; } }
+  .pulse { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); animation: pulse 2s infinite; margin-right: 6px; vertical-align: middle; }
+
+  /* ── responsive ──────────────────────────────── */
+  @media (max-width: 640px) {
+    .hero { padding: 40px 16px 32px; }
+    section { padding: 36px 0; }
+    .cards { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════ HERO ═══ -->
+<header class="hero">
+  <h1>Room Sweep — <span>Alternative Hardware</span></h1>
+  <p class="sub">The current Room Sweep target is Flipper&nbsp;Zero&nbsp;+&nbsp;BFFB (~$210). Here is every other way to run wireless survey software — ranked by cost and capability.</p>
+  <nav class="quick">
+    <a href="#tldr">TL;DR</a>
+    <a href="#tlitmb">What is TLITMB?</a>
+    <a href="#standalone">Standalone Devices</a>
+    <a href="#addons">Flipper Add-Ons</a>
+    <a href="#sdr">SDR Options</a>
+    <a href="#firmware">Firmware Landscape</a>
+    <a href="#diy">DIY / Breadboard</a>
+    <a href="#rec">Recommendation</a>
+  </nav>
+</header>
+
+<div class="container">
+
+<!-- ═══════════════════════ TL;DR ═══════════════════════════ -->
+<section id="tldr">
+  <h2><span class="pulse"></span> TL;DR — The 60-Second Answer</h2>
+
+  <div class="alert">
+    <strong>Momentum firmware is Flipper&nbsp;Zero only.</strong> It cannot run on ESP32, HackRF, or any other device. Period.
+  </div>
+
+  <table>
+    <tr><th>Question</th><th>Answer</th></tr>
+    <tr>
+      <td><strong>Cheapest standalone with sub-GHz + WiFi + BLE?</strong></td>
+      <td><strong>LilyGo T-Embed CC1101</strong> (~$30–45) running <strong>Bruce firmware</strong>. Has a display, battery, rotary encoder, and native CC1101.</td>
+    </tr>
+    <tr>
+      <td><strong>What is "TLITMB"?</strong></td>
+      <td>A typo for <strong>LilyGo T-Embed</strong>. No device called "TLITMB" exists. (See <a href="#tlitmb" style="color:var(--accent-dim)">full breakdown ↓</a>)</td>
+    </tr>
+    <tr>
+      <td><strong>Can the BFFB run standalone?</strong></td>
+      <td><strong>No.</strong> The BFFB has no display, no battery, no input, no standalone firmware. It <em>requires</em> a Flipper&nbsp;Zero.</td>
+    </tr>
+    <tr>
+      <td><strong>Most capable RF survey?</strong></td>
+      <td><strong>HackRF One + PortaPack H4M</strong> with Mayhem firmware (~$180–220). Covers <strong>1 MHz to 6 GHz</strong> — every band, one device.</td>
+    </tr>
+    <tr>
+      <td><strong>Any device with CC1101 + nRF24 built in?</strong></td>
+      <td>Only the <strong>BFFB</strong> (Flipper add-on). No standalone ESP32 board ships with both. T-Embed CC1101 has CC1101 but no nRF24.</td>
+    </tr>
+  </table>
+</section>
+
+<!-- ═══════════════════ TLITMB ══════════════════════════════ -->
+<section id="tlitmb">
+  <h2>🔍 "TLITMB Go" — What Is It?</h2>
+  <p>After thorough research across GitHub, Reddit, AliExpress, and LilyGo's own site: <strong>there is no device called "TLITMB."</strong> This does not exist as a product, project, or codename.</p>
+
+  <div class="alert info">
+    <strong>Best explanation:</strong> It's a typo for <strong>LilyGo T-Embed</strong> — specifically the <strong>T-Embed CC1101</strong> variant. Someone typing quickly on a phone keyboard could easily mangle "T-L-I" into "TLITMB" via autocorrect, and "go" may refer to a firmware version or the Go programming language being used with it.
+  </div>
+
+  <p>The LilyGo T-Embed CC1101 (~$30–45) is the most relevant device for this use case because it's the <strong>cheapest standalone handheld that ships with a CC1101 sub-GHz radio</strong>, WiFi/BLE via ESP32, a color display, a battery, and a rotary encoder for navigation. It runs Bruce firmware natively and is widely used in the wireless security community.</p>
+
+  <table>
+    <tr><th>T-Embed Variant</th><th>MCU</th><th>Sub-GHz</th><th>Display</th><th>Price</th></tr>
+    <tr><td><strong>T-Embed CC1101</strong> ✅</td><td>ESP32-WROVER</td><td class="check">CC1101</td><td>1.9" TFT 170×320</td><td>~$30–45</td></tr>
+    <tr><td>T-Embed (original)</td><td>ESP32-WROVER</td><td class="cross">None</td><td>1.9" TFT 170×320</td><td>~$25–35</td></tr>
+    <tr><td>T-Embed S3</td><td>ESP32-S3</td><td class="cross">None</td><td>2.0" IPS 320×240</td><td>~$35–50</td></tr>
+  </table>
+</section>
+
+<!-- ═══════════════════ STANDALONE DEVICES ═════════════════ -->
+<section id="standalone">
+  <h2>📱 Standalone Devices (No Flipper Required)</h2>
+  <p>These are self-contained — display, battery, input, firmware. Ranked by price.</p>
+
+  <div class="cards">
+
+    <!-- T-Embed CC1101 -->
+    <div class="card">
+      <span class="tag tag-green">Best Value</span>
+      <h4>LilyGo T-Embed CC1101</h4>
+      <div class="price">~$30–45</div>
+      <p>ESP32 · CC1101 sub-GHz · 1.9" TFT · Battery · Rotary encoder · MicroSD</p>
+      <div class="specs">
+        <strong>Radios:</strong> WiFi 2.4 · BLE · CC1101 (300–348 / 387–464 / 779–928 MHz)<br>
+        <strong>Firmware:</strong> Bruce (native), Marauder (adapted), GhostESP<br>
+        <strong>Missing:</strong> nRF24 (can add via GPIO, ~$2 module)
+      </div>
+    </div>
+
+    <!-- CYD -->
+    <div class="card">
+      <span class="tag tag-blue">Cheapest Entry</span>
+      <h4>CYD 2.8" (Cheap Yellow Display)</h4>
+      <div class="price">~$12–18</div>
+      <p>ESP32-WROOM · 2.8" ILI9341 touch · MicroSD · USB-C</p>
+      <div class="specs">
+        <strong>Radios:</strong> WiFi 2.4 · BLE only onboard<br>
+        <strong>To add:</strong> CC1101 module (~$3) + nRF24 (~$2) wired to GPIO<br>
+        <strong>Firmware:</strong> Marauder (best documented), Bruce<br>
+        <strong>Missing:</strong> Battery (DIY mod), no sub-GHz without external module
+      </div>
+    </div>
+
+    <!-- M5Stack Cardputer -->
+    <div class="card">
+      <span class="tag tag-blue">Most Portable</span>
+      <h4>M5Stack Cardputer ADV</h4>
+      <div class="price">~$30–40</div>
+      <p>ESP32-S3 · 1.14" LCD · 56-key keyboard · 1750mAh · Audio · IMU</p>
+      <div class="specs">
+        <strong>Radios:</strong> WiFi 2.4 · BLE · IR transmitter<br>
+        <strong>Firmware:</strong> Marauder, Bruce, GhostESP<br>
+        <strong>Missing:</strong> No sub-GHz, no CC1101, no nRF24
+      </div>
+    </div>
+
+    <!-- T-Deck -->
+    <div class="card">
+      <span class="tag tag-blue">BlackBerry Form Factor</span>
+      <h4>LilyGo T-Deck / T-Deck Plus</h4>
+      <div class="price">~$45–75</div>
+      <p>ESP32-S3 · 2.8" IPS touch · QWERTY keyboard · Trackball · Speaker</p>
+      <div class="specs">
+        <strong>Radios:</strong> WiFi 2.4 · BLE · optional LoRa SX1262 (433/868/915 MHz)<br>
+        <strong>Firmware:</strong> Marauder, Bruce, Meshtastic<br>
+        <strong>Missing:</strong> CC1101 — LoRa ≠ sub-GHz scanning. No nRF24.
+      </div>
+    </div>
+
+    <!-- T-Display S3 -->
+    <div class="card">
+      <span class="tag tag-blue">Barebones S3</span>
+      <h4>LilyGo T-Display S3</h4>
+      <div class="price">~$15–25</div>
+      <p>ESP32-S3 · 1.9" IPS · USB-C · Battery header (no battery)</p>
+      <div class="specs">
+        <strong>Radios:</strong> WiFi 2.4 · BLE only<br>
+        <strong>Firmware:</strong> Bruce, Marauder, GhostESP<br>
+        <strong>Missing:</strong> No CC1101, no nRF24, no battery included
+      </div>
+    </div>
+
+    <!-- M5StickC -->
+    <div class="card">
+      <span class="tag tag-amber">EOL</span>
+      <h4>M5StickC Plus 2</h4>
+      <div class="price">~$22–30</div>
+      <p>ESP32-PICO · 1.14" TFT · 200mAh · Buzzer · IMU</p>
+      <div class="specs">
+        <strong>Radios:</strong> WiFi 2.4 · BLE · IR<br>
+        <strong>Firmware:</strong> Marauder<br>
+        <strong>Missing:</strong> No sub-GHz. Discontinued, limited stock.
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ═══════════════════ FLIPPER ADD-ONS ════════════════════ -->
+<section id="addons">
+  <h2>🧩 Flipper Zero Add-On Boards</h2>
+  <p>These attach to a Flipper Zero's GPIO header. <strong>None are standalone.</strong> They require a Flipper for power, display, input, and control.</p>
+
+  <table>
+    <tr><th>Board</th><th>Price</th><th>Radios</th><th>Notes</th></tr>
+    <tr>
+      <td><strong>BFFB</strong> (JustCallMeKoko)</td>
+      <td>~$146</td>
+      <td>ESP32 · Dual CC1101 · nRF24+PA · GPS · MicroSD</td>
+      <td>Current Room Sweep target. Dual CC1101 covers both 400/900 MHz bands. 5 antennas. Sold in drops — often out of stock.</td>
+    </tr>
+    <tr>
+      <td><strong>FlipMods Ultra V3</strong></td>
+      <td>~$45</td>
+      <td>ESP32 · CC1101 · nRF24</td>
+      <td>Budget BFFB alternative. Single CC1101. No GPS. Community favorite for price.</td>
+    </tr>
+    <tr>
+      <td><strong>Rek5 QUAD</strong></td>
+      <td>~$60–80</td>
+      <td>ESP32 · CC1101 · nRF24 · LoRa · GPS</td>
+      <td>Four radios on one board. LoRa for Meshtastic. Active development.</td>
+    </tr>
+    <tr>
+      <td><strong>CaracalDB</strong></td>
+      <td>~$50</td>
+      <td>ESP32 · CC1101 · nRF24</td>
+      <td>Community-designed. Open-source PCB. Bruce firmware compatible.</td>
+    </tr>
+    <tr>
+      <td><strong>HoneyHoney Apex 5</strong></td>
+      <td>~$80</td>
+      <td>ESP32 · CC1101 · nRF24 · GPS</td>
+      <td>Premium build. All-in-one with GPS.</td>
+    </tr>
+    <tr>
+      <td><strong>Official Marauder Dev Board Pro</strong></td>
+      <td>~$50</td>
+      <td>ESP32 · CC1101 · nRF24</td>
+      <td>Made by JustCallMeKoko. Predecessor to BFFB.</td>
+    </tr>
+  </table>
+</section>
+
+<!-- ═══════════════════ SDR ═════════════════════════════════ -->
+<section id="sdr">
+  <h2>📡 SDR (Software-Defined Radio) Options</h2>
+  <p>True spectrum analyzers — not limited to ISM bands. These can see <em>everything</em>.</p>
+
+  <div class="cards">
+    <div class="card">
+      <span class="tag tag-green">Most Capable</span>
+      <h4>HackRF One + PortaPack H4M</h4>
+      <div class="price">~$180–220 (clone kit)</div>
+      <p>1 MHz – 6 GHz · 20 MHz bandwidth · Half-duplex TX/RX · 8-bit samples</p>
+      <div class="specs">
+        <strong>Firmware:</strong> Mayhem (spectrum analyzer, signal gen, ADS-B, APRS, SSTV, POCSAG, OOK/FSK analyzer, jammer detector, key fob analysis, full RF survey)<br>
+        <strong>Display:</strong> 3.2" LCD touchscreen (PortaPack)<br>
+        <strong>Missing:</strong> WiFi/BLE scanning (no ESP32/WiFi chip). No CC1101 automation — raw SDR instead.<br>
+        <strong>Note:</strong> Official HackRF ~$320. Clones from AliExpress work but quality varies. H4M "Mayhem Edition" is the current best PortaPack.
+      </div>
+    </div>
+
+    <div class="card">
+      <span class="tag tag-blue">Cheapest SDR</span>
+      <h4>RTL-SDR v4</h4>
+      <div class="price">~$10–35</div>
+      <p>500 kHz – 1.7 GHz · 2.4 MHz bandwidth · <strong>Receive only</strong></p>
+      <div class="specs">
+        <strong>Software:</strong> SDR#, GQRX, rtl_433, dump1090<br>
+        <strong>Missing:</strong> No transmit. Requires host computer (laptop/RPi). No standalone operation.
+      </div>
+    </div>
+
+    <div class="card">
+      <span class="tag tag-amber">Sub-GHz Specialist</span>
+      <h4>Yard Stick One</h4>
+      <div class="price">~$120</div>
+      <p>300–348 / 391–464 / 782–928 MHz · Half-duplex TX/RX · Amplified</p>
+      <div class="specs">
+        <strong>Control:</strong> rfcat Python library<br>
+        <strong>Missing:</strong> No display, no battery, no WiFi/BT. Requires computer.
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ FIRMWARE ════════════════════════════ -->
+<section id="firmware">
+  <h2>⚙️ Firmware Landscape for ESP32 Devices</h2>
+
+  <div class="alert warn">
+    <strong>Momentum is Flipper Zero only.</strong> The Room Sweep FAP is a Flipper application written in C against Momentum's API (furi, gui, subghz, etc.). It cannot be ported to ESP32 without a complete rewrite. However, other firmware already does what Room Sweep does — sometimes more.
+  </div>
+
+  <table>
+    <tr><th>Firmware</th><th>WiFi</th><th>BLE</th><th>Sub-GHz</th><th>NFC</th><th>IR</th><th>GPS</th><th>Standalone</th><th>Active?</th></tr>
+    <tr>
+      <td><strong>Bruce</strong></td>
+      <td class="check">✓</td><td class="check">✓</td><td class="check">CC1101</td><td class="check">✓</td><td class="check">✓</td><td class="cross">—</td><td class="check">Yes</td><td class="check">v1.15</td>
+    </tr>
+    <tr>
+      <td><strong>ESP32Marauder</strong></td>
+      <td class="check">✓</td><td class="check">✓</td><td class="maybe">Via Flipper</td><td class="cross">—</td><td class="cross">—</td><td class="check">✓</td><td class="check">Yes</td><td class="check">v1.13</td>
+    </tr>
+    <tr>
+      <td><strong>GhostESP</strong></td>
+      <td class="check">✓+5GHz</td><td class="check">✓</td><td class="check">CC1101</td><td class="check">✓</td><td class="check">✓</td><td class="cross">—</td><td class="check">Yes</td><td class="check">v2.0</td>
+    </tr>
+    <tr>
+      <td><strong>HaleHound</strong></td>
+      <td class="check">✓</td><td class="check">✓</td><td class="check">CC1101</td><td class="check">✓</td><td class="cross">—</td><td class="check">✓</td><td class="check">Yes</td><td class="check">v3.5</td>
+    </tr>
+    <tr>
+      <td><strong>ESP32-DIV</strong></td>
+      <td class="check">✓</td><td class="check">✓</td><td class="check">CC1101</td><td class="check">✓</td><td class="check">✓</td><td class="cross">—</td><td class="check">Yes</td><td class="check">v1.7</td>
+    </tr>
+    <tr>
+      <td><strong>Pigtail</strong></td>
+      <td class="check">✓</td><td class="check">✓</td><td class="cross">—</td><td class="cross">—</td><td class="cross">—</td><td class="cross">—</td><td class="check">Yes</td><td class="check">v1.0</td>
+    </tr>
+    <tr>
+      <td><em>Room Sweep (Momentum FAP)</em></td>
+      <td class="check">✓via BFFB</td><td class="check">✓via BFFB</td><td class="check">✓via BFFB</td><td class="cross">—</td><td class="cross">—</td><td class="check">✓</td><td class="cross">Req. Flipper</td><td class="check">Active</td>
+    </tr>
+  </table>
+
+  <div class="alert info" style="margin-top:20px">
+    <strong>Key insight:</strong> Bruce firmware on a T-Embed CC1101 <strong>already does sub-GHz scanning, WiFi scanning, and BLE scanning</strong> in a standalone handheld for ~$30. It has TX/attack modes that Room Sweep deliberately avoids (per MISSION.md), but the <em>passive survey</em> capabilities are the same use case. If replacing the Flipper entirely is the goal, <strong>Bruce on T-Embed CC1101 is the closest off-the-shelf equivalent.</strong>
+  </div>
+</section>
+
+<!-- ═══════════════════ DIY ═════════════════════════════════ -->
+<section id="diy">
+  <h2>🔧 DIY / Breadboard Route</h2>
+  <p>If you want the absolute cheapest path and don't mind wiring things together:</p>
+
+  <table>
+    <tr><th>Component</th><th>Price</th><th>Purpose</th></tr>
+    <tr><td>ESP32-WROOM dev board</td><td>~$3–5</td><td>CPU + WiFi + BLE</td></tr>
+    <tr><td>CC1101 module</td><td>~$2–5</td><td>Sub-GHz transceiver (same chip as Flipper internal)</td></tr>
+    <tr><td>nRF24L01+PA module</td><td>~$2–4</td><td>2.4 GHz RPD channel survey</td></tr>
+    <tr><td>2.8" ILI9341 TFT + touch</td><td>~$8–12</td><td>Display (or use serial headless)</td></tr>
+    <tr><td>LiPo battery + charger</td><td>~$5–8</td><td>Portable power</td></tr>
+    <tr><td>Breadboard + jumpers</td><td>~$3</td><td>Wiring</td></tr>
+    <tr><td><strong>Total (with display)</strong></td><td><strong>~$23–37</strong></td><td>Full hardware parity with Flipper+BFFB radios</td></tr>
+    <tr><td><strong>Total (headless, serial only)</strong></td><td><strong>~$7–14</strong></td><td>All three radios, no display</td></tr>
+  </table>
+
+  <div class="alert warn">
+    <strong>Caveat:</strong> You'd need to write or adapt firmware. None of the existing ESP32 firmwares (Bruce, Marauder standalone) are set up to drive CC1101 + nRF24 + display simultaneously on a breadboard without adapting pinouts. This is the cheapest hardware path but the most software work.
+  </div>
+</section>
+
+<!-- ═══════════════════ RECOMMENDATION ══════════════════════ -->
+<section id="rec">
+  <h2>🎯 Recommendations by Goal</h2>
+
+  <div class="cards">
+    <div class="card">
+      <span class="tag tag-green">Keep Flipper, Add Radio</span>
+      <h4>Flipper Zero + FlipMods Ultra V3</h4>
+      <div class="price">~$169 + $45 = ~$214</div>
+      <p>Stick with your existing Flipper. The Ultra V3 is a budget BFFB alternative with CC1101 + nRF24 + ESP32. Half the price of a BFFB, same radios. Room Sweep already targets the BFFB's ESP32 Marauder interface — adapting to the Ultra V3's UART is minimal work.</p>
+    </div>
+
+    <div class="card">
+      <span class="tag tag-green">Cheapest Standalone</span>
+      <h4>LilyGo T-Embed CC1101 + Bruce</h4>
+      <div class="price">~$30–45</div>
+      <p>A completely separate device from Flipper. Runs Bruce firmware with sub-GHz scanning, WiFi, BLE. No Flipper needed. No nRF24. This is the "TLITMB" device — a standalone RF survey tool for under $50.</p>
+    </div>
+
+    <div class="card">
+      <span class="tag tag-blue">Most Capable Survey</span>
+      <h4>HackRF One + PortaPack H4M + Mayhem</h4>
+      <div class="price">~$180–220</div>
+      <p>1 MHz to 6 GHz true SDR. Spectrum analyzer, signal identification, full survey across all bands. This is what professionals use. No WiFi/BLE scanning natively — but nothing beats it for raw RF visibility. Complements a Flipper, doesn't replace it.</p>
+    </div>
+
+    <div class="card">
+      <span class="tag tag-amber">DIY Maximum</span>
+      <h4>Breadboard: ESP32 + CC1101 + nRF24</h4>
+      <div class="price">~$7–37</div>
+      <p>The cheapest path to hardware parity with a Flipper+BFFB. All three radios, your choice of display. Most software work — you'd need to port or write firmware. Not plug-and-play.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ FINAL WORD ══════════════════════════ -->
+<section>
+  <h2>🔮 The Bottom Line</h2>
+
+  <p><strong>The Flipper Zero ecosystem is not the only game in town for RF surveying.</strong> The ESP32 world has exploded with alternatives:</p>
+
+  <ul>
+    <li><strong>For $30:</strong> T-Embed CC1101 running Bruce does sub-GHz + WiFi + BLE in a handheld. It's the spiritual equivalent of what Room Sweep does.</li>
+    <li><strong>For $45:</strong> FlipMods Ultra V3 adds CC1101 + nRF24 to your Flipper without the $146 BFFB price tag.</li>
+    <li><strong>For ~$200:</strong> HackRF + PortaPack H4M is a true professional-grade SDR spectrum analyzer covering literally every band you'd ever survey.</li>
+    <li><strong>For ~$12:</strong> A CYD ESP32 board runs Marauder for WiFi/BLE — add a $3 CC1101 module and you have sub-GHz too.</li>
+  </ul>
+
+  <div class="alert">
+    <strong>Room Sweep's detect-only mission is unique.</strong> All existing ESP32 firmware (Bruce, Marauder, GhostESP) includes attack modes (deauth, beacon spam, jamming) that Room Sweep deliberately avoids. If you want a <em>passive-only</em> survey tool on cheap hardware, you'd need to either strip attack modes from Bruce or write a new firmware. Room Sweep on Flipper + BFFB remains the only passive-only integrated solution — but the hardware is expensive and the BFFB is hard to obtain.
+  </div>
+
+</section>
+
+</div> <!-- /container -->
+
+<footer>
+  Research compiled August 2026 · Sources: GitHub (ESP32Marauder, Bruce, GhostESP), LilyGo, M5Stack, Great Scott Gadgets, Reddit r/flipperzero, r/esp32 · <a href="#">Back to top ↑</a>
+</footer>
+
+</body>
+</html>
