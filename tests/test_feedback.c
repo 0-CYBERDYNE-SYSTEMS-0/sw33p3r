@@ -95,67 +95,63 @@ int main(void) {
     peak = pick_target_only(-60, ROOM_SWEEP_ANALYZER_DEAD_MS * 3U, &valid);
     CHECK(!valid, "very old invalid");
 
-    /* --- Sound ladder: scanner buckets --- */
-    printf("Test 3: sound ladder\n");
-    CHECK(room_sweep_feedback_sound_interval_ms(-49.5f, false) == 60, ">-50 -> 60ms");
-    CHECK(room_sweep_feedback_sound_interval_ms(-50.0f, false) == 100, "-50 -> 100ms");
-    CHECK(room_sweep_feedback_sound_interval_ms(-59.5f, false) == 100, ">-60 -> 100ms");
-    CHECK(room_sweep_feedback_sound_interval_ms(-60.0f, false) == 180, "-60 -> 180ms");
-    CHECK(room_sweep_feedback_sound_interval_ms(-69.5f, false) == 180, ">-70 -> 180ms");
-    CHECK(room_sweep_feedback_sound_interval_ms(-70.0f, false) == 350, "-70 -> 350ms");
-    CHECK(room_sweep_feedback_sound_interval_ms(-79.5f, false) == 350, ">-80 -> 350ms");
-    CHECK(room_sweep_feedback_sound_interval_ms(-80.0f, false) == 700, "-80 -> 700ms");
-    CHECK(room_sweep_feedback_sound_interval_ms(-89.5f, false) == 700, ">-90 -> 700ms");
-    CHECK(room_sweep_feedback_sound_interval_ms(-90.0f, false) == 1200, "-90 -> 1200ms");
-    CHECK(room_sweep_feedback_sound_interval_ms(-99.5f, false) == 1200, ">-100 -> 1200ms");
-    CHECK(room_sweep_feedback_sound_interval_ms(-100.0f, false) == 2000, "-100 -> 2000ms");
-    CHECK(room_sweep_feedback_sound_interval_ms(-120.0f, false) == 2000, "silent -> 2000ms");
+    /* --- Continuous sound curve --- */
+    printf("Test 3: sound curve\n");
+    CHECK(room_sweep_feedback_sound_interval_ms(-110.0f) == 2000, "-110 -> 2000ms");
+    CHECK(room_sweep_feedback_sound_interval_ms(-120.0f) == 2000, "silent sentinel clamps -> 2000ms");
+    CHECK(room_sweep_feedback_sound_interval_ms(-115.0f) == 2000, "below range clamps -> 2000ms");
+    CHECK(room_sweep_feedback_sound_interval_ms(-30.0f) == 60, "-30 -> 60ms");
+    CHECK(room_sweep_feedback_sound_interval_ms(-25.0f) == 60, "above range clamps -> 60ms");
+    CHECK(room_sweep_feedback_sound_interval_ms(-70.0f) == 1030, "-70 -> 1030ms spot value");
+    CHECK(room_sweep_feedback_sound_interval_ms(-69.6f) == 1030, "-69.6 rounds to -70 -> 1030ms");
 
-    /* --- Sound ladder: GPS buckets --- */
-    CHECK(room_sweep_feedback_sound_interval_ms(-69.5f, true) == 200, "gps >-70 -> 200ms");
-    CHECK(room_sweep_feedback_sound_interval_ms(-70.0f, true) == 500, "gps -70 -> 500ms");
-    CHECK(room_sweep_feedback_sound_interval_ms(-89.5f, true) == 500, "gps >-90 -> 500ms");
-    CHECK(room_sweep_feedback_sound_interval_ms(-90.0f, true) == 1000, "gps -90 -> 1000ms");
-    CHECK(room_sweep_feedback_sound_interval_ms(-109.5f, true) == 1000, "gps >-110 -> 1000ms");
-    CHECK(room_sweep_feedback_sound_interval_ms(-110.0f, true) == 2000, "gps -110 -> 2000ms");
-    CHECK(room_sweep_feedback_sound_interval_ms(-120.0f, true) == 2000, "gps silent -> 2000ms");
+    /* --- Continuous GPS curve (peak = -100 + 4 * sats) --- */
+    CHECK(room_sweep_feedback_gps_interval_ms(-100.0f) == 2000, "0 sats (-100) -> 2000ms");
+    CHECK(room_sweep_feedback_gps_interval_ms(-120.0f) == 2000, "silent clamps -> 2000ms");
+    CHECK(room_sweep_feedback_gps_interval_ms(-60.0f) == 200, "10 sats (-60) -> 200ms");
+    CHECK(room_sweep_feedback_gps_interval_ms(-50.0f) == 200, "above range clamps -> 200ms");
+    CHECK(room_sweep_feedback_gps_interval_ms(-80.0f) == 1100, "5 sats (-80) -> 1100ms spot value");
 
-    /* --- Vibro ladder: buckets --- */
-    printf("Test 4: vibro ladder\n");
-    CHECK(room_sweep_feedback_vibro_interval_ms(-49.5f) == 150, ">-50 -> 150ms");
-    CHECK(room_sweep_feedback_vibro_interval_ms(-50.0f) == 300, "-50 -> 300ms");
-    CHECK(room_sweep_feedback_vibro_interval_ms(-59.5f) == 300, ">-60 -> 300ms");
-    CHECK(room_sweep_feedback_vibro_interval_ms(-60.0f) == 600, "-60 -> 600ms");
-    CHECK(room_sweep_feedback_vibro_interval_ms(-69.5f) == 600, ">-70 -> 600ms");
-    CHECK(room_sweep_feedback_vibro_interval_ms(-70.0f) == 1200, "-70 -> 1200ms");
-    CHECK(room_sweep_feedback_vibro_interval_ms(-79.5f) == 1200, ">-80 -> 1200ms");
-    CHECK(room_sweep_feedback_vibro_interval_ms(-80.0f) == 2500, "-80 -> 2500ms");
-    CHECK(room_sweep_feedback_vibro_interval_ms(-89.5f) == 2500, ">-90 -> 2500ms");
-    CHECK(room_sweep_feedback_vibro_interval_ms(-90.0f) == 5000, "-90 -> 5000ms");
-    CHECK(room_sweep_feedback_vibro_interval_ms(-120.0f) == 5000, "silent -> 5000ms");
+    /* --- Continuous vibro curve --- */
+    printf("Test 4: vibro curve\n");
+    CHECK(room_sweep_feedback_vibro_interval_ms(-110.0f) == 5000, "-110 -> 5000ms");
+    CHECK(room_sweep_feedback_vibro_interval_ms(-120.0f) == 5000, "silent sentinel clamps -> 5000ms");
+    CHECK(room_sweep_feedback_vibro_interval_ms(-30.0f) == 150, "-30 -> 150ms");
+    CHECK(room_sweep_feedback_vibro_interval_ms(-25.0f) == 150, "above range clamps -> 150ms");
+    CHECK(room_sweep_feedback_vibro_interval_ms(-70.0f) == 2575, "-70 -> 2575ms spot value");
 
-    /* --- Vibro ladder: monotonic non-increasing as peak rises --- */
+    /* --- Monotonic non-increasing for every 1 dB step, -115..-25, all three --- */
     {
-        uint32_t prev = room_sweep_feedback_vibro_interval_ms(-45.0f);
-        int mono = 1;
-        const float probes[] = {
-            -45.0f, -55.0f, -65.0f, -75.0f, -85.0f, -95.0f, -115.0f};
-        for(unsigned i = 1; i < sizeof(probes) / sizeof(probes[0]); i++) {
-            uint32_t cur = room_sweep_feedback_vibro_interval_ms(probes[i]);
-            if(cur < prev) mono = 0;
-            prev = cur;
+        int mono_sound = 1, mono_vibro = 1, mono_gps = 1;
+        for(int db = -115; db < -25; db++) {
+            if(room_sweep_feedback_sound_interval_ms((float)db) <
+               room_sweep_feedback_sound_interval_ms((float)(db + 1)))
+                mono_sound = 0;
+            if(room_sweep_feedback_vibro_interval_ms((float)db) <
+               room_sweep_feedback_vibro_interval_ms((float)(db + 1)))
+                mono_vibro = 0;
+            if(room_sweep_feedback_gps_interval_ms((float)db) <
+               room_sweep_feedback_gps_interval_ms((float)(db + 1)))
+                mono_gps = 0;
         }
-        CHECK(mono, "documented probes are monotonic");
+        CHECK(mono_sound, "sound monotonic non-increasing per 1 dB step");
+        CHECK(mono_vibro, "vibro monotonic non-increasing per 1 dB step");
+        CHECK(mono_gps, "gps monotonic non-increasing per 1 dB step");
     }
+
+    /* --- Smoothness: per-dB delta inside the clamped range --- */
     {
-        /* Full sweep: colder peak must never shorten the interval. */
-        int mono = 1;
-        for(int p = -30; p >= -125; p -= 5) {
-            uint32_t hotter = room_sweep_feedback_vibro_interval_ms((float)(p));
-            uint32_t colder = room_sweep_feedback_vibro_interval_ms((float)(p - 5));
-            if(colder < hotter) mono = 0;
+        int smooth_sound = 1, smooth_vibro = 1;
+        for(int db = -110; db < -30; db++) {
+            uint32_t d_sound = room_sweep_feedback_sound_interval_ms((float)db) -
+                               room_sweep_feedback_sound_interval_ms((float)(db + 1));
+            uint32_t d_vibro = room_sweep_feedback_vibro_interval_ms((float)db) -
+                               room_sweep_feedback_vibro_interval_ms((float)(db + 1));
+            if(d_sound == 0 || d_sound > 30U) smooth_sound = 0;
+            if(d_vibro == 0 || d_vibro > 65U) smooth_vibro = 0;
         }
-        CHECK(mono, "full -30..-125 sweep monotonic");
+        CHECK(smooth_sound, "sound per-dB delta in (0, 30] ms");
+        CHECK(smooth_vibro, "vibro per-dB delta in (0, 65] ms");
     }
 
     printf("RESULT: %s (%d failure(s))\n", failures ? "FAIL" : "ALL PASS", failures);

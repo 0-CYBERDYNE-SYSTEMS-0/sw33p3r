@@ -47,7 +47,7 @@ echo "== host analyzer / proximity meter =="
 cc -std=c11 -Wall -Wextra -Werror -I. tests/test_analyzer_state.c -o /tmp/room_sweep_analyzer_test
 /tmp/room_sweep_analyzer_test
 
-echo "== host feedback cadence ladders =="
+echo "== host feedback cadence curves =="
 cc -std=c11 -Wall -Wextra -Werror -pedantic -I. tests/test_feedback.c -o /tmp/room_sweep_feedback_test && /tmp/room_sweep_feedback_test
 
 echo "== host UI layout helpers =="

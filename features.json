@@ -104,5 +104,15 @@
       "feedback_tick wiring: 3-candidate gather under mutex, target_rssi sync, 40ms throttle + top-of-loop call; GPS/TX fixed cadences preserved"
     ],
     "passes": true
+  },
+  {
+    "category": "functional",
+    "description": "Continuous proximity feedback (dB-linear sound/vibro/GPS curves) + OK-to-lock on WiFi/BLE with hunting scan keep-alive",
+    "steps": [
+      "room_sweep_feedback.h: continuous curves sound 2000->60ms, vibro 5000->150ms, GPS 2000->200ms; host tests for endpoints, 1-dB monotonicity, smoothness, spot values, rounding",
+      "Main loop: analyzer open or WiFi/BLE target locked keeps scan windows restarting within ~250ms (meters/feedback never starve); windows still log scan_end",
+      "WiFi/BLE input: short OK locks/unlocks selected row (empty list starts scan), Hold OK rescans; footer hints + USER_GUIDE/spec updated; TX tab code unchanged"
+    ],
+    "passes": true
   }
 ]

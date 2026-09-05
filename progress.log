@@ -102,3 +102,29 @@
   extended tests/test_nrf24_state.c with activity integrator checks
 - Verified: ./init.sh ALL PASS + ufbt Target 7 API 87.1; _verify_api.py
   64/64 CLEAN; -pedantic header purity OK for both touched headers
+
+## Iteration: continuous proximity feedback + OK=lock (2026-09-05)
+- Sound/vibro step ladders replaced by continuous dB-linear curves
+  (room_sweep_feedback.h): sound 2000->60 ms over [-110,-30] (~24 ms/dB,
+  ~80 distinct speeds), vibro 5000->150 ms (~61 ms/dB); new
+  room_sweep_feedback_gps_interval_ms 2000->200 ms over [-100,-60]
+  (peak = -100 + 4*sats). gps_mode parameter removed from
+  room_sweep_feedback_sound_interval_ms; TX 120 ms fixed cadence and
+  GPS/TX legacy vibro untouched. Monotonic non-increasing by construction,
+  pure uint32 integer math (no double promotion).
+- Wi/BT live meters: hunting keep-alive — analyzer open OR WiFi/BLE target
+  locked restarts scan windows with a 250 ms gap (was 5 s, longer than the
+  2 s meter stale time -> visible freeze-then-fade). Window timeout still
+  stops + logs scan_end; restarts keep clear=false (table + lock survive).
+- WiFi/BLE input: short OK = lock/unlock selected row (populated list) or
+  start first scan (empty); Hold OK = manual rescan
+  (marauder_start_for_mode, clears table + lock intentionally). RF/nR/GPS/
+  TX handlers unchanged. Footer hints updated: BT_ADV "adv OK=lock
+  HOK=scan", Wi/BT detail "LOCK on  OK=unlock" / "AP OK=lock HOK=scan",
+  help pages "OK lock  HoldOK scan".
+- Tests: test_feedback.c ladder buckets replaced by continuous-curve
+  checks (endpoints, per-1-dB monotonicity -115..-25 all three curves,
+  smoothness deltas, spot values 1030/2575/1100, -69.6 rounding);
+  pick_wireless + aging tests unchanged.
+- Gates: ./init.sh ALL PASS + ufbt build; _verify_api.py CLEAN;
+  feedback header -pedantic -fsyntax-only clean.

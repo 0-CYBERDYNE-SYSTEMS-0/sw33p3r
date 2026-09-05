@@ -17,8 +17,8 @@ One-page map: [`docs/room_sweep_control_map.html`](docs/room_sweep_control_map.h
 | Hold Right | **Page** inside the current tab (or analyzer) |
 | Up / Down | Browse list / RF sub-mode / GPS-Info pages |
 | Hold Up / Down | **RF lock card** open/close (RF tab) |
-| Short OK | Main action (scan, start, arm, mark, …) |
-| Hold OK | Lock target — or **transmit** only if TX already armed. On GPS: **NMEA retry** |
+| Short OK | Main action (scan, start, arm, mark; on Wi-Fi/BLE lists: **lock/unlock** selected row) |
+| Hold OK | Rescan (Wi-Fi/BLE) / lock target (RF) — or **transmit** only if TX already armed. On GPS: **NMEA retry** |
 | Short Back | Settings (or disarm TX first) |
 | Hold Back | Exit app |
 
@@ -63,8 +63,8 @@ Marauder command: `sniffbeacon` (AP beacons only).
 | **Help** | Short control reminder |
 
 - **Up/Down:** select AP  
-- **OK:** start/restart scan  
-- **Hold OK:** lock/unlock that AP for follow/analyzer  
+- **OK:** lock/unlock the selected AP (starts the first scan when the list is empty)  
+- **Hold OK:** rescan (clears the AP table and any lock)  
 - **Hold Left:** analyzer for the **selected/locked** AP  
 - Scan window: **Settings → ScanWin** (15/30/60 s)
 
@@ -153,7 +153,9 @@ While **DISARMED** on external CC1101, Hold ◀/▶ steps ExtBand (AUTO / 400 / 
 
 - Hunt meters **one** selected (or locked) source.  
 - Fresh samples move the bar; silence ages out to zero.  
-- While Wi/BT analyzer is open, scan is **kept alive** for samples.  
+- While the Wi/BT analyzer is open **or a Wi/BT target is locked**, scans
+  restart ~250 ms after each window ends, so meters and feedback never
+  starve (no freeze-then-fade gap).  
 - The radar ring scale is **RSSI, not meters** — the display says so. Real
   meters exist only on the GPS tab's Radar page (with a real fix).
 
