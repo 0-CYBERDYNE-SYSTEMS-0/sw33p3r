@@ -43,7 +43,7 @@ non-zero on failure — no framework.
 
 Device helpers (need a Flipper over USB, pyserial): `_smoke_test.py`
 (build/upload/traverse; `FLIPPER_PORT`/`FLIPPER_BAUD` env overrides, default
-`/dev/cu.usbmodemflip_XXXX01`), `_dev_check.py` (device_info/power_info).
+`/dev/cu.usbmodemflip_XXXX001`), `_dev_check.py` (device_info/power_info).
 If `ufbt launch` says the app must be closed, send `input send back long` via
 the serial CLI first.
 
