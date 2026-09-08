@@ -87,6 +87,15 @@ its footer.
 - TX is a bounded 1–10 s carrier test — never replay or blocking.
 - The nRF24 path is activity detection — no jam, no mousejack.
 
+## Legal & responsible use
+
+Room Sweep is passive detect/analyze tooling for surveying your own property
+and your own hardware — it watches signals, it does not touch them. It
+deliberately ships no jamming, deauth, replay, or blocking modes, and its only
+transmitter is a short, safety-gated carrier test. You are responsible for
+complying with local RF transmission and privacy laws wherever you run it.
+The full scope and TX safety contract live in [`MISSION.md`](MISSION.md).
+
 ## Docs
 
 | Doc | Use |

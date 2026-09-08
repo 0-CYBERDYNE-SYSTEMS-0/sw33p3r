@@ -1,0 +1,39 @@
+# Room Sweep CI.
+#
+# Runs the repo's single quality gate, ./init.sh: all 18 host test suites
+# compiled with cc -std=c11 -Wall -Wextra -Werror (some also -pedantic),
+# then the ufbt firmware build of the FAP.
+#
+# Deliberately not run here: python3 _verify_api.py. It validates every called
+# Flipper symbol against the pinned Momentum mntm-012 (API 87.1) export table
+# read from a locally-initialized ufbt SDK state (~/.ufbt, overridable via
+# UFBT_API_SYMBOLS). CI builds against the stock SDK that ufbt fetches, so
+# that Momentum-pinned symbol check stays a local pre-deploy step — see
+# CONTRIBUTING.md.
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  gate:
+    name: host tests + ufbt build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install ufbt
+        run: pip3 install ufbt
+
+      # init.sh ends with a bare `ufbt`; initialize the SDK explicitly so the
+      # first-run SDK download is its own visible, separately failable step.
+      - name: Fetch Flipper SDK
+        run: ufbt update
+
+      - name: Gate — host tests (-Werror) + ufbt build
+        run: ./init.sh
