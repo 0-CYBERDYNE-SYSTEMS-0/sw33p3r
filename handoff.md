@@ -84,7 +84,7 @@ ufbt
 # 1. Close a running app with a complete input sequence
 python3 -c "
 import serial, time
-s = serial.Serial('/dev/cu.usbmodemflip_XXXX01', 115200, timeout=2)
+s = serial.Serial('/dev/cu.usbmodemflip_XXXX001', 115200, timeout=2)
 s.write(b'input send back press\r\n')
 time.sleep(0.1)
 s.write(b'input send back long\r\n')
@@ -100,7 +100,7 @@ ufbt launch
 # 3. Launch via CLI
 python3 -c "
 import serial, time
-s = serial.Serial('/dev/cu.usbmodemflip_XXXX01', 115200, timeout=3)
+s = serial.Serial('/dev/cu.usbmodemflip_XXXX001', 115200, timeout=3)
 s.write(b'loader open /ext/apps/Tools/room_sweep.fap\r\n')
 time.sleep(1)
 s.close()
@@ -110,8 +110,8 @@ s.close()
 If `ufbt launch` reports that the current fullscreen app must be closed manually,
 send the complete input sequence above, then rerun `ufbt launch`.
 
-**Serial port:** `/dev/cu.usbmodemflip_XXXX01` at 115200 baud.
-If "Resource busy": `lsof /dev/cu.usbmodemflip_XXXX01` → kill the PID.
+**Serial port:** `/dev/cu.usbmodemflip_XXXX001` at 115200 baud.
+If "Resource busy": `lsof /dev/cu.usbmodemflip_XXXX001` → kill the PID.
 
 ---
 

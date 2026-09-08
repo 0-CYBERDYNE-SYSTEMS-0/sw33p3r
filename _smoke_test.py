@@ -2,7 +2,7 @@ import os
 import serial, time, subprocess, sys
 from pathlib import Path
 
-PORT = os.environ.get("FLIPPER_PORT", "/dev/cu.usbmodemflip_XXXX01")
+PORT = os.environ.get("FLIPPER_PORT", "/dev/cu.usbmodemflip_XXXX001")
 BAUD = int(os.environ.get("FLIPPER_BAUD", "230400"))
 APP_DIR = Path(__file__).resolve().parent
 UFBT = os.environ.get("UFBT_BIN", "ufbt")
