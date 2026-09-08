@@ -153,7 +153,9 @@ radio code — it is a maintained log of verified API symbols and breakages:
 
 - Fix-loop workflow lives in `PROMPT.md` / `fix_plan.md` / `progress.log`;
   per-fix specs are in `specs/`. One fix-plan item per iteration, commit after
-  each verified item; no mock data; QA receipts accumulate in `.omo/evidence/`.
+  each verified item; no mock data; QA receipts accumulate in `.omo/evidence/`
+  — **local only**: `.omo/`, `.codex/`, and `.debug-journal.md` are gitignored
+  and must never be committed.
 - Branches: `main` trunk; `feat/*` feature work; `restore/*` are pre-overhaul
   snapshots kept for recovery (`git log --oneline` → checkout sha).
 - Commits: no Claude/Anthropic co-author trailers, ever.

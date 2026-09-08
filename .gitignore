@@ -18,6 +18,15 @@ __pycache__/
 diag_*.py
 bisect_ladder.py
 
-# Unredacted original captures — never publish (see redacted copies in docs/field_guide_shots)
-.omo/evidence/ui-qa-shots-2026-09-04/
-.omo/evidence/ui-qa-shots-2026-09-04.tar.gz
+# Internal AI-workflow evidence, graphs, journals — local only, never publish.
+# (.omo/evidence holds unredacted original captures; redacted copies live in docs/field_guide_shots)
+.omo/
+.codex/
+.zcode/
+.debug-journal.md
+
+# Promo material ships as GitHub Release assets, not in-repo
+promo_video/
+
+# Local backup bundles
+*.bundle

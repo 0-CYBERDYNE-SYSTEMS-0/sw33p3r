@@ -118,7 +118,8 @@ attempt recorded as an event.
 
 - Workflow: `PROMPT.md`, `fix_plan.md`, `progress.log`, `specs/`. One item per
   iteration, commit after each verified item, no mock data. QA receipts go in
-  `.omo/evidence/`.
+  `.omo/evidence/` — **local only**: `.omo/`, `.codex/`, and
+  `.debug-journal.md` are gitignored and must never be committed.
 - Branches: `main` trunk; `feat/*` feature work; `restore/*` are pre-overhaul
   snapshots for recovery (`git log --oneline` → checkout sha).
 - Commits: **no Anthropic/Claude co-author trailers, ever.**
