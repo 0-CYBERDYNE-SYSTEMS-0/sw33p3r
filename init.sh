@@ -68,7 +68,7 @@ cc -std=c11 -Wall -Wextra -Werror -pedantic -I. tests/test_waterfall.c -o /tmp/r
 
 if [[ -f tests/test_scan_logic.c ]]; then
   echo "== host scan/GPS helpers =="
-  cc -std=c11 -Wall -Wextra -Werror -I. tests/test_scan_logic.c -o /tmp/test_scan_logic
+  cc -std=c11 -Wall -Wextra -Werror -I. tests/test_scan_logic.c -lm -o /tmp/test_scan_logic
   /tmp/test_scan_logic
 fi
 
