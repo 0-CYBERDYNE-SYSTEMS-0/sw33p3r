@@ -33,6 +33,7 @@ typedef struct {
     char strongest_id[4][16];
     uint32_t nrf_active_channels;
     uint8_t nrf_top_channel;
+    uint32_t nrf_total_hits; /* summed RPD energy hits across passes */
     bool full_sweep_completed;
     char session_path[SESSION_PATH_MAX];
     char uart_path[SESSION_PATH_MAX];
@@ -394,6 +395,7 @@ bool session_log_write_event(const SessionLogEvent* event) {
                 sizeof(s_log.strongest_id[strong_i]) - 1U);
         }
         if(index == 4) {
+            s_log.nrf_total_hits += event->nrf_total_hits;
             if(event->channel > 0 || event->count > 0) {
                 if(event->count > s_log.nrf_active_channels)
                     s_log.nrf_active_channels = event->count;
@@ -467,6 +469,7 @@ static bool write_report(void) {
     findings.nrf_observations = s_log.observation_count[4];
     findings.nrf_active_channels = s_log.nrf_active_channels;
     findings.nrf_top_channel = s_log.nrf_top_channel;
+    findings.nrf_total_hits = s_log.nrf_total_hits;
     findings.gps_snapshots = s_log.observation_count[3];
     findings.full_sweep_completed = s_log.full_sweep_completed;
     used = room_sweep_report_append_findings(&findings, report, sizeof(report), used);

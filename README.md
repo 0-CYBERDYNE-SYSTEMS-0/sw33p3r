@@ -26,8 +26,9 @@ No jamming, blocking, deauth, capture/replay, or flood modes.
   history.
 - **Wi-Fi & Bluetooth via Marauder.** AP beacons (`sniffbeacon`) and BLE
   advertisements (`sniffbt`): list, detail, lock a target, then hunt it with a
-  four-page analyzer — Hunt / Field / Radar / Meter.
-- **2.4 GHz energy survey.** nRF24 RPD channel activity, receive only.
+  four-page analyzer — Hunt / Field / Energy Map / Meter.
+- **2.4 GHz energy survey.** nRF24 RPD channel energy — hits are activity
+  counts, not packets or devices. Receive only.
 - **GPS walk-to radar.** Mark-centered, north-up, real meters with
   auto-scaled rings and your last 8 fixes drawn as an approach trail.
 - **Field guide on device.** Every screen prints its own controls; the Info

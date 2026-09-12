@@ -78,9 +78,13 @@ Beacon heard ≠ Internet, telemetry, recording, ownership, or intent.
 
 Same page/control pattern as Wi-Fi. Command: `sniffbt`.
 
-### nRF24
+### nRF24 (nR tab)
 
-2.4 GHz RPD channel activity. **RX only** (no jam / mousejack in this app).
+**2.4 GHz energy detection** — the nRF24's RPD bit only says "power above
+~-64 dBm in this channel", whatever the emitter. **RX only** (no jam /
+mousejack in this app). Hits are channel energy counts — **no packets, no
+addresses, no device IDs**, and no dBm readings (analyzer numbers here are
+**ACT** = activity units, arbitrary scale).
 
 | Page | Shows |
 |------|--------|
@@ -89,7 +93,11 @@ Same page/control pattern as Wi-Fi. Command: `sniffbt`.
 
 - Settings **SPI Path = nRF24** and BFFB bottom switch **down**  
 - Sub-GHz then uses **internal** CC1101  
-- **OK:** start/stop RPD pass · **Hold Left** or **Hold OK:** analyzer  
+- **OK:** start/stop an energy pass · **Hold Left** or **Hold OK:** analyzer
+
+Why no packet decoding: reading an nRF24 packet requires knowing its 40-bit
+address in advance, and discovering unknown addresses passively requires
+mousejack-style attack techniques this app bans (see `MISSION.md`).
 
 ### GPS
 
@@ -146,18 +154,20 @@ While **DISARMED** on external CC1101, Hold ◀/▶ steps ExtBand (AUTO / 400 / 
 
 | Page (Hold Right) | Role |
 |-------------------|------|
-| **Hunt** | Fat continuous bar + CLOSER/FARTHER/STALE/LOST |
+| **Hunt** | Fat continuous bar + STRONGER/WEAKER/STALE/LOST |
 | **Field** | Peer/spectrum bars for context |
-| **Radar** | Polar view: rings = RSSI, angle = channel wheel, sweep line, locked target blinks as a diamond |
+| **Radar** | **ENERGY MAP**: rings = RSSI, angle = channel wheel, **NO DIRECTION** |
 | **Meter** | FontBigNumbers dBm + peak hold + trend |
 
 - Hunt meters **one** selected (or locked) source.  
 - Fresh samples move the bar; silence ages out to zero.  
+- On the nR tab the meter value is **ACT** (RPD activity, arbitrary units) — never dBm.
 - While the Wi/BT analyzer is open **or a Wi/BT target is locked**, scans
   restart ~250 ms after each window ends, so meters and feedback never
   starve (no freeze-then-fade gap).  
-- The radar ring scale is **RSSI, not meters** — the display says so. Real
-  meters exist only on the GPS tab's Radar page (with a real fix).
+- The radar ring scale is **RSSI, not meters** — the display says so, and
+  blip angles are a channel/index wheel, not a direction. Real meters and
+  real bearings exist only on the GPS tab's Radar page (with a real fix).
 
 ## Settings (Back)
 
@@ -172,7 +182,7 @@ Every value toggle confirms with a soft tick/beep (respects Sound/Vibro).
 | Rescan | Auto Wi/BT window restart |
 | ScanWin | 15 / 30 / 60 s |
 | Record | Start/stop session → CSV + report |
-| ExtBand | External CC1101 400 / 900 / AUTO |
+| ExtBand | External CC1101 400 / 900 / AUTO (= assumed switch path, not sensed) |
 | SPI Path | CC1101 vs nRF24 (nRF forces internal Sub-GHz) |
 | GPS Src | BFFB Marauder vs GPIO |
 | GPS Log | Include coordinates in session |
@@ -198,7 +208,8 @@ Recording is size-capped; scans continue if logging stops.
 Settings → FullSweep → OK:
 
 1. Hard timeouts: RF 10 s, Wi-Fi 15 s, BLE 15 s, nRF24 12 s, GPS 8 s
-   (GPS may finish after 2 s if a sentence or fix exists)  
+   (GPS may finish after 2 s when usable NMEA data exists — parsed
+   position or sentences; a receiver fix without coordinates does not count)
 2. nRF skipped immediately if SPI path is not nRF24  
 3. Session closed; `report-N.txt` written  
 4. Progress shows in the **top strip** (`FULL RF 10s`) — tab footers stay visible  

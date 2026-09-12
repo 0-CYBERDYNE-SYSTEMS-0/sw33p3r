@@ -256,7 +256,7 @@
         <tr><td>RF Sweep idle on map</td><td>Band step 300-348 / 387-464 / 779-928</td></tr>
         <tr><td>Wi / BT</td><td>Detail → List → Help</td></tr>
         <tr><td>nR</td><td>Status ↔ Results</td></tr>
-        <tr><td>Analyzer (after Hold ◀)</td><td>Hunt → Field → Radar → Meter</td></tr>
+        <tr><td>Analyzer (after Hold ◀)</td><td>Hunt → Field → Energy Map → Meter</td></tr>
         <tr><td>GPS</td><td>Summary → Detail → Radar (also ▲/▼)</td></tr>
         <tr><td>Info</td><td>Radio → State → Keys → Files → Limits (also ▲/▼)</td></tr>
         <tr><td>TX</td><td>No pages. Hold ◀/▶ only steps ExtBand while DISARMED on external CC1101.</td></tr>
@@ -282,7 +282,7 @@
         <tr><td>Path</td><td><code>/ext/apps_data/room_sweep/</code></td></tr>
         <tr><td>Files</td><td><code>session-N.csv</code> · <code>report-N.txt</code> · <code>uart-N.txt</code> (Raw Dump only)</td></tr>
         <tr><td>Privacy</td><td>Wi/BT IDs are session ordinals. GPS coords only if GPS Log ON.</td></tr>
-        <tr><td>FullSweep</td><td>RF 10 s → Wi-Fi 15 s → BLE 15 s → nRF24 12 s → GPS 8 s (GPS may finish after 2 s if NMEA exists). nR skipped if SPI Path is not nRF24. Never arms TX.</td></tr>
+        <tr><td>FullSweep</td><td>RF 10 s → Wi-Fi 15 s → BLE 15 s → nRF24 12 s → GPS 8 s (GPS may finish after 2 s if usable NMEA exists — parsed position or sentences). nR skipped if SPI Path is not nRF24. Never arms TX.</td></tr>
         <tr><td>Banner</td><td>Top strip <code>FULL &lt;phase&gt; &lt;s&gt;</code>. Then inverted <code>SWEEP DONE</code> + <code>saved report-N</code>.</td></tr>
       </table>
     </div>
@@ -290,8 +290,8 @@
 
   <div class="foot">
     RSSI is not distance. Beacon/ad is not telemetry or intent. No observation is not proof of absence.
-    TX is a bounded carrier test only — no jam, deauth, or replay. nRF24 is RPD activity, not mousejack.
-    Analyzer radar rings are RSSI. Real meters exist only on GPS Radar with a fix.
+    TX is a bounded carrier test only — no jam, deauth, or replay. nRF24 is 2.4 GHz energy detection (RPD), not mousejack.
+    Analyzer energy-map rings are RSSI; blip angles are a channel wheel, not a direction. Real meters exist only on GPS Radar with a fix.
     ScanWin lives in Settings, not Hold ▶.
     Source: <code>room_sweep.h</code>, <code>room_sweep.c</code>, state headers. Operator prose: README.md · USER_GUIDE.md · MISSION.md.
   </div>
@@ -321,7 +321,7 @@
       <div class="key"><b>▲ / ▼ short</b>Survey → Sweep → Peak → Waterfall</div>
       <div class="key"><b>Hold ▲ / ▼</b>Open lock card. Short ▲/▼ returns to map.</div>
       <div class="key"><b>Hold ▶</b>Map ↔ lock card. Idle Sweep map: band step 300-348 / 387-464 / 779-928.</div>
-      <div class="key"><b>Hold ◀</b>Analyzer: Hunt → Field → Radar → Meter</div>
+      <div class="key"><b>Hold ◀</b>Analyzer: Hunt → Field → Energy Map → Meter</div>
     </div>
     <table>
       <tr><th>Sub</th><th>OK</th><th>Hold OK</th></tr>
@@ -330,7 +330,7 @@
       <tr><td>Peak</td><td>Start / cancel refine</td><td>Lock result</td></tr>
       <tr><td>Waterfall</td><td>—</td><td>Lock qualified hit</td></tr>
     </table>
-    <p class="lede" style="margin-top:14px">Waterfall: 16 presets × 24 columns, push every 400 ms (~2.5 Hz, ~9.6 s). Passive. Analyzer radar rings are RSSI, not meters.</p>
+    <p class="lede" style="margin-top:14px">Waterfall: 16 presets × 24 columns, push every 400 ms (~2.5 Hz, ~9.6 s). Passive. Analyzer energy-map rings are RSSI (angles are a channel wheel, not a direction), not meters.</p>
   </template>
 
   <template id="card-wi">
@@ -366,17 +366,17 @@
     <table>
       <tr><td>Detail</td><td>One device: name, RSSI, MAC</td></tr>
       <tr><td>List</td><td>Up to 5 rows RSSI + name</td></tr>
-      <tr><td>Analyzer</td><td>Hunt / Field / Radar / Meter. Scan kept alive.</td></tr>
+      <tr><td>Analyzer</td><td>Hunt / Field / Energy Map / Meter. Scan kept alive.</td></tr>
     </table>
     <p class="lede" style="margin-top:14px">Advertisement ≠ telemetry or intent. Dedup silence is not ERR.</p>
   </template>
 
   <template id="card-nr">
-    <p class="lede">nRF24 RPD channel activity. RX only. No jam, no mousejack. Settings <code>SPI Path = nRF24</code> and BFFB bottom switch down. Sub-GHz then uses internal CC1101.</p>
+    <p class="lede">2.4 GHz ENERGY detection — the nRF24 RPD bit only flags power above about −64 dBm in the current channel; hits are channel energy, not packets or devices. RX only. No jam, no mousejack. Settings <code>SPI Path = nRF24</code> and BFFB bottom switch down. Sub-GHz then uses internal CC1101.</p>
     <div class="keys" style="margin-bottom:18px">
       <div class="key"><b>Hold ▶</b>Status ↔ Results</div>
-      <div class="key"><b>OK</b>Start / stop RPD pass</div>
-      <div class="key"><b>Hold ◀ or Hold OK</b>Analyzer</div>
+      <div class="key"><b>OK</b>Start / stop energy pass</div>
+      <div class="key"><b>Hold ◀ or Hold OK</b>Analyzer (numbers are ACT, not dBm)</div>
     </div>
     <table>
       <tr><td>Status</td><td>SPI path, phase, module / switch hints</td></tr>

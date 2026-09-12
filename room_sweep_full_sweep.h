@@ -100,15 +100,20 @@ static inline bool room_sweep_full_sweep_hard_timeout(
 }
 
 /*
- * GPS may finish early after min dwell when any useful NMEA/fix exists.
- * Still always forced done at hard timeout.
+ * GPS may finish early after min dwell when real NMEA data exists.
+ * has_pos = usable parsed coordinates in the latest nav data (nmea.h);
+ * a receiver "fix" alone is NOT accepted — a fix without parsed position is
+ * the NO POS state and must not read as GPS success. has_sentences counts
+ * as data (the phase produced evidence) but never as a position claim.
+ * Nothing here is rendered as a position; this gate only sequences phases
+ * and sets the phase-completed bit. Always forced done at hard timeout.
  */
 static inline bool room_sweep_full_sweep_gps_ready(
     uint32_t elapsed_ms,
-    bool has_fix,
+    bool has_pos,
     bool has_sentences) {
     if(room_sweep_full_sweep_hard_timeout(RoomSweepFullGps, elapsed_ms)) return true;
-    if(elapsed_ms >= ROOM_SWEEP_FULL_GPS_MIN_MS && (has_fix || has_sentences)) return true;
+    if(elapsed_ms >= ROOM_SWEEP_FULL_GPS_MIN_MS && (has_pos || has_sentences)) return true;
     return false;
 }
 
