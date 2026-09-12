@@ -7,7 +7,7 @@ App(
     fap_category="Tools",
     fap_description="Passive room survey: Sub-GHz sweep, WiFi/BLE scan, nRF24 RPD, GPS — detect only + safety-gated TX check",
     fap_author="0-CYBERDYNE-SYSTEMS-0",
-    fap_version=(3, 1),
+    fap_version=(3, 2),
     fap_weburl="https://github.com/0-CYBERDYNE-SYSTEMS-0/sw33p3r",
     fap_icon="icon.png",
     fap_icon_assets="images",
