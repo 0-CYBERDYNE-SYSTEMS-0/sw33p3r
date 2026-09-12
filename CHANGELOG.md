@@ -4,7 +4,7 @@ Keep-a-Changelog-inspired, condensed per release series. The full per-fix
 history lives in `fix_plan.md` (session-by-session) and `progress.log`
 (dated session log).
 
-## Truth audit — 2026-09-11
+## v3.2 — 2026-09-11 (truth audit)
 
 - RF tab: the SIGNAL badge now states its real meaning — energy above the
   -75 dBm gate; Peak reports ~100 kHz resolution with the 650 kHz
@@ -26,7 +26,7 @@ history lives in `fix_plan.md` (session-by-session) and `progress.log`
 - Docs and specs synced to the new wording; stale on-device screenshots
   flagged for re-capture.
 
-## v3.1.0 — 2026-09 (current release)
+## v3.1.0 — 2026-09
 
 **Feedback overhaul (2026-09-05)**
 
