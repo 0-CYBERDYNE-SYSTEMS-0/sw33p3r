@@ -4,8 +4,10 @@
 
 # Room Sweep
 
-See every signal in the room from your Flipper Zero — Sub-GHz RF, Wi-Fi,
-Bluetooth, 2.4 GHz, and GPS — without touching any of it.
+Detect RF activity in the room from your Flipper Zero — Sub-GHz RF, Wi-Fi,
+Bluetooth, 2.4 GHz, and GPS — without touching any of it. It tells you
+something is transmitting and how loud it is; it cannot tell you what the
+transmitter is.
 
 Room Sweep is a receive-side room survey app for Flipper Zero (external FAP,
 appid `room_sweep`), tuned for **Momentum mntm-012, API 87.1**. Seven tabs —
@@ -20,6 +22,11 @@ board (Marauder / dual CC1101 / nRF24).
 No jamming, blocking, deauth, capture/replay, or flood modes.
 
 ## What it does
+
+Room Sweep detects the **presence** of RF activity and reads self-reported
+names (what devices advertise about themselves) via the ESP32. It identifies
+nothing — not device type, not "camera" or "bug," not owner, not intent. On
+the RF tab, "signal" means only "energy above -75 dBm."
 
 - **Survey the room.** 16 RF presets with an alert line and baseline snapshot,
   a mechanical band sweep, peak refine, and a scrolling waterfall with ~10 s of
@@ -38,6 +45,39 @@ No jamming, blocking, deauth, capture/replay, or flood modes.
   only if GPS Log is ON.
 - **FullSweep.** One press sequences RF → Wi-Fi → BLE → nRF24 → GPS with hard
   timeouts, closes the session, and saves the report.
+
+## What it does NOT do
+
+- It identifies nothing: no device type, no camera/bug/tracker
+  classification, no owner, no intent.
+- Signal strength is a real measurement but not a distance meter. Absolute
+  meters are impossible without knowing the transmitter's power, and indoor
+  reflections bend every reading.
+- The strongest row in a Wi/BT list is the loudest broadcaster, not the
+  nearest device. Comparing two devices' RSSI says nothing about distance.
+- Coverage is partial: 16 fixed RF presets, three CC1101 bands
+  (300–348 / 387–464 / 779–928 MHz) with real gaps, and 5 GHz Wi-Fi
+  completely invisible.
+
+## Can it find surveillance devices?
+
+Sometimes — and only when the device is transmitting while you listen.
+
+Can catch:
+
+- A sub-GHz audio bug transmitting continuously in an ISM band: a persistent
+  hot channel in Survey or Sweep.
+- A 2.4 GHz Wi-Fi camera that is on the air: it appears in the AP list.
+- A BLE device advertising openly: it appears in the BT list.
+
+Will miss:
+
+- Devices that record without transmitting.
+- Burst or interval transmitters, between their transmissions.
+- Everything outside the covered bands (5 GHz, cellular, the CC1101 gaps).
+- Wired devices.
+
+No hit is not proof of absence.
 
 ## Field guide
 
@@ -82,11 +122,22 @@ its footer.
 
 ## Honest limits
 
-- RSSI is not distance, identity, ownership, or intent.
+- RSSI trend on one locked target is a real proximity tool — follow
+  STRONGER/WEAKER while walking.
+- The RSSI absolute value is not distance: unknown transmitter power plus
+  indoor multipath make meters impossible.
 - A Wi-Fi beacon is not Internet telemetry.
 - No observation is not proof of absence.
 - TX is a bounded 1–10 s carrier test — never replay or blocking.
 - The nRF24 path is activity detection — no jam, no mousejack.
+
+## Not here (yet)
+
+Candidates for future work, **not current features**: Sub-GHz protocol-family
+identification (Princeton/CAME-style OOK decoding — Momentum exports the
+decoder library to FAPs), IEEE OUI vendor display for Wi/BT MACs, and a
+GPS-gradient bearing estimate while walking. Even those would never name a
+device model or its owner.
 
 ## Legal & responsible use
 
