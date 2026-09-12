@@ -15,8 +15,10 @@
 typedef struct {
     /* validity */
     bool has_time;
-    bool has_fix;        // GGA fix quality > 0 or RMC status 'A'
-    bool has_pos;
+    bool has_fix;        // receiver CLAIMS a fix (GGA quality > 0 or RMC status 'A');
+                         // not a position guarantee on its own
+    bool has_pos;        // valid latitude/longitude were parsed — the usable-position
+                         // flag; UI/state must gate coordinates on this, not has_fix
     bool has_date;       // ZDA or RMC date parsed
 
     /* time (UTC) */

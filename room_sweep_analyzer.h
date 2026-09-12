@@ -5,8 +5,12 @@
 
 /*
  * Host-testable proximity / analyzer meter for scanner tabs.
- * Maps RSSI (or activity) into bar height + closer/farther trend.
+ * Maps RSSI (or activity) into bar height + stronger/weaker trend.
  * Flipper-header-free for host tests.
+ *
+ * The trend is an RSSI DELTA at the receiver only: rising RSSI means the
+ * received energy got stronger — it does NOT mean the source moved closer
+ * (TX power, antenna orientation, and multipath all change RSSI too).
  */
 
 #define ROOM_SWEEP_ANALYZER_HISTORY 48U
@@ -18,8 +22,8 @@
 
 typedef enum {
     RoomSweepAnalyzerTrendStable = 0,
-    RoomSweepAnalyzerTrendCloser,
-    RoomSweepAnalyzerTrendFarther,
+    RoomSweepAnalyzerTrendCloser, /* legacy name kept for callers; UI shows STRONGER */
+    RoomSweepAnalyzerTrendFarther, /* legacy name kept for callers; UI shows WEAKER */
 } RoomSweepAnalyzerTrend;
 
 typedef struct {
@@ -99,7 +103,8 @@ static inline int room_sweep_analyzer_avg_window(
 static inline RoomSweepAnalyzerTrend room_sweep_analyzer_compute_trend(
     const RoomSweepAnalyzerState* s) {
     if(!s || s->hist_count < 8) return RoomSweepAnalyzerTrendStable;
-    /* Compare newest quarter vs older quarter (higher RSSI = closer). */
+    /* Compare newest quarter vs older quarter. Higher RSSI = stronger
+     * received energy, NOT a physical distance change (honest labeling). */
     uint8_t half = s->hist_count / 2U;
     if(half < 3) return RoomSweepAnalyzerTrendStable;
     int recent = room_sweep_analyzer_avg_window(s, 0, half);
@@ -139,9 +144,9 @@ static inline int8_t room_sweep_analyzer_history_at(
 static inline const char* room_sweep_analyzer_trend_text(RoomSweepAnalyzerTrend t) {
     switch(t) {
     case RoomSweepAnalyzerTrendCloser:
-        return "CLOSER";
+        return "STRONGER";
     case RoomSweepAnalyzerTrendFarther:
-        return "FARTHER";
+        return "WEAKER";
     case RoomSweepAnalyzerTrendStable:
     default:
         return "STABLE";

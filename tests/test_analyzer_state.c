@@ -21,18 +21,18 @@ int main(void) {
     check(room_sweep_analyzer_bar_height(-30, 40) == 40, "ceil is full height");
     check(room_sweep_analyzer_level_pct(-70) == 50, "mid RSSI is ~50%");
 
-    /* Rising sequence → CLOSER */
+    /* Rising sequence → STRONGER (RSSI up, not a distance claim) */
     for(int i = 0; i < 24; i++) room_sweep_analyzer_push(&s, -90);
     for(int i = 0; i < 24; i++) room_sweep_analyzer_push(&s, -50);
     check(s.hist_count == ROOM_SWEEP_ANALYZER_HISTORY, "history fills");
-    check(s.trend == RoomSweepAnalyzerTrendCloser, "rising RSSI is closer");
+    check(s.trend == RoomSweepAnalyzerTrendCloser, "rising RSSI is stronger");
     check(s.peak_rssi == -50, "peak tracks max");
     check(s.live_rssi == -50, "live is newest");
 
     room_sweep_analyzer_reset(&s);
     for(int i = 0; i < 24; i++) room_sweep_analyzer_push(&s, -40);
     for(int i = 0; i < 24; i++) room_sweep_analyzer_push(&s, -95);
-    check(s.trend == RoomSweepAnalyzerTrendFarther, "falling RSSI is farther");
+    check(s.trend == RoomSweepAnalyzerTrendFarther, "falling RSSI is weaker");
 
     room_sweep_analyzer_reset(&s);
     for(int i = 0; i < 16; i++) room_sweep_analyzer_push(&s, -70);
@@ -45,8 +45,11 @@ int main(void) {
         room_sweep_analyzer_activity_to_rssi(255) == ROOM_SWEEP_ANALYZER_CEIL_DBM,
         "max activity is ceil");
     check(
-        room_sweep_analyzer_trend_text(RoomSweepAnalyzerTrendCloser)[0] == 'C',
-        "closer label");
+        room_sweep_analyzer_trend_text(RoomSweepAnalyzerTrendCloser)[0] == 'S',
+        "stronger label is honest (no distance claim)");
+    check(
+        room_sweep_analyzer_trend_text(RoomSweepAnalyzerTrendFarther)[0] == 'W',
+        "weaker label is honest (no distance claim)");
     check(room_sweep_analyzer_history_at(&s, 0) == -70, "newest sample");
 
     /* Age-out: fresh holds; dead is empty; mid fades down. */

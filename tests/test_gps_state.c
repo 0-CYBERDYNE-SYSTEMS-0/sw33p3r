@@ -22,6 +22,7 @@ int main(void) {
         .source = RoomSweepGpsSourceNone,
         .valid_sentences = 0,
         .has_fix = false,
+        .has_pos = false,
         .last_valid_tick = 0,
         .now_tick = 100,
         .stale_timeout_ms = ROOM_SWEEP_GPS_DEFAULT_STALE_TIMEOUT_MS,
@@ -61,7 +62,8 @@ int main(void) {
         room_sweep_gps_status(&snapshot) == RoomSweepGpsStatusWaiting,
         "BFFB Marauder link with no NMEA reports WAIT");
 
-    /* Valid navigation data then separates no-fix, fix, and stale states. */
+    /* Valid navigation data then separates no-fix, fix-without-position,
+     * fix, and stale states. A receiver fix claim alone is NOT a FIX. */
     snapshot.valid_sentences = 1;
     snapshot.last_valid_tick = 100;
     snapshot.now_tick = 101;
@@ -70,8 +72,25 @@ int main(void) {
         "fresh navigation without a fix reports NO FIX");
     snapshot.has_fix = true;
     check(
+        room_sweep_gps_status(&snapshot) == RoomSweepGpsStatusFixNoPos,
+        "receiver fix claim without parsed coordinates reports NO POS");
+    check(
+        strcmp(room_sweep_gps_status_text(RoomSweepGpsStatusFixNoPos), "NO POS") == 0,
+        "fix-without-position is labeled NO POS, never FIX");
+    check(
+        room_sweep_gps_status_is_fresh(RoomSweepGpsStatusFixNoPos),
+        "fix-without-position still counts as fresh navigation");
+    check(
+        !room_sweep_gps_status_is_fresh(RoomSweepGpsStatusStale) &&
+            !room_sweep_gps_status_is_fresh(RoomSweepGpsStatusWaiting) &&
+            !room_sweep_gps_status_is_fresh(RoomSweepGpsStatusNoLink) &&
+            room_sweep_gps_status_is_fresh(RoomSweepGpsStatusNoFix) &&
+            room_sweep_gps_status_is_fresh(RoomSweepGpsStatusFix),
+        "freshness is exactly the live-navigation states");
+    snapshot.has_pos = true;
+    check(
         room_sweep_gps_status(&snapshot) == RoomSweepGpsStatusFix,
-        "fresh navigation with a fix reports FIX");
+        "fresh fix with parsed coordinates reports FIX");
     snapshot.now_tick = 5100;
     check(
         room_sweep_gps_status(&snapshot) == RoomSweepGpsStatusStale,
@@ -116,6 +135,7 @@ int main(void) {
     snapshot.valid_sentences = 0;
     snapshot.last_valid_tick = 0;
     snapshot.has_fix = false;
+    snapshot.has_pos = false;
     snapshot.now_tick = 100;
     check(
         room_sweep_gps_status(&snapshot) == RoomSweepGpsStatusWaiting,
