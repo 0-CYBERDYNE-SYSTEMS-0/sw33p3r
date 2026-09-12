@@ -62,9 +62,10 @@ Page order and content follow §2 exactly. Thirty-nine pages (P01–P39).
 - eyebrow: `FLIPPER ZERO EXTERNAL APP · MNTM-012 · API 87.1`
 - title: `ROOM SWEEP`
 - subtitle: `A field guide to the receive-side room survey app`
-- lede: One Flipper. Every signal in the room, mapped: Sub-GHz RF, Wi-Fi
-  beacons, Bluetooth advertisements, 2.4 GHz nRF24 energy, and GPS — surveyed
-  passively, logged honestly, and explained screen by screen.
+- lede: One Flipper. Every signal the Flipper can hear, mapped: Sub-GHz RF,
+  Wi-Fi beacons, Bluetooth advertisements, 2.4 GHz nRF24 energy, and GPS —
+  presence and signal strength only, never identity. Surveyed passively,
+  logged honestly, and explained screen by screen.
 - footer line: `Detect & analyze only — no jamming, no deauth, no capture/replay.`
 
 ### P02 — Mission: hear the room, touch nothing
@@ -76,6 +77,13 @@ Page order and content follow §2 exactly. Thirty-nine pages (P01–P39).
   four radio fronts plus GPS and turns what it hears into meters, maps, and
   session files. The LIMITS page is printed on the device itself: RSSI is not
   distance, a beacon is not telemetry, and no hit is not proof of absence.
+- what-it-cannot-do: It hears that something transmits, and how loud. It cannot
+  name the device, its owner, or its intent. Signal strength is a trend, not a
+  ruler — follow STRONGER/WEAKER on one locked target while walking; the
+  loudest list row is not the nearest thing. It hears only what its bands
+  cover: three CC1101 ranges and 2.4 GHz — no 5 GHz, nothing outside them, and
+  nothing that stays silent while you listen. A quiet sweep is not proof the
+  room is clean.
 - how-to-use: Read the LIMITS page (Info tab, page 5/5) before you trust any
   reading. Every screen in this guide keeps those honesty rules.
 - chips: `L / R` → change tab · `Back` → settings · `Hold Back` → exit

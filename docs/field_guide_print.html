@@ -148,9 +148,10 @@
   <div class="bigtitle">Room Sweep</div>
   <div class="subtitle">A field guide to the receive-side room survey app</div>
   <div class="coverrule"></div>
-  <div class="coverlede">One Flipper. Every signal in the room, mapped: Sub-GHz RF, Wi-Fi beacons,
-  Bluetooth advertisements, 2.4&nbsp;GHz nRF24 energy, and GPS &mdash; surveyed passively, logged
-  honestly, and explained screen by screen.</div>
+  <div class="coverlede">One Flipper. Every signal the Flipper can hear, mapped: Sub-GHz RF, Wi-Fi
+  beacons, Bluetooth advertisements, 2.4&nbsp;GHz nRF24 energy, and GPS &mdash; presence and signal
+  strength only, never identity. Surveyed passively, logged honestly, and explained screen by
+  screen.</div>
   <div class="strip">
     <div class="lcd"><img src="field_guide_shots/rf_survey.png" width="224" height="112" alt="RF Survey"></div>
     <div class="lcd"><img src="field_guide_shots/wifi_analyzer_p2.png" width="224" height="112" alt="Wi-Fi analyzer radar"></div>
@@ -180,6 +181,15 @@
         GPS and turns what it hears into meters, maps, and session files. The LIMITS page is
         printed on the device itself: RSSI is not distance, a beacon is not telemetry, and no hit
         is not proof of absence.</p>
+      </div>
+      <div class="block">
+        <div class="blocklabel">What it cannot do</div>
+        <p>It hears that something transmits, and how loud. It cannot name the device, its owner,
+        or its intent. Signal strength is a trend, not a ruler &mdash; follow STRONGER/WEAKER on
+        one locked target while walking; the loudest list row is not the nearest thing. It hears
+        only what its bands cover: three CC1101 ranges and 2.4&nbsp;GHz &mdash; no 5 GHz, nothing
+        outside them, and nothing that stays silent while you listen. A quiet sweep is not proof
+        the room is clean.</p>
       </div>
       <div class="block">
         <div class="blocklabel">How to use</div>

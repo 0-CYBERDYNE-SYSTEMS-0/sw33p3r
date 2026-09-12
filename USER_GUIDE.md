@@ -8,6 +8,21 @@ analyzer age-out, FullSweep auto-save, tactile tap/hold feedback).
 
 One-page map: [`docs/room_sweep_control_map.html`](docs/room_sweep_control_map.html).
 
+## What each tab actually tells you
+
+Nothing in this app identifies a device. It reports the presence of RF
+activity and whatever a device advertises about itself.
+
+| Tab | Tells you | Cannot tell you |
+|-----|-----------|-----------------|
+| RF | Energy above -75 dBm on 16 fixed presets | What is transmitting; only 3 CC1101 bands, with gaps |
+| Wi | AP beacons: name, RSSI, channel | Device type or owner; anything on 5 GHz |
+| BT | BLE ads: MAC, RSSI, count | Device type, intent, or owner |
+| nR | 2.4 GHz channel energy (RPD hits) | Wi-Fi vs BLE vs nRF24 vs microwave leakage |
+| GP | Position, speed, course, mark distance | Anything about RF sources |
+| TX | Bounded 1–10 s carrier test state | Any receive-side finding |
+| i | Radio path, session state, limits | — |
+
 ## Remember these controls
 
 | Input | Action |
@@ -169,6 +184,12 @@ While **DISARMED** on external CC1101, Hold ◀/▶ steps ExtBand (AUTO / 400 / 
   blip angles are a channel/index wheel, not a direction. Real meters and
   real bearings exist only on the GPS tab's Radar page (with a real fix).
 
+**Hunting with the trend:** lock one target and hold a consistent
+orientation. Walk slowly and follow a rising trend (STRONGER), never the
+absolute number. Expect nulls near metal and reflectors — the trend can lie
+locally — so trust it over seconds of walking. Never compare two devices'
+bars for distance; on nR the value is ACT units, meaningless as dBm.
+
 ## Settings (Back)
 
 Groups: Feedback · Wireless · Radio · GPS · Session  
@@ -226,6 +247,8 @@ Settings → FullSweep → OK:
 
 - RSSI ≠ distance  
 - Beacon/ad ≠ telemetry or intent  
+- Coverage: 16 RF presets, 3 CC1101 bands (348–387 and 464–779 MHz invisible), no 5 GHz
+- Misses: non-transmitting recorders, burst TX between samples, out-of-band, wired
 - No hit ≠ proof of absence  
 - Bounded TX ≠ replay or jam  
 - Analyzer needs ongoing reports; empty when the source goes silent  

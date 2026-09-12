@@ -4,6 +4,28 @@ Keep-a-Changelog-inspired, condensed per release series. The full per-fix
 history lives in `fix_plan.md` (session-by-session) and `progress.log`
 (dated session log).
 
+## Truth audit — 2026-09-11
+
+- RF tab: the SIGNAL badge now states its real meaning — energy above the
+  -75 dBm gate; Peak reports ~100 kHz resolution with the 650 kHz
+  measurement bandwidth noted.
+- Analyzer: CLOSER/FARTHER renamed STRONGER/WEAKER (energy rose or fell, not
+  distance); the radar page is now ENERGY MAP with an explicit NO DIRECTION
+  (rings = RSSI, angles = channel wheel).
+- ExtBand AUTO is labeled as the assumed switch path — the physical switch
+  is not sensed.
+- nR tab retitled 2.4 GHz energy detection; all synthetic dBm displays now
+  read ACT (arbitrary activity units).
+- Session CSV marks analyzer rows `rssi=0` and records real hit totals; the
+  Room Report prints the real totals.
+- SSID truncation fix: the trailing two-character strip was removed
+  (verified against the upstream parser).
+- GPS: FIX now requires a parsed position (NO POS status otherwise), with
+  trail and mark gated on it; the FullSweep GPS gate also uses parsed
+  position, not mere sentence presence.
+- Docs and specs synced to the new wording; stale on-device screenshots
+  flagged for re-capture.
+
 ## v3.1.0 — 2026-09 (current release)
 
 **Feedback overhaul (2026-09-05)**
