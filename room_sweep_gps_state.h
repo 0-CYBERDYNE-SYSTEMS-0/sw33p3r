@@ -27,7 +27,12 @@ typedef enum {
     RoomSweepGpsStatusNoLink = 0,
     RoomSweepGpsStatusWaiting,
     RoomSweepGpsStatusNoFix,
+    /* Fresh navigation AND a valid parsed latitude/longitude: a usable
+     * position. Never shown when only the receiver claims a fix. */
     RoomSweepGpsStatusFix,
+    /* Receiver reports a fix (GGA quality > 0 / RMC 'A') but no valid
+     * coordinates were parsed in the fresh window — NOT a usable position. */
+    RoomSweepGpsStatusFixNoPos,
     RoomSweepGpsStatusStale,
 } RoomSweepGpsStatus;
 
@@ -37,7 +42,8 @@ typedef struct {
     bool external_gpio_link;
     RoomSweepGpsSource source;
     uint32_t valid_sentences;
-    bool has_fix;
+    bool has_fix; /* receiver claims a fix; not a position guarantee */
+    bool has_pos; /* valid parsed latitude/longitude in the latest nav data */
     uint32_t last_valid_tick;
     uint32_t now_tick;
     uint32_t stale_timeout_ms;
@@ -98,7 +104,19 @@ static inline RoomSweepGpsStatus room_sweep_gps_status(
            snapshot->last_valid_tick, snapshot->now_tick, timeout)) {
         return RoomSweepGpsStatusStale;
     }
-    return snapshot->has_fix ? RoomSweepGpsStatusFix : RoomSweepGpsStatusNoFix;
+    if(!snapshot->has_fix) return RoomSweepGpsStatusNoFix;
+    /* "FIX" requires parsed coordinates: a receiver fix claim alone must not
+     * be presented as a usable position. */
+    return snapshot->has_pos ? RoomSweepGpsStatusFix : RoomSweepGpsStatusFixNoPos;
+}
+
+/* True when a fresh navigation sentence stream exists — includes NO FIX and
+ * FIX-without-position, since both come from live nav data. Only NO LINK,
+ * WAITING, and STALE are not fresh. */
+static inline bool room_sweep_gps_status_is_fresh(RoomSweepGpsStatus status) {
+    return status == RoomSweepGpsStatusFix ||
+           status == RoomSweepGpsStatusFixNoPos ||
+           status == RoomSweepGpsStatusNoFix;
 }
 
 static inline const char* room_sweep_gps_status_text(RoomSweepGpsStatus status) {
@@ -111,6 +129,8 @@ static inline const char* room_sweep_gps_status_text(RoomSweepGpsStatus status) 
         return "NO FIX";
     case RoomSweepGpsStatusFix:
         return "FIX";
+    case RoomSweepGpsStatusFixNoPos:
+        return "NO POS";
     case RoomSweepGpsStatusStale:
         return "STALE";
     default:

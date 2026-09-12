@@ -203,6 +203,30 @@ int main(void) {
     CHECK(f.sentences == 2, "active RMC accepted without coordinates");
     CHECK(f.has_fix && !f.has_pos, "active RMC cannot retain stale position");
 
+    printf("Test 19: GGA fix claim without coordinates is not a position\n");
+    nmea_init(&f);
+    feed_body(&f, "GPGGA,123519,,,,,1,08,0.9,,,,,,");
+    CHECK(f.nav_sentences == 1, "fix-claim GGA refreshes navigation");
+    CHECK(f.fix_quality == 1 && f.sats == 8, "fix quality and sats tracked");
+    CHECK(f.has_fix, "receiver fix claim recorded (quality=1)");
+    CHECK(!f.has_pos, "fix claim without coordinates is NOT a usable position");
+
+    printf("Test 20: malformed coordinates under a fix claim clear position\n");
+    nmea_init(&f);
+    feed_str(&f, "$GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,*47\r\n");
+    CHECK(f.has_fix && f.has_pos, "valid GGA first gives fix and position");
+    feed_body(&f, "GPGGA,123520,99999.0,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,");
+    CHECK(f.has_fix, "receiver still claims a fix in the malformed sentence");
+    CHECK(!f.has_pos, "unparseable coordinates clear the usable position");
+
+    printf("Test 21: valid RMC+GGA together keep fix and position\n");
+    nmea_init(&f);
+    feed_body(&f, "GPRMC,123519,A,4807.038,N,01131.000,E,12.5,90.0,010826,,,");
+    CHECK(f.has_fix && f.has_pos, "valid RMC gives fix and position");
+    feed_body(&f, "GPGGA,123520,4807.040,N,01131.002,E,2,09,0.8,545.5,M,46.9,M,,");
+    CHECK(f.has_fix && f.has_pos, "valid GGA keeps fix and position");
+    CHECK(f.fix_quality == 2, "DGPS quality tracked from GGA");
+
     printf("\n%s (%d failure%s)\n", failures ? "RESULT: FAIL" : "RESULT: ALL PASS",
            failures, failures == 1 ? "" : "s");
     return failures ? 1 : 0;

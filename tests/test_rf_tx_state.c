@@ -1,6 +1,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <math.h>
+#include <string.h>
 
 #include "../room_sweep_state.h"
 
@@ -223,6 +224,57 @@ int main(void) {
     check(
         !room_sweep_tx_region_allows(true, false),
         "provisioned + disallowed frequency blocks");
+
+    /* Survey bar shading: baseline is a display reference only — it can
+     * shade a bar on the survey screen but never qualifies a candidate
+     * (that stays the absolute energy threshold above). */
+    check(
+        room_sweep_survey_bar_filled(-74.9f, false, -120.0f),
+        "above energy threshold fills without baseline");
+    check(
+        !room_sweep_survey_bar_filled(-75.1f, false, -120.0f),
+        "below energy threshold stays hollow without baseline");
+    check(
+        !room_sweep_survey_bar_filled(-75.0f, false, -120.0f),
+        "threshold equality stays hollow (energy gate is strict)");
+    check(
+        room_sweep_survey_bar_filled(-90.0f, true, -95.0f),
+        "baseline +3dB shades a room-energy change");
+    check(
+        !room_sweep_survey_bar_filled(-92.0f, true, -95.0f),
+        "baseline delta equality stays hollow");
+    check(
+        room_sweep_survey_bar_filled(-91.9f, true, -95.0f),
+        "just past baseline delta shades");
+    check(
+        !room_sweep_survey_bar_filled(-90.0f, false, -95.0f),
+        "baseline value ignored when no snapshot was set");
+
+    /* Peak frequency display: 650 kHz RX filter => ~±325 kHz honest
+     * resolution, so displayed peaks round to 100 kHz (shown with "~"). */
+    check(
+        room_sweep_peak_freq_approx(433920000) == 433900000,
+        "peak display rounds to 100 kHz");
+    check(
+        room_sweep_peak_freq_approx(915000000) == 915000000,
+        "already-rounded peak display unchanged");
+    check(
+        room_sweep_peak_freq_approx(345149999) == 345100000,
+        "peak display below half rounds down");
+    check(
+        room_sweep_peak_freq_approx(345150000) == 345200000,
+        "peak display half rounds up");
+
+    /* ExtBand Auto is a configured assumption, not a detected switch. */
+    check(
+        strstr(room_sweep_ext_band_ui_note(0), "assum") != NULL,
+        "Auto note states the path is assumed");
+    check(
+        strstr(room_sweep_ext_band_ui_note(1), "400") != NULL,
+        "400 note names the band");
+    check(
+        strstr(room_sweep_ext_band_ui_note(2), "900") != NULL,
+        "900 note names the band");
 
     printf("RESULT: %s (%d failure(s))\n", failures ? "FAIL" : "ALL PASS", failures);
     return failures ? 1 : 0;

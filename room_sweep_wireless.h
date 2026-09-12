@@ -5,9 +5,11 @@
 
 /*
  * Wireless rows are identified by a real MAC whenever one is available.
- * SSID/name is a display label and is only a fallback when neither side has
- * a MAC.  Keep this seam independent from Flipper/Furi headers for host
- * tests and for the parser's bounded row update path.
+ * SSID/name is a display label only — an ADVERTISED name self-reported by
+ * the transmitting device; it proves proximity evidence, never owner,
+ * product, or intent — and is used for matching only as a fallback when
+ * neither side has a MAC.  Keep this seam independent from Flipper/Furi
+ * headers for host tests and for the parser's bounded row update path.
  */
 static inline bool room_sweep_wireless_text_present(const char* text) {
     return text != NULL && text[0] != '\0';

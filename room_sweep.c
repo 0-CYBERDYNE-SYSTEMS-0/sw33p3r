@@ -524,7 +524,7 @@ static void apply_ext_band_pref(App* app, ExtBandPref band) {
         0,
         app->ext_band == ExtBand400 ? "400 MHz path selected" :
         app->ext_band == ExtBand900 ? "900 MHz path selected" :
-                                       "automatic receive path; external TX blocked");
+                                      "auto: assumed path, switch not sensed; EXT TX blocked");
 }
 
 static void dump_push_line(App* app, const char* line) {
@@ -2534,13 +2534,13 @@ static void draw_proximity_analyzer(
     uint8_t page = app ? (app->analyzer_ui_page & 1U) : 0;
     char buf[40];
     uint8_t pct = an ? room_sweep_analyzer_level_pct(an->live_rssi) : 0;
-    bool closer = an && an->trend == RoomSweepAnalyzerTrendCloser;
-    bool farther = an && an->trend == RoomSweepAnalyzerTrendFarther;
+    bool stronger = an && an->trend == RoomSweepAnalyzerTrendCloser;
+    bool weaker = an && an->trend == RoomSweepAnalyzerTrendFarther;
 
     /* --- Page 0: HUNT (meter only — no spectrum clutter) --- */
     if(page == 0) {
         canvas_set_font(canvas, FontKeyboard);
-        /* Row1: mode tag + live dBm (no PCT + CLOSER pile-up) */
+        /* Row1: mode tag + live dBm (no PCT + trend pile-up) */
         snprintf(buf, sizeof(buf), "%s", title ? title : "AN");
         canvas_draw_str(canvas, 2, 14, buf);
         if(an) {
@@ -2564,15 +2564,17 @@ static void draw_proximity_analyzer(
             canvas_draw_str(canvas, 4, 53, "LOST 0%");
         } else if(app && app->analyzer_source_stale) {
             canvas_draw_str(canvas, 4, 53, "STALE fade");
-        } else if(closer) {
+        } else if(stronger) {
             if(blink) {
                 canvas_draw_box(canvas, 2, 46, 60, 9);
                 canvas_set_color(canvas, ColorWhite);
             }
-            canvas_draw_str(canvas, 4, 53, "^ CLOSER");
+            /* Honest wording: RSSI rose at the receiver — not "closer"
+             * (TX power, orientation, and multipath change RSSI too). */
+            canvas_draw_str(canvas, 4, 53, "^ STRONGER");
             canvas_set_color(canvas, ColorBlack);
-        } else if(farther) {
-            canvas_draw_str(canvas, 4, 53, "v FARTHER");
+        } else if(weaker) {
+            canvas_draw_str(canvas, 4, 53, "v WEAKER");
         } else {
             canvas_draw_str(canvas, 4, 53, "= STABLE");
         }
@@ -2662,7 +2664,8 @@ typedef struct {
 } RadarBlip;
 
 /* Gather polar blips for the current scanner mode. RSSI is mapped to radius
- * and channel/index to angle; the locked target blinks as a diamond. */
+ * and channel/index to angle; the locked target blinks as a diamond. The
+ * angle is a categorical channel/index wheel, NOT a physical direction. */
 static uint8_t analyzer_radar_blips(App* app, RadarBlip* out) {
     uint8_t n = 0;
     furi_mutex_acquire(app->mutex, FuriWaitForever);
@@ -2741,7 +2744,10 @@ static uint8_t analyzer_radar_blips(App* app, RadarBlip* out) {
     return n;
 }
 
-/* Polar radar page: rings = RSSI (honest label), sweep line, channel wheel. */
+/* Polar energy-map page: ring radius = RSSI, angle = channel/index wheel.
+ * NOT a direction display: blip angles carry no physical bearing — this is
+ * a channel/energy visualization only (real bearings exist only on the GPS
+ * tab's radar page, from GPS geometry). */
 static void draw_analyzer_radar(
     Canvas* canvas,
     App* app,
@@ -2753,7 +2759,7 @@ static void draw_analyzer_radar(
     uint8_t phase = (uint8_t)(app->tick_count & 0xFFU);
 
     canvas_set_font(canvas, FontKeyboard);
-    snprintf(buf, sizeof(buf), "%s RADAR", title);
+    snprintf(buf, sizeof(buf), "%s ENERGY MAP", title);
     canvas_draw_str(canvas, UI_MARGIN_X, UI_ROW_HEADER_BASELINE, buf);
     if(an) {
         snprintf(buf, sizeof(buf), "%+ddBm", (int)an->live_rssi);
@@ -2811,10 +2817,11 @@ static void draw_analyzer_radar(
     }
     canvas_draw_dot(canvas, ANALYZER_RADAR_CX, ANALYZER_RADAR_CY);
 
-    /* Footer only — the dBm legend above carries the scale meaning. */
+    /* Footer only — the dBm legend above carries the scale meaning. The hint
+     * must state the angle is not a direction (channel/index wheel only). */
     canvas_draw_box(canvas, 0, UI_FOOTER_BAND_TOP, 128, 7);
     canvas_set_color(canvas, ColorWhite);
-    canvas_draw_str(canvas, 2, UI_ROW_FOOTER_BASELINE, UI_HINT_AN_RADAR);
+    canvas_draw_str(canvas, 2, UI_ROW_FOOTER_BASELINE, "NO DIRECTION R=meter");
     canvas_set_color(canvas, ColorBlack);
 }
 
@@ -2939,7 +2946,7 @@ static void draw_gps_radar(Canvas* canvas, App* app, const GpsFix* gps, bool fre
     }
     if(!fresh || !gps->has_pos) {
         canvas_set_font(canvas, FontSecondary);
-        canvas_draw_str(canvas, UI_MARGIN_X, 26, "No fix right now");
+        canvas_draw_str(canvas, UI_MARGIN_X, 26, "No position right now");
         canvas_set_font(canvas, FontKeyboard);
         canvas_draw_str(canvas, UI_MARGIN_X, 40, "walk clear of cover");
         canvas_draw_str(canvas, UI_MARGIN_X, UI_ROW_FOOTER_BASELINE, "U/D page HOK=retry");
@@ -3322,12 +3329,15 @@ static void draw_rf_lock_card(Canvas* canvas, App* app) {
     } else if(cand_ok) {
         canvas_draw_str(canvas, 2, 28, "CANDIDATE");
         canvas_set_font(canvas, FontKeyboard);
+        /* "~": candidate is an energy peak through the 650 kHz RX filter —
+         * approximate center, not an exact emitter frequency. */
+        uint32_t cand_disp = room_sweep_peak_freq_approx(cand.requested_hz);
         snprintf(
             buf,
             sizeof(buf),
-            "%lu.%03lu MHz",
-            (unsigned long)(cand.requested_hz / 1000000UL),
-            (unsigned long)((cand.requested_hz % 1000000UL) / 1000UL));
+            "~%lu.%02lu MHz",
+            (unsigned long)(cand_disp / 1000000UL),
+            (unsigned long)((cand_disp % 1000000UL) / 10000UL));
         canvas_draw_str(canvas, 2, 40, buf);
         snprintf(buf, sizeof(buf), "%+.0f dBm fresh", (double)cand.rssi);
         canvas_draw_str(canvas, 2, 50, buf);
@@ -3381,10 +3391,12 @@ static void draw_rf_survey(Canvas* canvas, App* app) {
         if(h > area_h) h = area_h;
         uint8_t x = i * (bar_w + bar_gap);
 
-        /* Baseline delta: filled if above baseline, frame if below */
+        /* Baseline is a display reference only (room_sweep_survey_bar_filled):
+         * filled = above the -75 dBm energy threshold, or >3 dB over the
+         * baseline snapshot when one exists (room-energy change indicator).
+         * It never qualifies signal candidates or TX handoff. */
         float base = app->baseline_set ? app->baseline_rssi[i] : -120.0f;
-        bool above_base = app->baseline_set && (r > base + 3.0f);
-        if(r > RF_ALERT_THRESHOLD || above_base) {
+        if(room_sweep_survey_bar_filled(r, app->baseline_set, base)) {
             canvas_draw_box(canvas, x, base_y - (h > 0 ? h : 1), bar_w, h > 0 ? (uint8_t)h : 1);
         } else if(h >= 3) {
             canvas_draw_frame(canvas, x, base_y - h, bar_w, h);
@@ -3413,12 +3425,14 @@ static void draw_rf_survey(Canvas* canvas, App* app) {
      * the bar area onto this row so it no longer hides the live data. */
     canvas_set_font(canvas, FontKeyboard);
     if(app->rf_alert) {
-        /* White backing on the meta row only — must not cover the title row
-         * above (y9..15) or the header glyphs. */
+        /* Honest alert: at least one preset channel's average RSSI crossed
+         * the -75 dBm ENERGY threshold. Not a protocol/device identification. */
+        canvas_set_font(canvas, FontKeyboard);
+        uint16_t tw = canvas_string_width(canvas, ">-75dBm");
         canvas_set_color(canvas, ColorWhite);
-        canvas_draw_box(canvas, 1, 17, 37, 8);
+        canvas_draw_box(canvas, 1, 17, (uint8_t)(tw + 5), 8);
         canvas_set_color(canvas, ColorBlack);
-        canvas_draw_str(canvas, UI_MARGIN_X, UI_ROW_BODY_FIRST_BASELINE, "SIGNAL!");
+        canvas_draw_str(canvas, UI_MARGIN_X, UI_ROW_BODY_FIRST_BASELINE, ">-75dBm");
     } else if(app->target_kind == TargetRF) {
         canvas_draw_str(canvas, UI_MARGIN_X, UI_ROW_BODY_FIRST_BASELINE, "LOCK");
         canvas_draw_str(
@@ -3485,10 +3499,19 @@ static void draw_rf_sweep(Canvas* canvas, App* app) {
         if(app->sweep_peak_rssi > -120.0f) {
             snprintf(buf, sizeof(buf), "Last peak: %.0f dBm", (double)app->sweep_peak_rssi);
             canvas_draw_str(canvas, 2, 38, buf);
-            snprintf(buf, sizeof(buf), "@ %lu.%02lu MHz",
+            /* "~": 650 kHz RX filter — the peak frequency is approximate. */
+            snprintf(buf, sizeof(buf), "@ ~%lu.%02lu MHz",
                      (unsigned long)(app->sweep_peak_freq / 1000000),
                      (unsigned long)((app->sweep_peak_freq % 1000000) / 10000));
             canvas_draw_str(canvas, 2, 49, buf);
+        }
+
+        if(app->radio_path == RadioPathExternal && app->ext_band == ExtBandAuto) {
+            /* ExtBand Auto is a configured assumption: the app cannot sense
+             * the physical BFFB antenna-switch position (no switch sensing). */
+            canvas_set_font(canvas, FontKeyboard);
+            canvas_draw_str(
+                canvas, 2, 56, room_sweep_ext_band_ui_note((uint8_t)app->ext_band));
         }
 
         canvas_set_font(canvas, FontKeyboard);
@@ -3512,11 +3535,17 @@ static void draw_rf_peak(Canvas* canvas, App* app) {
         canvas_set_font(canvas, FontPrimary);
         canvas_draw_str(canvas, 2, 30, buf);
 
-        snprintf(buf, sizeof(buf), "%lu.%03lu MHz",
-                 (unsigned long)(app->peak_fine_freq / 1000000),
-                 (unsigned long)((app->peak_fine_freq % 1000000) / 1000));
+        /* Honest resolution: the OOK 650 kHz RX filter lets energy anywhere
+         * within ~±325 kHz of the tune point drive the RSSI peak, so the
+         * displayed frequency is rounded to 100 kHz and marked approximate. */
+        uint32_t peak_disp = room_sweep_peak_freq_approx(app->peak_fine_freq);
+        snprintf(buf, sizeof(buf), "~%lu.%02lu MHz",
+                 (unsigned long)(peak_disp / 1000000),
+                 (unsigned long)((peak_disp % 1000000) / 10000));
         canvas_set_font(canvas, FontSecondary);
         canvas_draw_str(canvas, 2, 44, buf);
+        canvas_set_font(canvas, FontKeyboard);
+        canvas_draw_str(canvas, 80, 44, "650k BW");
 
         /* Progress */
         canvas_draw_frame(canvas, 2, 52, 124, 8);
@@ -3534,18 +3563,25 @@ static void draw_rf_peak(Canvas* canvas, App* app) {
         if(candidate_fresh) {
             canvas_set_font(canvas, FontSecondary);
             char buf[32];
-            snprintf(buf, sizeof(buf), "Center: %lu.%03lu MHz",
-                     (unsigned long)(candidate.tuned_hz / 1000000),
-                     (unsigned long)((candidate.tuned_hz % 1000000) / 1000));
+            /* "~": candidate center comes from an energy peak through the
+             * 650 kHz RX filter — it is approximate, not an exact emitter
+             * frequency, and not a protocol/device identification. */
+            uint32_t cand_disp = room_sweep_peak_freq_approx(candidate.tuned_hz);
+            snprintf(buf, sizeof(buf), "Center: ~%lu.%02lu MHz",
+                     (unsigned long)(cand_disp / 1000000),
+                     (unsigned long)((cand_disp % 1000000) / 10000));
             canvas_draw_str(canvas, 2, 28, buf);
 
             if(app->peak_fine_rssi > -120.0f) {
-                snprintf(buf, sizeof(buf), "Refined: %.0f dBm", (double)app->peak_fine_rssi);
+                snprintf(buf, sizeof(buf), "Peak: %.0f dBm", (double)app->peak_fine_rssi);
                 canvas_draw_str(canvas, 2, 40, buf);
-                snprintf(buf, sizeof(buf), "@ %lu.%03lu MHz",
-                         (unsigned long)(app->peak_fine_freq / 1000000),
-                         (unsigned long)((app->peak_fine_freq % 1000000) / 1000));
+                uint32_t peak_disp = room_sweep_peak_freq_approx(app->peak_fine_freq);
+                snprintf(buf, sizeof(buf), "~%lu.%02lu MHz",
+                         (unsigned long)(peak_disp / 1000000),
+                         (unsigned long)((peak_disp % 1000000) / 10000));
                 canvas_draw_str(canvas, 2, 52, buf);
+                canvas_set_font(canvas, FontKeyboard);
+                canvas_draw_str(canvas, 80, 52, "650k BW");
             }
             canvas_set_font(canvas, FontKeyboard);
             canvas_draw_str(canvas, 2, 63, UI_HINT_RF_PEAK);
@@ -3838,13 +3874,13 @@ static void draw_gps_tab(Canvas* canvas, App* app) {
                   RoomSweepGpsSourceNone,
         .valid_sentences = gps.sentences,
         .has_fix = gps.has_fix,
+        .has_pos = gps.has_pos,
         .last_valid_tick = gps_last_valid_tick,
         .now_tick = now,
         .stale_timeout_ms = GPS_STALE_TIMEOUT_MS,
     };
     RoomSweepGpsStatus status = room_sweep_gps_status(&snapshot);
-    bool gps_fresh = status == RoomSweepGpsStatusFix ||
-                     status == RoomSweepGpsStatusNoFix;
+    bool gps_fresh = room_sweep_gps_status_is_fresh(status);
 
     canvas_set_font(canvas, FontSecondary);
     canvas_draw_str(canvas, 1, 15, "GPS");
@@ -5078,7 +5114,9 @@ int32_t room_sweep_app(void* p) {
                     float t_lat = 0.0f;
                     float t_lon = 0.0f;
                     furi_mutex_acquire(app->gps_mutex, FuriWaitForever);
-                    if(app->gps.has_fix) {
+                    /* has_fix alone is a receiver claim; a trail point needs
+                     * valid parsed coordinates or it would store (0,0). */
+                    if(app->gps.has_fix && app->gps.has_pos) {
                         t_fresh = app->gps_last_valid_tick > 0 &&
                                   (uint32_t)(tnow - app->gps_last_valid_tick) <
                                       GPS_STALE_TIMEOUT_MS;

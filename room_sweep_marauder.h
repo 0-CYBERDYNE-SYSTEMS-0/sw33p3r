@@ -16,6 +16,13 @@
  *
  * This is the host-testable core of the parser that used to live inline in
  * room_sweep.c. Keep every preserved invariant in specs/marauder-parser-2026-08-15.md.
+ *
+ * TRUTH CONTRACT: every string this parser extracts (WiFi SSID, BLE device
+ * name) is an ADVERTISED identifier — self-reported by the transmitting
+ * device inside its beacon/advertisement. It is proximity evidence only:
+ * it does not prove owner, product, intent, or that the name belongs to any
+ * physical device in the room. MACs are link-layer addresses, likewise not
+ * ownership proof.
  */
 
 typedef struct {
@@ -28,6 +35,8 @@ typedef struct {
 
 typedef struct {
     int8_t rssi;
+    /* Advertised BLE name (self-reported in the advertisement), or the MAC
+     * when the device sent no name. Not a verified device identity. */
     char name[33];
     char mac[18];
     bool valid;
@@ -69,8 +78,17 @@ static inline void room_sweep_marauder_str_after(
     out[i] = '\0';
 }
 
-/* ESSID may contain spaces (everything after "ESSID: " to end), trailing
- * " XX XX" capability bytes stripped. */
+/* ESSID may contain spaces: everything after "ESSID: " to end of line is the
+ * SSID. Current upstream Marauder `sniffbeacon` (WIFI_SCAN_AP →
+ * beaconSnifferCallback, WiFiScan.cpp) prints
+ *   "<rssi> Ch: <n> <BSSID> ESSID: <ssid>\n"
+ * with nothing after the SSID, so no trailing-token stripping is done here.
+ * An old "strip trailing ' XX XX' capability bytes" rule truncated legitimate
+ * SSIDs that end in two short tokens (e.g. "Lab AB CD", "Test 12 34"); the
+ * only upstream path that still appends two capability-info hex bytes is
+ * `scanall` (apSnifferCallbackFull), a command Room Sweep never sends. A
+ * trailing " XX XX" suffix on a scanned line is therefore kept verbatim
+ * rather than guessing and cutting real names. */
 static inline void room_sweep_marauder_essid(const char* line, char* out, size_t out_sz) {
     out[0] = '\0';
     const char* p = strstr(line, "ESSID: ");
@@ -81,9 +99,6 @@ static inline void room_sweep_marauder_essid(const char* line, char* out, size_t
     const char* end = line + strlen(line);
     const char* trim = end;
     while(trim > p && *(trim - 1) == ' ') trim--;
-    if(trim - p > 6 && *(trim - 6) == ' ' && *(trim - 3) == ' ') {
-        trim -= 6;
-    }
     size_t i = 0;
     while(p < trim && i < out_sz - 1) {
         out[i++] = *p++;

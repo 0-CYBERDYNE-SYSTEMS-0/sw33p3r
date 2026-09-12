@@ -32,14 +32,53 @@ int main(void) {
     /* ---------------------------------------------------------- */
     {
         RoomSweepWifiRecord r;
+        /* Old captured line with trailing capability-ish bytes (scanall-style
+         * output; sniffbeacon never appends them on current upstream). The
+         * SSID is kept verbatim — the parser must not guess where a real
+         * name ends. */
         check("wifi: legacy format recognized",
               room_sweep_marauder_parse_wifi(
                   "-45 Ch: 6 AA:BB:CC:DD:EE:FF ESSID: NetworkName 00 00", &r));
         check("wifi: rssi from leading number", r.rssi == -45);
         check("wifi: channel parsed", r.channel == 6);
-        check_str("wifi: capability bytes stripped from ssid", r.ssid, "NetworkName");
+        check_str("wifi: ssid kept verbatim incl trailing tokens",
+                  r.ssid,
+                  "NetworkName 00 00");
         check_str("wifi: bssid captured", r.bssid, "AA:BB:CC:DD:EE:FF");
         check("wifi: row flagged valid", r.valid);
+    }
+    {
+        RoomSweepWifiRecord r;
+        /* scanall-style capability bytes are indistinguishable from a name
+         * suffix, so they are preserved too (never truncate). */
+        check("wifi: capability-byte suffix line recognized",
+              room_sweep_marauder_parse_wifi(
+                  "-45 Ch: 6 AA:BB:CC:DD:EE:FF ESSID: SynthNet 41 04", &r));
+        check_str("wifi: capability-byte suffix preserved", r.ssid, "SynthNet 41 04");
+    }
+    /* Issue 10 reproduction: SSIDs that legitimately end in two short
+     * space-separated tokens must NOT be treated as trailing capability
+     * fields. Synthetic names only (repo privacy rule). */
+    {
+        RoomSweepWifiRecord r;
+        check("wifi: ssid ending in two 2-char words recognized",
+              room_sweep_marauder_parse_wifi(
+                  "-45 Ch: 6 AA:BB:CC:DD:EE:FF ESSID: Lab AB CD", &r));
+        check_str("wifi: 'Lab AB CD' preserved in full", r.ssid, "Lab AB CD");
+    }
+    {
+        RoomSweepWifiRecord r;
+        check("wifi: ssid ending in two 2-digit groups recognized",
+              room_sweep_marauder_parse_wifi(
+                  "-45 Ch: 6 AA:BB:CC:DD:EE:FF ESSID: Test 12 34", &r));
+        check_str("wifi: 'Test 12 34' preserved in full", r.ssid, "Test 12 34");
+    }
+    {
+        RoomSweepWifiRecord r;
+        check("wifi: plain ssid recognized",
+              room_sweep_marauder_parse_wifi(
+                  "-45 Ch: 6 AA:BB:CC:DD:EE:FF ESSID: NormalNetwork", &r));
+        check_str("wifi: 'NormalNetwork' preserved in full", r.ssid, "NormalNetwork");
     }
     {
         RoomSweepWifiRecord r;
