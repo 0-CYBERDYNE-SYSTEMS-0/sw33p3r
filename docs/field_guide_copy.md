@@ -99,9 +99,10 @@ Page order and content follow §2 exactly. Thirty-nine pages (P01–P39).
 - title: `Survey — the room's RF pulse, live`
 - what-it-does: Continuous listen across the CC1101 preset bank (300–348 / 387–464 /
   779–928 MHz hardware bands). Each bar is one preset; the ruler underneath marks
-  304 / 390 / 434 / 450. The header tracks the hottest preset's dBm and raises a
-  `SIGNAL!` badge when energy crosses the dashed alert line — a fixed −75 dBm
-  threshold. Baseline (Settings → Session → Baseline) is a separate snapshot of
+  304 / 390 / 434 / 450. The header tracks the hottest preset's dBm and shows a
+  `>-75dBm` tag when energy crosses the dashed alert line — a fixed −75 dBm
+  ENERGY threshold (no device identification). Baseline (Settings → Session →
+  Baseline) is a separate snapshot of
   the room's RF floor that the survey bars are drawn against.
 - how-to-use: Leave it running and watch which bars breathe. Up/Down switches RF
   sub-mode (Survey / Sweep / Peak / Waterfall). Hold Up/Down opens the lock card
@@ -162,10 +163,13 @@ Page order and content follow §2 exactly. Thirty-nine pages (P01–P39).
 - title: `Hold Left: the four-page analyzer`
 - what-it-does: On RF, Wi-Fi, BLE, and nRF24 alike, Hold Left opens a four-page
   analyzer tuned to the selected (or locked) source. HUNT: one fat proximity bar
-  with CLOSER / FARTHER / STABLE / STALE / LOST verdicts. FIELD: spectrum/peer bars for
-  context. RADAR: polar view where rings are RSSI (labeled on screen — not
-  meters) and a locked target blinks as a diamond. METER: a big-number dBm read
-  with peak hold and trend.
+  with STRONGER / WEAKER / STABLE / STALE / LOST verdicts (STRONGER/WEAKER = the
+  received energy rose or fell — not that anything moved closer). FIELD:
+  spectrum/peer bars for
+  context. ENERGY MAP: rings are RSSI (labeled on screen — not
+  meters) and blip angles are a channel/index wheel, NOT a direction. METER: a
+  big-number read with peak hold and trend. On nRF24 every number is ACT (RPD
+  activity, arbitrary units) — never dBm.
 - how-to-use: Hold Right turns the analyzer's pages. Fresh samples move the bar;
   silence ages it out — on Wi-Fi/BLE the bar fades after ~2 s and reads LOST by
   ~6 s. The scan stays alive while the analyzer is open.
@@ -176,20 +180,20 @@ Page order and content follow §2 exactly. Thirty-nine pages (P01–P39).
   `wifi_analyzer_p3.png` 2x2 grid (HUNT / FIELD / RADAR / METER)
 - section: Analyzer
 - title: `Wi-Fi analyzer — walk an AP to its door`
-- lede: Hunting the selected AP at -37 dBm, CLOSER 91%.
+- lede: Hunting the selected AP at -37 dBm, STRONGER 91%.
 - what-it-does: The Hunt bar tracks that one AP's live table RSSI from the
   Marauder beacon stream. If beacons stop, the bar fades to LOST rather than
   pretending — the meter tells the truth about silence.
 - how-to-use: From the Wi-Fi tab, select the AP with Up/Down, then Hold Left.
-  Hold Right pages Hunt → Field → Radar → Meter.
+  Hold Right pages Hunt → Field → Energy Map → Meter.
 
 ### P11 — Analyzer · Bluetooth
 - shots: `bt_analyzer_p0.png`, `bt_analyzer_p1.png`, `bt_analyzer_p2.png`,
   `bt_analyzer_p3.png` 2x2 grid (HUNT / FIELD / RADAR / METER)
 - section: Analyzer
 - title: `BLE analyzer — chase an advertisement`
-- lede: One device, from -72 dBm, CLOSER at 47%.
-- what-it-does: Same four pages, aimed at a BLE advertiser. The radar's sweep
+- lede: One device, from -72 dBm, STRONGER at 47%.
+- what-it-does: Same four pages, aimed at a BLE advertiser. The energy map's sweep
   line and blinking diamond mark your locked target; the meter's PK value keeps
   the strongest sighting while the trend arrow says whether you're gaining.
 - how-to-use: Select the device in the BT tab, Hold Left to open, Hold Right to
@@ -200,9 +204,11 @@ Page order and content follow §2 exactly. Thirty-nine pages (P01–P39).
   `nr_analyzer_p3.png` 2x2 grid (HUNT / FIELD / RADAR / METER)
 - section: Analyzer
 - title: `nRF24 analyzer — 2.4 GHz, the honest zero`
-- lede: `2.4G RPD` with nothing to hear reads LOST 0% — and says so.
+- lede: `2.4G energy` with nothing to hear reads LOST 0% — and says so.
 - what-it-does: The analyzer works over the nRF24 RPD (receive power detector)
-  energy survey. Empty spectrum shows an empty instrument, not a fake signal:
+  energy survey — a 1-bit "power above about −64 dBm in this channel" check, so
+  nR numbers are ACT (activity), never dBm, and hits are never packets or
+  devices. Empty spectrum shows an empty instrument, not a fake signal:
   -127 dBm, LOST 0%.
 - how-to-use: Open from the nR tab with Hold Left. Requires SPI Path = nRF24 and
   the BFFB bottom switch DOWN.
@@ -270,12 +276,14 @@ Page order and content follow §2 exactly. Thirty-nine pages (P01–P39).
 - shot: `nr_p0.png`
 - section: nRF24 · accent `#7ee0a3`
 - title: `nRF24 — the 2.4 GHz energy survey`
-- what-it-does: `nR STATUS · SPI CC1101 · phase idle`. This tab surveys raw
-  2.4 GHz channel energy with the nRF24 in RPD mode — receive only, by design.
+- what-it-does: `2.4G ENERGY · SPI CC1101 · phase idle`. This tab surveys raw
+  2.4 GHz channel energy with the nRF24 in RPD mode — a 1-bit "power above
+  about −64 dBm in this channel" check: hits are channel energy, never packets,
+  addresses, or device IDs. Receive only, by design.
   The status page names your wiring truth: it needs SPI Path = nRF24 and the
   BFFB bottom switch DOWN, and while nRF24 is selected the Sub-GHz radio falls
   back to the Flipper's internal CC1101.
-- how-to-use: OK starts/stops an RPD pass; Hold Left or Hold OK opens the
+- how-to-use: OK starts/stops an energy pass; Hold Left or Hold OK opens the
   analyzer; Right shows results.
 - chips: `OK` → start / stop pass · `Hold Left` → analyzer · `R` → results
 
@@ -474,7 +482,8 @@ Page order and content follow §2 exactly. Thirty-nine pages (P01–P39).
 - section: Settings
 - title: `Session: evidence, not noise`
 - what-it-does: Record opens session N and writes `session-N.csv` plus a Room
-  Report. Baseline snapshots the RF survey floor so `SIGNAL!` means something.
+  Report. Baseline snapshots the RF survey floor so the `>-75dBm` energy gate
+  means something.
   Raw Dump captures a bounded UART snapshot (`uart-N.txt`) — the only file that
   can contain raw identifiers. FullSweep launches the whole-room sequence.
 - how-to-use: Recording is size-capped; if logging stops, scanning doesn't.

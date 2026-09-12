@@ -44,7 +44,10 @@ int main(void) {
     check_contains(report, "not confirmed: none", "no unconfirmed sensors are explicit");
     check_contains(report, "TX: started", "started TX is explicit");
     check_contains(report, "GPS: included", "included GPS is explicit");
-    check_contains(report, "nRF24 RPD is channel activity only", "nRF24 limitation is explicit");
+    check_contains(
+        report,
+        "nRF24 rows are 2.4 GHz channel energy only, not packets or device IDs",
+        "nRF24 limitation is explicit");
 
     RoomSweepReportFindings findings;
     room_sweep_report_findings_init(&findings);
@@ -60,6 +63,7 @@ int main(void) {
     findings.nrf_active_channels = 2;
     findings.nrf_top_channel = 40;
     findings.nrf_observations = 5;
+    findings.nrf_total_hits = 123;
     findings.gps_snapshots = 1;
     findings.full_sweep_completed = true;
     check(
@@ -71,7 +75,36 @@ int main(void) {
     check_contains(report, "Summary: This room looked busy", "summary is plain English");
     check_contains(report, "Full room sweep: finished", "full sweep noted");
     check_contains(report, "Sub-GHz RF: 4 hits", "RF findings line");
-    check_contains(report, "nRF24 (2.4 GHz): activity on 2 channels", "nRF24 findings line");
+    check_contains(
+        report, "Sub-GHz RF: 4 hits; strongest about -55dBm near 433920000 Hz (energy only, no ID)",
+        "RF findings line carries the energy-only/no-ID qualifier");
+    check_contains(
+        report, "Wi-Fi: 2 AP beacons heard", "Wi-Fi findings describe beacons heard");
+    check_contains(
+        report, "BLE: 3 advertisements heard", "BLE findings describe advertisements heard");
+    check_contains(
+        report,
+        "nRF24 (2.4 GHz): energy on 2 channels; top channel 40; 123 RPD hits in 5 pass(es)",
+        "nRF24 findings use real RPD hit totals, not pass counts");
+    check_contains(
+        report,
+        "Energy detection only - no packets or device IDs",
+        "nRF24 findings carry the energy-only qualifier");
+
+    /* Passes ran but the band was quiet: no hits may not read as activity. */
+    RoomSweepReportFindings quiet_nrf;
+    room_sweep_report_findings_init(&quiet_nrf);
+    quiet_nrf.nrf_observations = 2;
+    quiet_nrf.nrf_total_hits = 0;
+    char nrf_report[1024];
+    room_sweep_report_format(&state, nrf_report, sizeof(nrf_report));
+    size_t nrf_used = room_sweep_report_append_findings(
+        &quiet_nrf, nrf_report, sizeof(nrf_report), strlen(nrf_report));
+    check(nrf_used > 0, "quiet nRF24 findings appended");
+    check_contains(
+        nrf_report,
+        "2 energy pass(es), no RPD hits",
+        "zero-hit nRF24 passes are reported as no hits");
 
     RoomSweepReportState privacy_state;
     room_sweep_report_init(&privacy_state);

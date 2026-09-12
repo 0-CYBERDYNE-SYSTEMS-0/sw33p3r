@@ -249,9 +249,10 @@
         <div class="blocklabel">What it does</div>
         <p>Continuous listen across the CC1101 preset bank (300&ndash;348 / 387&ndash;464 /
         779&ndash;928&nbsp;MHz hardware bands). Each bar is one preset; the ruler underneath marks
-        304 / 390 / 434 / 450. The header tracks the hottest preset&rsquo;s dBm and raises a
-        <b style="color:var(--hi);">SIGNAL!</b> badge when energy crosses the dashed alert line
-        &mdash; a fixed &minus;75&nbsp;dBm threshold. Baseline (Settings &rarr; Session &rarr;
+        304 / 390 / 434 / 450. The header tracks the hottest preset&rsquo;s dBm and shows a
+        <b style="color:var(--hi);">&gt;-75dBm</b> tag when energy crosses the dashed alert line
+        &mdash; a fixed &minus;75&nbsp;dBm ENERGY threshold (no device identification). Baseline
+        (Settings &rarr; Session &rarr;
         Baseline) is a separate snapshot of the room&rsquo;s RF floor that the survey bars are
         drawn against.</p>
       </div>
@@ -435,10 +436,13 @@
       <div class="block">
         <div class="blocklabel">What it does</div>
         <p>On RF, Wi-Fi, BLE, and nRF24 alike, Hold Left opens a four-page analyzer tuned to the
-        selected (or locked) source. HUNT: one fat proximity bar with CLOSER / FARTHER / STABLE /
-        STALE / LOST verdicts. FIELD: spectrum/peer bars for context. RADAR: polar view where rings are
-        RSSI (labeled on screen &mdash; not meters) and a locked target blinks as a diamond.
-        METER: a big-number dBm read with peak hold and trend.</p>
+        selected (or locked) source. HUNT: one fat proximity bar with STRONGER / WEAKER / STABLE /
+        STALE / LOST verdicts (STRONGER/WEAKER = the received energy rose or fell &mdash; not that
+        anything moved closer). FIELD: spectrum/peer bars for context. ENERGY MAP: rings are
+        RSSI (labeled on screen &mdash; not meters) and blip angles are a channel/index wheel,
+        <b>not a direction</b>.
+        METER: a big-number read with peak hold and trend. On nRF24 every number is ACT (RPD
+        activity, arbitrary units) &mdash; never dBm.</p>
       </div>
       <div class="block">
         <div class="blocklabel">How to use</div>
@@ -483,7 +487,7 @@
       </div>
     </div>
     <div class="text">
-      <div class="lede">Hunting <b>[redacted SSID]</b> at -37&nbsp;dBm, CLOSER 91%.</div>
+      <div class="lede">Hunting <b>[redacted SSID]</b> at -37&nbsp;dBm, STRONGER 91%.</div>
       <div class="block">
         <div class="blocklabel">What it does</div>
         <p>The Hunt bar tracks that one AP&rsquo;s live table RSSI from the Marauder beacon
@@ -528,10 +532,10 @@
       </div>
     </div>
     <div class="text">
-      <div class="lede">One device, <b>[redacted MAC]</b>, from -72&nbsp;dBm, CLOSER at 47%.</div>
+      <div class="lede">One device, <b>[redacted MAC]</b>, from -72&nbsp;dBm, STRONGER at 47%.</div>
       <div class="block">
         <div class="blocklabel">What it does</div>
-        <p>Same four pages, aimed at a BLE advertiser. The radar&rsquo;s sweep line and blinking
+        <p>Same four pages, aimed at a BLE advertiser. The energy map&rsquo;s sweep line and blinking
         diamond mark your locked target; the meter&rsquo;s PK value keeps the strongest sighting
         while the trend arrow says whether you&rsquo;re gaining.</p>
       </div>
@@ -573,11 +577,13 @@
       </div>
     </div>
     <div class="text">
-      <div class="lede"><b>2.4G RPD</b> with nothing to hear reads LOST 0% &mdash; and says so.</div>
+      <div class="lede"><b>2.4G energy</b> with nothing to hear reads LOST 0% &mdash; and says so.</div>
       <div class="block">
         <div class="blocklabel">What it does</div>
-        <p>The analyzer works over the nRF24 RPD (receive power detector) energy survey. Empty
-        spectrum shows an empty instrument, not a fake signal: -127&nbsp;dBm, LOST 0%.</p>
+        <p>The analyzer works over the nRF24 RPD (receive power detector) energy survey &mdash; a
+        1-bit &ldquo;power above about &minus;64&nbsp;dBm in this channel&rdquo; check, so nR numbers are ACT
+        (activity), never dBm, and hits are never packets or devices. Empty
+        spectrum shows an empty instrument, not a fake signal.</p>
       </div>
       <div class="block">
         <div class="blocklabel">How to use</div>
@@ -787,7 +793,7 @@
     <div class="text">
       <div class="block">
         <div class="blocklabel">What it does</div>
-        <p><b style="color:var(--hi);">nR STATUS &middot; SPI CC1101 &middot; phase idle.</b>
+        <p><b style="color:var(--hi);">2.4G ENERGY &middot; SPI CC1101 &middot; phase idle.</b>
         This tab surveys raw 2.4&nbsp;GHz channel energy with the nRF24 in RPD mode &mdash;
         receive only, by design. The status page names your wiring truth: it needs SPI Path =
         nRF24 and the BFFB bottom switch DOWN, and while nRF24 is selected the Sub-GHz radio
@@ -795,7 +801,7 @@
       </div>
       <div class="block">
         <div class="blocklabel">How to use</div>
-        <p>OK starts/stops an RPD pass; Hold Left or Hold OK opens the analyzer; Right shows
+        <p>OK starts/stops an energy pass; Hold Left or Hold OK opens the analyzer; Right shows
         results.</p>
       </div>
       <div class="chips">
@@ -817,7 +823,8 @@
   <div class="body">
     <div class="media">
       <div class="lcd lg"><img src="field_guide_shots/nr_p1.png" width="448" height="224" alt="nRF24 results"></div>
-      <div class="cap">nRF24 RESULTS &mdash; active 0 &middot; hits 0 &middot; an honest empty</div>
+      <div class="cap">2.4G RESULTS &mdash; active 0 &middot; hits 0 &middot; an honest empty
+      (stale screenshot shows the old "nR RESULTS" title &mdash; requires re-capture)</div>
     </div>
     <div class="text">
       <div class="lede"><b>active 0 &middot; hits 0</b> &middot; no RPD energy yet &mdash; an
@@ -1392,8 +1399,9 @@
       <div class="block">
         <div class="blocklabel">What it does</div>
         <p>Record opens session N and writes <b style="color:var(--hi);">session-N.csv</b> plus a
-        Room Report. Baseline snapshots the RF survey floor so
-        <b style="color:var(--hi);">SIGNAL!</b> means something. Raw Dump captures a bounded UART
+        Room Report. Baseline snapshots the RF survey floor so the
+        <b style="color:var(--hi);">&gt;-75dBm</b> energy gate means something. Raw Dump captures a
+        bounded UART
         snapshot (<b style="color:var(--hi);">uart-N.txt</b>) &mdash; the only file that can
         contain raw identifiers. FullSweep launches the whole-room sequence.</p>
       </div>

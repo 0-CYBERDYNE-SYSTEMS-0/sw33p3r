@@ -107,6 +107,14 @@ int main(void) {
     }
     check(mono_and_bounded, "activity_to_rssi monotonic and bounded");
 
+    /* Truth contract: every numeric nRF24 readout is ACTIVITY in arbitrary
+     * units — the label must never be (or drift back to) "dBm", because the
+     * RPD is a 1-bit energy detector and measures no signal strength. */
+    check(strcmp(room_sweep_nrf24_activity_units_label(), "ACT") == 0,
+          "activity units label is ACT");
+    check(strcmp(room_sweep_nrf24_activity_units_label(), "dBm") != 0,
+          "activity units label is never dBm");
+
     /* New scan resets the integrator. */
     check(room_sweep_nrf24_start(&s), "restart scan");
     check(s.activity_score == 0, "scan start resets activity");

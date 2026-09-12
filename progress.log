@@ -128,3 +128,32 @@
   pick_wireless + aging tests unchanged.
 - Gates: ./init.sh ALL PASS + ufbt build; _verify_api.py CLEAN;
   feedback header -pedantic -fsyntax-only clean.
+
+## Iteration: SIGINT truth audit — nRF24 + UI/report/doc claims (2026-09-11)
+- nRF24 truth contract: nR mode relabelled 2.4 GHz ENERGY detection. The RPD
+  (reg 0x09 bit 0) is a 1-bit "-64 dBm in channel" energy detector (Nordic
+  nRF24L01+ spec) — no packets/addresses/RSSI; packet ID ruled out (needs
+  40-bit address a priori or banned mousejack-class attacks). Documented in
+  room_sweep_nrf24_state.h, nrf24_survey.h/.c, specs/nrf24-survey.md.
+- Synthetic-RSSI purge: all nR analyzer numeric readouts (hunt/field/energy
+  map/meter) now use ACT units, never dBm; energy-map ring legend swaps to
+  ACT scale for nR ("NO DIR R=ACT" footer); nR tab titles "2.4G ENERGY" /
+  "2.4G RESULTS", status lines "energy detect only / no packets/no jam".
+- Session truth: NRF24 observation rows no longer put hit counts in the CSV
+  rssi column (stays 0); new SessionLogEvent.nrf_total_hits accumulates real
+  RPD hit totals; Room Report prints real totals in N passes + "Energy
+  detection only - no packets or device IDs" (was pass-count mislabelled as
+  "RPD hits"). RF report line gains "(energy only, no ID)"; Wi/BT lines say
+  beacons/advertisements heard.
+- Handoffs applied: USER_GUIDE STRONGER/WEAKER + energy-map row + ExtBand
+  "assumed switch path"; TX tab "RX energy candidate";
+  room_sweep_full_sweep_gps_ready now keys on has_pos (parsed position) or
+  sentences — receiver fix alone no longer finishes GPS as success; BFFB doc
+  sniffbeacon (no suffix) vs scanall (capability bytes) formats verified
+  against ESP32Marauder master WiFiScan.cpp; marauder parser spec annotated
+  superseded; control map + field guide (html/print/copy) updated to ENERGY
+  MAP / STRONGER-WEAKER / >-75dBm with stale-screenshot notes.
+- Tests: test_nrf24_state (ACT label, never dBm), test_report_state (new
+  findings strings + real hit totals + zero-hit passes), test_full_sweep_state
+  (has_pos gate semantics). No new Flipper API symbols.
+- New spec: specs/sigint-truth-audit-2026-09-11.md (12-issue table).

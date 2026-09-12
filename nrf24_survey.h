@@ -6,8 +6,16 @@
 #include "room_sweep_nrf24_state.h"
 
 /*
- * Device-side nRF24 RPD channel survey on Flipper external SPI.
- * Detect-only: configure RX, sample RPD, never continuous jam TX.
+ * Device-side nRF24 2.4 GHz ENERGY DETECTION survey on Flipper external SPI.
+ * Detect-only: configure RX, sample the RPD bit, never transmit or jam.
+ *
+ * What is actually read: the nRF24L01+ RPD register (0x09 bit 0) — per the
+ * Nordic product spec it is set when received power in the CURRENT channel
+ * exceeds about -64 dBm, whatever the emitter. It carries no packet, address,
+ * protocol, or identity information. Packet-based nRF24 identification is NOT
+ * practical here: it needs a 40-bit address known a priori, and discovering
+ * unknown addresses passively requires mousejack-class attack techniques that
+ * MISSION.md/PROMPT.md ban. The nR mode therefore reports channel energy only.
  *
  * CE defaults to gpio_ext_pc3 (common Flipper nRF24 wiring / Momentum NRF24 SPI).
  * BFFB: bottom switch down = nRF24 on SPI; OTG power may be required.

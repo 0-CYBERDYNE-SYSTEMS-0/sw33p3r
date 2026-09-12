@@ -76,6 +76,17 @@ The pure parser is deterministic given the line — **no `furi_get_tick()`, no
 
 These are the load-bearing semantics; golden tests assert them.
 
+> **SUPERSEDED (2026-09-11, commit 7fc8172):** invariant 4 below ("strip
+> trailing `" XX XX"` capability bytes") is OBSOLETE. Upstream verification
+> (ESP32Marauder master `WiFiScan.cpp`) showed the trailing 2-byte suffix is
+> `scanall`-only (`apSnifferCallbackFull`); `sniffbeacon` — the only command
+> Room Sweep sends — prints nothing after the SSID. The strip was removed so
+> SSIDs like `Lab AB CD` keep their full name; `tests/test_marauder_parse.c`
+> now asserts the SSID is kept verbatim. Read invariant 4 as: SSID =
+> everything after `"ESSID: "` to end, kept verbatim. The "trailing
+> capability bytes" fixture in the Verification section is likewise
+> superseded (kept as a regression fixture for the removed strip only).
+
 ### `room_sweep_marauder_parse_wifi`
 1. Strip prompt `"> "` via `room_sweep_uart_strip_prompt`; reject NULL / empty / `#`.
 2. RSSI: leading `-NN` in `[-120, 0]` followed by space/NUL, else `RSSI:` / `rssi:`

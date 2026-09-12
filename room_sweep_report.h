@@ -57,9 +57,10 @@ typedef struct {
     uint32_t ble_observations;
     uint32_t ble_windows;
     int ble_strongest_rssi;
-    uint32_t nrf_observations;
+    uint32_t nrf_observations; /* completed energy-scan passes */
     uint32_t nrf_active_channels;
     uint8_t nrf_top_channel;
+    uint32_t nrf_total_hits; /* RPD energy hits summed across passes */
     uint32_t gps_snapshots;
     bool full_sweep_completed;
 } RoomSweepReportFindings;
@@ -283,7 +284,7 @@ static inline size_t room_sweep_report_format(
         output,
         capacity,
         &used,
-        "Limitations: RSSI is not distance; wireless evidence does not prove Internet telemetry, recording, ownership, or intent; no observation does not prove absence; bounded carrier is not replay; nRF24 RPD is channel activity only.\n");
+        "Limitations: RSSI is not distance; wireless evidence does not prove Internet telemetry, recording, ownership, or intent; no observation does not prove absence; bounded carrier is not replay; nRF24 rows are 2.4 GHz channel energy only, not packets or device IDs.\n");
     return used;
 }
 
@@ -313,7 +314,7 @@ static inline size_t room_sweep_report_append_findings(
             output,
             capacity,
             &used,
-            "Sub-GHz RF: %lu hits; strongest about %ddBm near %lu Hz.\n",
+            "Sub-GHz RF: %lu hits; strongest about %ddBm near %lu Hz (energy only, no ID).\n",
             (unsigned long)f->rf_observations,
             f->rf_strongest_rssi,
             (unsigned long)f->rf_strongest_hz);
@@ -327,7 +328,7 @@ static inline size_t room_sweep_report_append_findings(
             output,
             capacity,
             &used,
-            "Wi-Fi: %lu AP observations across %lu scan windows; strongest about %ddBm.\n",
+            "Wi-Fi: %lu AP beacons heard across %lu scan windows; strongest about %ddBm.\n",
             (unsigned long)f->wifi_observations,
             (unsigned long)f->wifi_windows,
             f->wifi_strongest_rssi);
@@ -345,7 +346,7 @@ static inline size_t room_sweep_report_append_findings(
             output,
             capacity,
             &used,
-            "BLE: %lu device observations across %lu scan windows; strongest about %ddBm.\n",
+            "BLE: %lu advertisements heard across %lu scan windows; strongest about %ddBm.\n",
             (unsigned long)f->ble_observations,
             (unsigned long)f->ble_windows,
             f->ble_strongest_rssi);
@@ -359,20 +360,30 @@ static inline size_t room_sweep_report_append_findings(
     }
 
     if(f->nrf_observations > 0 || f->nrf_active_channels > 0) {
-        room_sweep_report_append(
-            output,
-            capacity,
-            &used,
-            "nRF24 (2.4 GHz): activity on %lu channels; top channel %u; %lu RPD hits. Receive check only.\n",
-            (unsigned long)f->nrf_active_channels,
-            (unsigned)f->nrf_top_channel,
-            (unsigned long)f->nrf_observations);
+        if(f->nrf_total_hits > 0) {
+            room_sweep_report_append(
+                output,
+                capacity,
+                &used,
+                "nRF24 (2.4 GHz): energy on %lu channels; top channel %u; %lu RPD hits in %lu pass(es). Energy detection only - no packets or device IDs.\n",
+                (unsigned long)f->nrf_active_channels,
+                (unsigned)f->nrf_top_channel,
+                (unsigned long)f->nrf_total_hits,
+                (unsigned long)f->nrf_observations);
+        } else {
+            room_sweep_report_append(
+                output,
+                capacity,
+                &used,
+                "nRF24 (2.4 GHz): %lu energy pass(es), no RPD hits (quiet band or wrong switch). Energy detection only - no packets or device IDs.\n",
+                (unsigned long)f->nrf_observations);
+        }
     } else {
         room_sweep_report_append(
             output,
             capacity,
             &used,
-            "nRF24 (2.4 GHz): no channel activity recorded (module off, wrong SPI switch, or quiet band).\n");
+            "nRF24 (2.4 GHz): no channel energy recorded (module off, wrong SPI switch, or quiet band).\n");
     }
 
     room_sweep_report_append(

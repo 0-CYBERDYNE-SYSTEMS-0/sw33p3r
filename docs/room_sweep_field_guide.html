@@ -453,8 +453,8 @@
           </figure>
           <figure>
             <div class="screen"><img src="field_guide_shots/wifi_analyzer_p2.png" width="1024" height="512"
-              alt="Flipper LCD: Wi-Fi analyzer RADAR page — a polar sweep with concentric RSSI rings and a locked target drawn as a diamond."></div>
-            <figcaption>Wi-Fi Radar</figcaption>
+              alt="Flipper LCD: Wi-Fi analyzer ENERGY MAP page — a polar sweep with concentric RSSI rings and a locked target drawn as a diamond; angles are a channel wheel, not a direction."></div>
+            <figcaption>Wi-Fi Energy Map</figcaption>
           </figure>
           <figure>
             <div class="screen"><img src="field_guide_shots/gp_summary.png" width="1024" height="512"
@@ -567,11 +567,13 @@
               <h3>What it does</h3>
               <p>Continuous listen across the CC1101 preset bank (300–348 / 387–464 / 779–928&nbsp;MHz
                  hardware bands). Each bar is one preset; the ruler underneath marks
-                 304 / 390 / 434 / 450. The header tracks the hottest preset's dBm and raises a
-                 <code>SIGNAL!</code> badge when energy crosses the dashed alert line — a fixed
-                 −75&nbsp;dBm threshold. Baseline (Settings &rarr; Session &rarr; Baseline) is a
+                 304 / 390 / 434 / 450. The header tracks the hottest preset's dBm and shows a
+                 <code>&gt;-75dBm</code> tag when energy crosses the dashed alert line — a fixed
+                 −75&nbsp;dBm ENERGY threshold (no device identification). Baseline
+                 (Settings &rarr; Session &rarr; Baseline) is a
                  separate snapshot of the room's RF floor that the survey bars are drawn
-                 against.</p>
+                 against. <!-- stale screenshot: rf_survey.png still shows the old
+                 "SIGNAL!" badge — requires re-capture on device --></p>
             </div>
             <div class="block">
               <h3>How to use</h3>
@@ -752,7 +754,7 @@
         <div class="shots cols-2">
           <figure class="lcd">
             <div class="screen"><img src="field_guide_shots/rf_analyzer_p0.png" width="1024" height="512" loading="eager"
-              alt="Flipper LCD: RF analyzer HUNT page — one fat proximity bar with a CLOSER, FARTHER, STABLE, STALE or LOST verdict."></div>
+              alt="Flipper LCD: RF analyzer HUNT page — one fat proximity bar with a STRONGER, WEAKER, STABLE, STALE or LOST verdict."></div>
             <figcaption>HUNT — proximity bar + verdict</figcaption>
           </figure>
           <figure class="lcd">
@@ -762,8 +764,8 @@
           </figure>
           <figure class="lcd">
             <div class="screen"><img src="field_guide_shots/rf_analyzer_p2.png" width="1024" height="512" loading="eager"
-              alt="Flipper LCD: RF analyzer RADAR page — a polar view where rings are RSSI and the locked target blinks as a diamond."></div>
-            <figcaption>RADAR — rings are RSSI, diamond is the lock</figcaption>
+              alt="Flipper LCD: RF analyzer ENERGY MAP page — rings are RSSI and blip angles are a channel wheel, not a direction."></div>
+            <figcaption>ENERGY MAP — rings are RSSI, no direction</figcaption>
           </figure>
           <figure class="lcd">
             <div class="screen"><img src="field_guide_shots/rf_analyzer_p3.png" width="1024" height="512" loading="eager"
@@ -776,11 +778,13 @@
             <div class="block">
               <h3>What it does</h3>
               <p>On RF, Wi-Fi, BLE, and nRF24 alike, Hold Left opens a four-page analyzer tuned to
-                 the selected (or locked) source. HUNT: one fat proximity bar with CLOSER / FARTHER /
-                 STABLE / STALE / LOST verdicts. FIELD: spectrum/peer bars for
-                 context. RADAR: polar view
-                 where rings are RSSI (labeled on screen — not meters) and a locked target blinks as
-                 a diamond. METER: a big-number dBm read with peak hold and trend.</p>
+                 the selected (or locked) source. HUNT: one fat proximity bar with STRONGER / WEAKER /
+                 STABLE / STALE / LOST verdicts (STRONGER/WEAKER = the received energy rose or
+                 fell — not that anything moved closer). FIELD: spectrum/peer bars for
+                 context. ENERGY MAP: rings are RSSI (labeled on screen — not meters) and blip
+                 angles are a channel/index wheel, <b>not a direction</b>. METER: a big-number read
+                 with peak hold and trend. On nRF24 every number is ACT (RPD activity, arbitrary
+                 units) — never dBm.</p>
             </div>
             <div class="block">
               <h3>How to use</h3>
@@ -804,13 +808,14 @@
         <p class="pageno">P10 · 10/39</p>
       </header>
       <h2 id="t10">Wi-Fi analyzer — walk an AP to its door</h2>
-      <p class="lede">Hunting <code>[redacted SSID]</code> at -37&nbsp;dBm, CLOSER 91%.</p>
+      <p class="lede">Hunting <code>[redacted SSID]</code> at -37&nbsp;dBm, STRONGER 91%.</p>
       <div class="entry-grid">
         <div class="shots cols-2">
           <figure class="lcd">
             <div class="screen"><img src="field_guide_shots/wifi_analyzer_p0.png" width="1024" height="512" loading="eager"
-              alt="Flipper LCD: Wi-Fi analyzer HUNT page — a proximity bar tracking one access point, reading CLOSER 91 percent."></div>
-            <figcaption>HUNT — the AP's live table RSSI, CLOSER 91%</figcaption>
+              alt="Flipper LCD: Wi-Fi analyzer HUNT page — a proximity bar tracking one access point, reading STRONGER 91 percent."></div>
+            <figcaption>HUNT — the AP's live table RSSI, STRONGER 91% (stale screenshot shows the
+              old CLOSER wording — requires re-capture on device)</figcaption>
           </figure>
           <figure class="lcd">
             <div class="screen"><img src="field_guide_shots/wifi_analyzer_p1.png" width="1024" height="512" loading="eager"
@@ -819,8 +824,8 @@
           </figure>
           <figure class="lcd">
             <div class="screen"><img src="field_guide_shots/wifi_analyzer_p2.png" width="1024" height="512" loading="eager"
-              alt="Flipper LCD: Wi-Fi analyzer RADAR page — polar view with RSSI rings and the hunted access point blinking as a diamond."></div>
-            <figcaption>RADAR — rings are RSSI, not meters</figcaption>
+              alt="Flipper LCD: Wi-Fi analyzer ENERGY MAP page — rings are RSSI and blip angles are a channel wheel, not a direction; the hunted access point blinks as a diamond."></div>
+            <figcaption>ENERGY MAP — rings are RSSI, not meters, no direction</figcaption>
           </figure>
           <figure class="lcd">
             <div class="screen"><img src="field_guide_shots/wifi_analyzer_p3.png" width="1024" height="512" loading="eager"
@@ -839,7 +844,7 @@
             <div class="block">
               <h3>How to use</h3>
               <p>From the Wi-Fi tab, select the AP with Up/Down, then Hold Left. Hold Right pages
-                 Hunt &rarr; Field &rarr; Radar &rarr; Meter.</p>
+                 Hunt &rarr; Field &rarr; Energy Map &rarr; Meter.</p>
             </div>
           </div>
           <ul class="chips">
@@ -858,7 +863,7 @@
         <p class="pageno">P11 · 11/39</p>
       </header>
       <h2 id="t11">BLE analyzer — chase an advertisement</h2>
-      <p class="lede">One device, <code>[redacted MAC]</code>, from -72&nbsp;dBm, CLOSER at 47%.</p>
+      <p class="lede">One device, <code>[redacted MAC]</code>, from -72&nbsp;dBm, STRONGER at 47%.</p>
       <div class="entry-grid">
         <div class="shots cols-2">
           <figure class="lcd">
@@ -873,8 +878,8 @@
           </figure>
           <figure class="lcd">
             <div class="screen"><img src="field_guide_shots/bt_analyzer_p2.png" width="1024" height="512" loading="eager"
-              alt="Flipper LCD: BLE analyzer RADAR page — a sweep line and a blinking diamond marking the locked target among RSSI rings."></div>
-            <figcaption>RADAR — sweep line + blinking diamond</figcaption>
+              alt="Flipper LCD: BLE analyzer ENERGY MAP page — a sweep line and a blinking diamond marking the locked target among RSSI rings; angles are a channel wheel, not a direction."></div>
+            <figcaption>ENERGY MAP — sweep line + blinking diamond, no direction</figcaption>
           </figure>
           <figure class="lcd">
             <div class="screen"><img src="field_guide_shots/bt_analyzer_p3.png" width="1024" height="512" loading="eager"
@@ -886,7 +891,7 @@
           <div class="blocks">
             <div class="block">
               <h3>What it does</h3>
-              <p>Same four pages, aimed at a BLE advertiser. The radar's sweep line and blinking
+              <p>Same four pages, aimed at a BLE advertiser. The energy map's sweep line and blinking
                  diamond mark your locked target; the meter's PK value keeps the strongest sighting
                  while the trend arrow says whether you're gaining.</p>
             </div>
@@ -911,7 +916,7 @@
         <p class="pageno">P12 · 12/39</p>
       </header>
       <h2 id="t12">nRF24 analyzer — 2.4 GHz, the honest zero</h2>
-      <p class="lede"><code>2.4G RPD</code> with nothing to hear reads LOST 0% — and says so.</p>
+      <p class="lede"><code>2.4G energy</code> with nothing to hear reads LOST 0% — and says so.</p>
       <div class="entry-grid">
         <div class="shots cols-2">
           <figure class="lcd">
@@ -926,21 +931,24 @@
           </figure>
           <figure class="lcd">
             <div class="screen"><img src="field_guide_shots/nr_analyzer_p2.png" width="1024" height="512" loading="eager"
-              alt="Flipper LCD: nRF24 analyzer RADAR page — polar rings with no target diamond because nothing is heard."></div>
-            <figcaption>RADAR — no target, no pretend diamond</figcaption>
+              alt="Flipper LCD: nRF24 analyzer ENERGY MAP page — polar rings with no target diamond because nothing is heard; blip angles are a channel wheel, not a direction."></div>
+            <figcaption>ENERGY MAP — no target, no direction, no pretend diamond</figcaption>
           </figure>
           <figure class="lcd">
             <div class="screen"><img src="field_guide_shots/nr_analyzer_p3.png" width="1024" height="512" loading="eager"
-              alt="Flipper LCD: nRF24 analyzer METER page — the readout sits at minus 127 dBm with LOST 0 percent."></div>
-            <figcaption>METER — -127&nbsp;dBm, LOST 0%</figcaption>
+              alt="Flipper LCD: nRF24 analyzer METER page — the readout sits at the floor with LOST 0 percent."></div>
+            <figcaption>METER — empty read, LOST 0% (stale screenshot shows a dBm unit; the device
+              now reads ACT — RPD activity, arbitrary units)</figcaption>
           </figure>
         </div>
         <div class="entry-text">
           <div class="blocks">
             <div class="block">
               <h3>What it does</h3>
-              <p>The analyzer works over the nRF24 RPD (receive power detector) energy survey. Empty
-                 spectrum shows an empty instrument, not a fake signal: -127&nbsp;dBm, LOST 0%.</p>
+              <p>The analyzer works over the nRF24 RPD (receive power detector) energy survey — a
+                 1-bit "power above about −64&nbsp;dBm in this channel" check, so nR numbers are
+                 ACT (activity), never dBm, and hits are never packets or devices. Empty
+                 spectrum shows an empty instrument, not a fake signal.</p>
             </div>
             <div class="block">
               <h3>How to use</h3>
@@ -1168,8 +1176,9 @@
         <div class="shots cols-1">
           <figure class="lcd">
             <div class="screen"><img src="field_guide_shots/nr_p0.png" width="1024" height="512" loading="eager"
-              alt="Flipper LCD: nRF24 STATUS page — SPI CC1101, phase idle, naming the wiring requirements for the RPD survey."></div>
-            <figcaption><code>nR STATUS · SPI CC1101 · phase idle</code></figcaption>
+              alt="Flipper LCD: nRF24 energy status page — SPI CC1101, phase idle, naming the wiring requirements for the 2.4 GHz energy survey."></div>
+            <figcaption><code>2.4G ENERGY · SPI CC1101 · phase idle</code> (stale screenshot shows
+              the old nR STATUS title — requires re-capture on device)</figcaption>
           </figure>
         </div>
         <div class="entry-text">
@@ -1177,13 +1186,15 @@
             <div class="block">
               <h3>What it does</h3>
               <p>This tab surveys raw 2.4&nbsp;GHz channel energy with the nRF24 in RPD mode —
-                 receive only, by design. The status page names your wiring truth: it needs
+                 a 1-bit "power above about −64 dBm in this channel" check: hits are channel
+                 energy, never packets, addresses, or device IDs. Receive only, by design. The
+                 status page names your wiring truth: it needs
                  SPI Path = nRF24 and the BFFB bottom switch DOWN, and while nRF24 is selected the
                  Sub-GHz radio falls back to the Flipper's internal CC1101.</p>
             </div>
             <div class="block">
               <h3>How to use</h3>
-              <p>OK starts/stops an RPD pass; Hold Left or Hold OK opens the analyzer; Right shows
+              <p>OK starts/stops an energy pass; Hold Left or Hold OK opens the analyzer; Right shows
                  results.</p>
             </div>
           </div>
@@ -1837,7 +1848,8 @@
             <div class="block">
               <h3>What it does</h3>
               <p>Record opens session N and writes <code>session-N.csv</code> plus a Room Report.
-                 Baseline snapshots the RF survey floor so <code>SIGNAL!</code> means something. Raw
+                 Baseline snapshots the RF survey floor so the <code>&gt;-75dBm</code> energy gate
+                 means something. Raw
                  Dump captures a bounded UART snapshot (<code>uart-N.txt</code>) — the only file that
                  can contain raw identifiers. FullSweep launches the whole-room sequence.</p>
             </div>

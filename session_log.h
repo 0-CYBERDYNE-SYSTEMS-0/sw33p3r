@@ -39,6 +39,10 @@ typedef struct {
     uint32_t gps_nav_sentences;
     uint32_t gps_rx_bytes;
     uint32_t count;
+    /* nRF24 only: real RPD energy-hit total for the pass. The generic `rssi`
+     * field stays 0 for NRF24 rows — the RPD is a 1-bit energy detector and
+     * produces no RSSI, so hit counts must never masquerade as dBm. */
+    uint32_t nrf_total_hits;
     const char* state;
     const char* error_code;
     const char* detail;

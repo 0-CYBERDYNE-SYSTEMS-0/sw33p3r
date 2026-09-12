@@ -67,9 +67,14 @@ int main(void) {
     check(
         !room_sweep_full_sweep_gps_ready(1000, false, false),
         "GPS not ready at 1s with no data");
+    /* Flag 1 is has_pos (parsed coordinates) — a receiver fix alone is the
+     * NO POS state and must not satisfy the early-exit data gate. */
     check(
         room_sweep_full_sweep_gps_ready(ROOM_SWEEP_FULL_GPS_MIN_MS, true, false),
-        "GPS early exit on fix after min dwell");
+        "GPS early exit on parsed position after min dwell");
+    check(
+        room_sweep_full_sweep_gps_ready(ROOM_SWEEP_FULL_GPS_MIN_MS, false, true),
+        "GPS early exit on received sentences after min dwell");
     check(
         room_sweep_full_sweep_gps_ready(ROOM_SWEEP_FULL_GPS_MS, false, false),
         "GPS hard timeout with zero data still finishes");

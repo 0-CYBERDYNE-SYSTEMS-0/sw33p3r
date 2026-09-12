@@ -2340,7 +2340,10 @@ static void feedback_tick(App* app) {
         break;
     }
     case SweepModeNrf24: {
-        /* Real RPD activity integrator — not the channel counter. */
+        /* Real RPD activity integrator — not the channel counter. The mapped
+         * peak only paces the shared LED/sound/vibro curves; it is a
+         * synthetic meter position (RPD is a 1-bit energy detector), never
+         * displayed or logged as dBm. */
         room_sweep_nrf24_activity_tick(&app->nrf24, now);
         bool nrf_live = (app->nrf24.phase == RoomSweepNrf24Scanning ||
                          app->nrf24.phase == RoomSweepNrf24Done) &&
@@ -2533,6 +2536,10 @@ static void draw_proximity_analyzer(
     bool blink = app && ((app->tick_count / 4U) & 1U);
     uint8_t page = app ? (app->analyzer_ui_page & 1U) : 0;
     char buf[40];
+    /* nRF24 numbers are RPD activity on the shared meter scale — never dBm
+     * (see room_sweep_nrf24_state.h truth contract). */
+    const char* units =
+        (app && app->mode == SweepModeNrf24) ? room_sweep_nrf24_activity_units_label() : "dBm";
     uint8_t pct = an ? room_sweep_analyzer_level_pct(an->live_rssi) : 0;
     bool stronger = an && an->trend == RoomSweepAnalyzerTrendCloser;
     bool weaker = an && an->trend == RoomSweepAnalyzerTrendFarther;
@@ -2540,11 +2547,11 @@ static void draw_proximity_analyzer(
     /* --- Page 0: HUNT (meter only — no spectrum clutter) --- */
     if(page == 0) {
         canvas_set_font(canvas, FontKeyboard);
-        /* Row1: mode tag + live dBm (no PCT + trend pile-up) */
+        /* Row1: mode tag + live meter value in honest units */
         snprintf(buf, sizeof(buf), "%s", title ? title : "AN");
         canvas_draw_str(canvas, 2, 14, buf);
         if(an) {
-            snprintf(buf, sizeof(buf), "%+ddBm", (int)an->live_rssi);
+            snprintf(buf, sizeof(buf), "%+d %s", (int)an->live_rssi, units);
             uint16_t w = canvas_string_width(canvas, buf);
             canvas_draw_str(canvas, (uint8_t)(126 - w), 14, buf);
         }
@@ -2609,7 +2616,7 @@ static void draw_proximity_analyzer(
     snprintf(buf, sizeof(buf), "%s FIELD", title ? title : "AN");
     canvas_draw_str(canvas, 2, 14, buf);
     if(an) {
-        snprintf(buf, sizeof(buf), "%+ddBm", (int)an->live_rssi);
+        snprintf(buf, sizeof(buf), "%+d %s", (int)an->live_rssi, units);
         canvas_draw_str(
             canvas,
             room_sweep_ui_right_align_x(UI_TEXT_RIGHT_EDGE, canvas_string_width(canvas, buf)),
@@ -2757,23 +2764,35 @@ static void draw_analyzer_radar(
     uint8_t blip_count) {
     char buf[40];
     uint8_t phase = (uint8_t)(app->tick_count & 0xFFU);
+    /* nRF24 blips carry RPD activity, not measured dBm: swap the ring legend
+     * and units so the energy map never reads as a signal-strength scale. */
+    bool nrf_units = app->mode == SweepModeNrf24;
+    const char* units =
+        nrf_units ? room_sweep_nrf24_activity_units_label() : "dBm";
 
     canvas_set_font(canvas, FontKeyboard);
     snprintf(buf, sizeof(buf), "%s ENERGY MAP", title);
     canvas_draw_str(canvas, UI_MARGIN_X, UI_ROW_HEADER_BASELINE, buf);
     if(an) {
-        snprintf(buf, sizeof(buf), "%+ddBm", (int)an->live_rssi);
+        snprintf(buf, sizeof(buf), "%+d %s", (int)an->live_rssi, units);
         uint16_t w = canvas_string_width(canvas, buf);
         canvas_draw_str(canvas, (uint8_t)(126 - w), UI_ROW_HEADER_BASELINE, buf);
     }
 
-    /* dBm ring scale — ring radii come from the same rssi→radius mapping the
-     * blips use, so rings and blips always agree. Labels sit in the left
-     * column, clear of the header row and the scope (left edge = CX - R). */
-    canvas_draw_str(canvas, 2, 23, "-20");
-    canvas_draw_str(canvas, 2, 30, "-47");
-    canvas_draw_str(canvas, 2, 37, "-74");
-    canvas_draw_str(canvas, 2, 44, "-100");
+    if(nrf_units) {
+        /* Activity scale: no dBm numbers — the blips are RPD hit energy. */
+        canvas_draw_str(canvas, 2, 23, "ACT hi");
+        canvas_draw_str(canvas, 2, 44, "lo");
+    } else {
+        /* dBm ring scale — ring radii come from the same rssi→radius mapping
+         * the blips use, so rings and blips always agree. Labels sit in the
+         * left column, clear of the header row and the scope (left edge =
+         * CX - R). */
+        canvas_draw_str(canvas, 2, 23, "-20");
+        canvas_draw_str(canvas, 2, 30, "-47");
+        canvas_draw_str(canvas, 2, 37, "-74");
+        canvas_draw_str(canvas, 2, 44, "-100");
+    }
 
     canvas_draw_circle(canvas, ANALYZER_RADAR_CX, ANALYZER_RADAR_CY, ANALYZER_RADAR_R);
     canvas_draw_circle(
@@ -2817,11 +2836,12 @@ static void draw_analyzer_radar(
     }
     canvas_draw_dot(canvas, ANALYZER_RADAR_CX, ANALYZER_RADAR_CY);
 
-    /* Footer only — the dBm legend above carries the scale meaning. The hint
+    /* Footer only — the legend above carries the scale meaning. The hint
      * must state the angle is not a direction (channel/index wheel only). */
     canvas_draw_box(canvas, 0, UI_FOOTER_BAND_TOP, 128, 7);
     canvas_set_color(canvas, ColorWhite);
-    canvas_draw_str(canvas, 2, UI_ROW_FOOTER_BASELINE, "NO DIRECTION R=meter");
+    canvas_draw_str(
+        canvas, 2, UI_ROW_FOOTER_BASELINE, nrf_units ? "NO DIR R=ACT" : "NO DIRECTION R=meter");
     canvas_set_color(canvas, ColorBlack);
 }
 
@@ -2855,7 +2875,12 @@ static void draw_analyzer_meter(
     uint16_t w = canvas_string_width(canvas, buf);
     canvas_draw_str(canvas, (uint8_t)(92 - w), 45, buf);
     canvas_set_font(canvas, FontKeyboard);
-    canvas_draw_str(canvas, 94, 45, "dBm");
+    /* nRF24 readouts are ACTIVITY units, never dBm (RPD has no RSSI). */
+    canvas_draw_str(
+        canvas,
+        94,
+        45,
+        app->mode == SweepModeNrf24 ? room_sweep_nrf24_activity_units_label() : "dBm");
 
     /* fill_px is 0..118 pixels (inner width), not a percentage. */
     draw_segmented_meter(
@@ -3113,6 +3138,9 @@ static void analyzer_feed_tick(App* app) {
         break;
     }
     case SweepModeNrf24: {
+        /* RPD hits are energy events with no RSSI. The activity_to_rssi
+         * mapping only positions the shared meter; nR screens label the
+         * value ACT, never dBm. */
         int rssi = -127;
         if(app->nrf24.phase == RoomSweepNrf24Scanning) {
             uint8_t hit = app->nrf24.hits[app->nrf24.channel];
@@ -3252,13 +3280,13 @@ static void draw_scanner_analyzer(Canvas* canvas, App* app) {
             snprintf(
                 source,
                 sizeof(source),
-                "top ch%u x%u",
+                "top ch%u x%u hits",
                 (unsigned)app->nrf24.top_channels[0],
                 (unsigned)app->nrf24.top_hits[0]);
         } else if(app->nrf24.phase == RoomSweepNrf24Scanning) {
             snprintf(source, sizeof(source), "scan ch%u", (unsigned)app->nrf24.channel);
         } else {
-            snprintf(source, sizeof(source), "2.4G RPD");
+            snprintf(source, sizeof(source), "2.4G energy");
         }
         /* Compress 126 channels into 42 bars (max of 3). */
         spectrum_n = 42;
@@ -4069,7 +4097,7 @@ static bool nrf24_start_survey(App* app) {
             .submode = "rpd",
             .id = "-",
             .rssi = 0,
-            .detail = "rpd_channel_survey",
+            .detail = "2.4g_energy_scan",
         };
         session_log_write_event(&ev);
     }
@@ -4088,16 +4116,27 @@ static void nrf24_finish_and_log(App* app) {
     if(just_closed && app->nrf24.phase == RoomSweepNrf24Done && app->session_log_on) {
         char id[12];
         snprintf(id, sizeof(id), "ch%u", (unsigned)app->nrf24.top_channels[0]);
+        char detail[24];
+        /* Truth contract: RPD produces hit COUNTS, not RSSI. The rssi CSV
+         * column stays 0 (nothing measured); real counts travel in the
+         * dedicated fields + detail so the report cannot read hits as dBm. */
+        snprintf(
+            detail,
+            sizeof(detail),
+            "rpd_pass top=%u tot=%lu",
+            (unsigned)app->nrf24.top_hits[0],
+            (unsigned long)app->nrf24.total_hits);
         SessionLogEvent ev = {
             .event = "observation",
             .source = "NRF24",
             .mode = "NRF24",
             .submode = "rpd",
             .id = id,
-            .rssi = app->nrf24.top_hits[0] > 0 ? (int)app->nrf24.top_hits[0] : 0,
+            .rssi = 0, /* no RSSI exists — 1-bit energy detector */
             .channel = app->nrf24.top_channels[0],
             .count = app->nrf24.active_channels,
-            .detail = "rpd_pass",
+            .nrf_total_hits = app->nrf24.total_hits,
+            .detail = detail,
         };
         session_log_write_event(&ev);
         SessionLogEvent end = {
@@ -4118,8 +4157,8 @@ static void draw_nrf24_tab(Canvas* canvas, App* app) {
     canvas_set_font(canvas, FontKeyboard);
 
     if(page == 0) {
-        /* STATUS page */
-        canvas_draw_str(canvas, 2, 14, "nR STATUS");
+        /* STATUS page — title says what the mode really measures. */
+        canvas_draw_str(canvas, 2, 14, "2.4G ENERGY");
         canvas_draw_str(canvas, 90, 14, "R=res");
         snprintf(
             buf,
@@ -4145,15 +4184,15 @@ static void draw_nrf24_tab(Canvas* canvas, App* app) {
             canvas_draw_str(canvas, 2, 48, buf);
             canvas_draw_str(canvas, 2, 56, "OK stops when done");
         } else {
-            canvas_draw_str(canvas, 2, 48, "RX RPD only");
-            canvas_draw_str(canvas, 2, 56, "no jam modes");
+            canvas_draw_str(canvas, 2, 48, "energy detect only");
+            canvas_draw_str(canvas, 2, 56, "no packets/no jam");
         }
         canvas_draw_str(canvas, 2, 63, UI_HINT_NR_STATUS);
         return;
     }
 
     /* RESULTS page */
-    canvas_draw_str(canvas, 2, 14, "nR RESULTS");
+    canvas_draw_str(canvas, 2, 14, "2.4G RESULTS");
     canvas_draw_str(
         canvas,
         room_sweep_ui_right_align_x(UI_TEXT_RIGHT_EDGE, canvas_string_width(canvas, "R=res")),
@@ -4281,7 +4320,7 @@ static void draw_tx_tab(Canvas* canvas, App* app) {
             canvas,
             2,
             37,
-            candidate_fresh ? "Detected RX candidate" : "Preset carrier only");
+            candidate_fresh ? "RX energy candidate" : "Preset carrier only");
 
         canvas_set_font(canvas, FontSecondary);
         snprintf(buf, sizeof(buf), "%lu.%03lu MHz %ds max",
@@ -4888,12 +4927,14 @@ static void full_sweep_tick(App* app) {
         if(app->nrf24.phase == RoomSweepNrf24Done) nrf24_finish_and_log(app);
     } else if(phase == RoomSweepFullGps) {
         furi_mutex_acquire(app->gps_mutex, FuriWaitForever);
-        bool has_fix = app->gps.has_fix;
+        /* Parsed position only — receiver fix alone can be the NO POS state
+         * and must not finish the GPS phase as if it produced a position. */
+        bool has_pos = app->gps.has_pos;
         bool has_sentences = app->gps.sentences > 0;
         furi_mutex_release(app->gps_mutex);
         /* Always finishes by hard timeout even with zero GPS data. */
-        ready = room_sweep_full_sweep_gps_ready(elapsed, has_fix, has_sentences);
-        ok = has_fix || has_sentences;
+        ready = room_sweep_full_sweep_gps_ready(elapsed, has_pos, has_sentences);
+        ok = has_pos || has_sentences;
     } else {
         ready = true;
         ok = false;

@@ -66,10 +66,24 @@ Also may appear as wiki form `-60 Device: name`. Updates for already-seen device
 3. Multiple records abut on one line with no `\n`; split on the next `RSSI:`.
 4. `#stopscan` can abut the last MAC with no space.
 
-**WiFi AP beacon path (`scanall` / `sniffbeacon`):**
+**WiFi AP beacons — two DIFFERENT upstream formats (verified against
+ESP32Marauder master `WiFiScan.cpp`, 2026-09-11):**
+
+`scanall` → `RunAPScan` → `apSnifferCallbackFull` — prints the two raw
+capability bytes after the ESSID (the `00 00`-style suffix):
 ```text
 -45 Ch: 6 AA:BB:CC:DD:EE:FF ESSID: NetworkName 00 00
 ```
+
+`sniffbeacon` → `RunBeaconScan(WIFI_SCAN_AP)` → `beaconSnifferCallback` —
+prints **nothing after the SSID** (just the newline):
+```text
+-45 Ch: 6 AA:BB:CC:DD:EE:FF ESSID: NetworkName
+```
+
+Room Sweep sends **only `sniffbeacon`**, so live lines should not carry a
+capability-byte suffix, and an SSID may legitimately end in short tokens
+(e.g. `... ESSID: Lab AB CD`) that must be kept verbatim.
 
 **GPS (`nmea`):** `Serial.println` of queued NMEA + `generateGXgga` / `generateGXrmc`.
 

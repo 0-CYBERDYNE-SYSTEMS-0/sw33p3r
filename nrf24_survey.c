@@ -183,6 +183,9 @@ bool nrf24_survey_sample_step(RoomSweepNrf24State* state, uint8_t dwell_ms) {
     }
     ce_high();
     furi_delay_ms(dwell_ms == 0 ? 1 : dwell_ms);
+    /* Energy read only: RPD (reg 0x09 bit 0) = power above ~-64 dBm in this
+     * channel per the nRF24L01+ spec. No packet is clocked out of the FIFO
+     * and no address is known — nothing here identifies a protocol/device. */
     uint8_t rpd = 0;
     bool ok = read_reg(NRF24_REG_RPD, &rpd);
     ce_low();

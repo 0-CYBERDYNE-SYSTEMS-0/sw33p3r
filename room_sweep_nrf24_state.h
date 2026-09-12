@@ -9,6 +9,20 @@
 /*
  * Host-testable nRF24 channel-activity survey state (detect / RPD only).
  * Channel count matches nRF24L01+ RF_CH range 0..125.
+ *
+ * TRUTH CONTRACT (sigint audit 2026-09-11):
+ * This mode is 2.4 GHz ENERGY DETECTION, not nRF24 protocol detection.
+ * The hardware bit read is the nRF24L01+ RPD (register 0x09 bit 0), which
+ * per the Nordic nRF24L01+ product spec simply reports "received power
+ * above -64 dBm in the current RF channel" — a 1-bit energy snapshot that
+ * fires on ANY emitter (WiFi, BLE, another nRF24, microwave leakage), not
+ * on nRF24 packets. No packet, address, or device identity is ever read.
+ *
+ * Packet-based identification is out of scope by design: decoding a packet
+ * requires knowing the 40-bit address a priori, and passive discovery of
+ * unknown addresses requires attack-style techniques (mousejack-class
+ * sniffing) that MISSION.md/PROMPT.md explicitly ban. So hits are labelled
+ * as channel ENERGY/hits everywhere, never as devices or dBm.
  */
 
 #define ROOM_SWEEP_NRF24_CHANNELS 126U
@@ -148,14 +162,28 @@ static inline void room_sweep_nrf24_activity_tick(RoomSweepNrf24State* s, uint32
 }
 
 /*
- * Map the current activity score into a feedback peak (int dBm) through the
- * shared analyzer activity mapping (0 -> -110 dBm, hot -> ~-30 dBm).
+ * Map the current activity score into a shared meter level (int dBm-scale
+ * units) used ONLY to pace feedback (sound/vibro/LED curves take a dBm-like
+ * input) and to position shared analyzer bars. The result is a synthetic
+ * meter position (0 -> -110, hot -> ~-30), NOT a measured RSSI: the RPD is
+ * a 1-bit threshold detector and produces no signal-strength reading.
+ * Screens must never print this value with "dBm" — use
+ * room_sweep_nrf24_activity_units_label() instead.
  */
 static inline int room_sweep_nrf24_activity_to_rssi(const RoomSweepNrf24State* s) {
     if(!s) return -127;
     uint16_t scaled = (uint16_t)(s->activity_score / 4U);
     if(scaled > 255U) scaled = 255U;
     return room_sweep_analyzer_activity_to_rssi((uint8_t)scaled);
+}
+
+/*
+ * Units label for every numeric nRF24 readout on screen: the value is
+ * ACTIVITY on the shared meter scale (arbitrary units), never measured dBm.
+ * Host-tested so the label cannot silently drift back to "dBm".
+ */
+static inline const char* room_sweep_nrf24_activity_units_label(void) {
+    return "ACT";
 }
 
 /* Advance scan cursor; returns true when a full pass finished. */
