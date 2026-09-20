@@ -122,8 +122,9 @@
       "room_sweep_oui.h: IEEE-registry-verified curated vendor table + randomized-MAC detection (host-tested)",
       "room_sweep_classify.h: name-pattern class hints with boundary guards, '?' UI labels (host-tested)",
       "Wired at draw time into Wi/BT list + detail pages, observation CSV details, Room Report vendors/hints lines",
-      "Docs: README, USER_GUIDE, CHANGELOG; ui_layout constants + tests extended"
+      "Docs: README, USER_GUIDE, CHANGELOG; ui_layout constants + tests extended",
+      "Gates: ./init.sh ALL PASS (20 suites), _verify_api.py CLEAN, ufbt zero warnings (Target 7, API 87.1); on-device verification deferred to main agent"
     ],
-    "passes": false
+    "passes": true
   }
 ]
