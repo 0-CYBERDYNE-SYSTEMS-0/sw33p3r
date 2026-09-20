@@ -4,6 +4,22 @@ Keep-a-Changelog-inspired, condensed per release series. The full per-fix
 history lives in `fix_plan.md` (session-by-session) and `progress.log`
 (dated session log).
 
+## Unreleased — capability expansion, Phase 1 (2026-09-20)
+
+- Identification layer, backend-side only (no new UART commands, no setup):
+  Wi-Fi/BLE rows now carry a curated OUI vendor label, `randomized` for
+  locally administered MACs, and `?`-suffixed name-pattern hints.
+- `room_sweep_oui.h`: 62-prefix vendor table, every entry verified against
+  the IEEE registry on 2026-09-20; unlisted MACs print `unlisted` — never a
+  guess. Host suite `tests/test_oui.c`.
+- `room_sweep_classify.h`: camera/printer/hotspot/IoT/drone/devboard hints
+  (tracker names on BLE) with boundary guards (`cameron` never hints
+  camera); `Hidden/unknown` is neutral. Host suite `tests/test_classify.c`.
+- Wi/BT list rows show the hint tag; detail pages add `Vendor:` and
+  `HINT: x? (name guess)` lines; CSV observation details carry
+  `oui=…`/`hints=…` tokens; the Room Report gains `Vendors seen (curated
+  OUI, not exhaustive)` and `Hints (name-pattern guesses only)` lines.
+
 ## v3.2 — 2026-09-11 (truth audit)
 
 - RF tab: the SIGNAL badge now states its real meaning — energy above the
