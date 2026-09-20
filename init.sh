@@ -76,6 +76,10 @@ echo "== host Marauder line parser =="
 cc -std=c11 -Wall -Wextra -Werror -pedantic -I. tests/test_marauder_parse.c -o /tmp/test_marauder_parse
 /tmp/test_marauder_parse
 
+echo "== host OUI vendor lookup =="
+cc -std=c11 -Wall -Wextra -Werror -pedantic -I. tests/test_oui.c -o /tmp/test_oui
+/tmp/test_oui
+
 echo "== ufbt build =="
 ufbt
 
