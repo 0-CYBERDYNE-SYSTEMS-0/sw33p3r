@@ -35,6 +35,12 @@ typedef struct {
     uint8_t nrf_top_channel;
     uint32_t nrf_total_hits; /* summed RPD energy hits across passes */
     bool full_sweep_completed;
+    /* Identification evidence (Phase 1), lifted from WIFI/BLE observation
+     * detail tokens. Vendors are distinct curated labels; hints count
+     * observations whose advertised name matched a class pattern. */
+    char vendors[ROOM_SWEEP_REPORT_VENDORS_MAX][ROOM_SWEEP_REPORT_VENDOR_LEN];
+    uint8_t vendor_count;
+    uint32_t hint_observations;
     char session_path[SESSION_PATH_MAX];
     char uart_path[SESSION_PATH_MAX];
     char report_path[SESSION_PATH_MAX];
@@ -412,6 +418,21 @@ bool session_log_write_event(const SessionLogEvent* event) {
     if(strcmp(event_clean, "full_sweep_done") == 0) s_log.full_sweep_completed = true;
     if(strcmp(event_clean, "observation") == 0 || strcmp(event_clean, "snapshot") == 0)
         report_sensor_for_source(source_clean);
+    /* Identification evidence: oui=/hints= tokens on WIFI/BLE observations
+     * (detail is the same bounded string the CSV row carries). */
+    if(strcmp(event_clean, "observation") == 0 &&
+       (strcmp(source_clean, "WIFI") == 0 || strcmp(source_clean, "BLE") == 0)) {
+        char token[ROOM_SWEEP_REPORT_VENDOR_LEN];
+        if(room_sweep_report_detail_token(detail_clean, "oui", token, sizeof(token)) &&
+           strcmp(token, "unlisted") != 0 && strcmp(token, "randomized") != 0) {
+            room_sweep_report_vendor_note(
+                s_log.vendors, ROOM_SWEEP_REPORT_VENDORS_MAX, &s_log.vendor_count, token);
+        }
+        if(room_sweep_report_detail_token(detail_clean, "hints", token, sizeof(token)) &&
+           s_log.hint_observations < UINT32_MAX) {
+            s_log.hint_observations++;
+        }
+    }
     if(strcmp(source_clean, "TX") == 0) {
         if(strcmp(event_clean, "tx_arm") == 0)
             room_sweep_report_set_tx(&s_log.report, RoomSweepReportTxArmed);
@@ -472,6 +493,9 @@ static bool write_report(void) {
     findings.nrf_total_hits = s_log.nrf_total_hits;
     findings.gps_snapshots = s_log.observation_count[3];
     findings.full_sweep_completed = s_log.full_sweep_completed;
+    findings.hint_observations = s_log.hint_observations;
+    memcpy(findings.vendors, s_log.vendors, sizeof(findings.vendors));
+    findings.vendor_count = s_log.vendor_count;
     used = room_sweep_report_append_findings(&findings, report, sizeof(report), used);
     bool uart_exists = storage_file_exists(s_log.storage, s_log.uart_path);
     room_sweep_report_append(

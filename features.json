@@ -114,5 +114,17 @@
       "WiFi/BLE input: short OK locks/unlocks selected row (empty list starts scan), Hold OK rescans; footer hints + USER_GUIDE/spec updated; TX tab code unchanged"
     ],
     "passes": true
+  },
+  {
+    "category": "functional",
+    "description": "Identification layer: OUI vendor lookup + name-pattern hints for Wi-Fi/BLE (Phase 1)",
+    "steps": [
+      "room_sweep_oui.h: IEEE-registry-verified curated vendor table + randomized-MAC detection (host-tested)",
+      "room_sweep_classify.h: name-pattern class hints with boundary guards, '?' UI labels (host-tested)",
+      "Wired at draw time into Wi/BT list + detail pages, observation CSV details, Room Report vendors/hints lines",
+      "Docs: README, USER_GUIDE, CHANGELOG; ui_layout constants + tests extended",
+      "Gates: ./init.sh ALL PASS (20 suites), _verify_api.py CLEAN, ufbt zero warnings (Target 7, API 87.1); on-device verification deferred to main agent"
+    ],
+    "passes": true
   }
 ]
