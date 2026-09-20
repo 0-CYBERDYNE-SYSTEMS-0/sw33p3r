@@ -174,6 +174,87 @@ int main(void) {
     check(tiny_length == sizeof(tiny) - 1U && tiny[sizeof(tiny) - 1U] == '\0',
           "small output buffer is bounded and terminated");
 
+    /* ---------------------------------------------------------- */
+    /* Identification evidence: vendors + hints (Phase 1)         */
+    /* ---------------------------------------------------------- */
+
+    /* Token extraction from bounded detail strings. */
+    char token[16];
+    check(
+        room_sweep_report_detail_token("oui=Apple; AP beacon", "oui", token, sizeof(token)) &&
+            strcmp(token, "Apple") == 0,
+        "detail token extracts oui label");
+    check(
+        room_sweep_report_detail_token("oui=randomized hints=DEV?; AP beacon", "hints", token, sizeof(token)) &&
+            strcmp(token, "DEV?") == 0,
+        "detail token extracts hint tag after another token");
+    check(
+        room_sweep_report_detail_token("oui=unlisted; BLE adv", "oui", token, sizeof(token)) &&
+            strcmp(token, "unlisted") == 0,
+        "detail token extracts unlisted marker");
+    check(
+        !room_sweep_report_detail_token("AP beacon heard", "oui", token, sizeof(token)),
+        "detail token absent returns false");
+    check(
+        !room_sweep_report_detail_token("hints=; AP beacon", "hints", token, sizeof(token)),
+        "detail token empty value returns false");
+    check(
+        room_sweep_report_detail_token("noui=Apple; x", "oui", token, sizeof(token)) == false,
+        "detail token key must start at a token boundary");
+
+    /* Distinct-label accumulation. */
+    char vendors[ROOM_SWEEP_REPORT_VENDORS_MAX][ROOM_SWEEP_REPORT_VENDOR_LEN];
+    uint8_t vendor_count = 0;
+    check(room_sweep_report_vendor_note(vendors, ROOM_SWEEP_REPORT_VENDORS_MAX, &vendor_count, "Apple"),
+          "first vendor label is added");
+    check(room_sweep_report_vendor_note(vendors, ROOM_SWEEP_REPORT_VENDORS_MAX, &vendor_count, "Samsung"),
+          "second vendor label is added");
+    check(!room_sweep_report_vendor_note(vendors, ROOM_SWEEP_REPORT_VENDORS_MAX, &vendor_count, "Apple"),
+          "duplicate vendor label is ignored");
+    check(!room_sweep_report_vendor_note(vendors, ROOM_SWEEP_REPORT_VENDORS_MAX, &vendor_count, ""),
+          "empty vendor label is rejected");
+    check(vendor_count == 2, "vendor count reflects distinct labels only");
+
+    /* The report lines themselves. */
+    RoomSweepReportFindings ident;
+    room_sweep_report_findings_init(&ident);
+    ident.hint_observations = 7;
+    ident.vendor_count = 2;
+    strncpy(ident.vendors[0], "Apple", ROOM_SWEEP_REPORT_VENDOR_LEN - 1U);
+    strncpy(ident.vendors[1], "Samsung", ROOM_SWEEP_REPORT_VENDOR_LEN - 1U);
+    char ident_report[1024];
+    room_sweep_report_format(&state, ident_report, sizeof(ident_report));
+    room_sweep_report_append_findings(&ident, ident_report, sizeof(ident_report), strlen(ident_report));
+    check_contains(
+        ident_report,
+        "Vendors seen (curated OUI, not exhaustive): Apple, Samsung",
+        "vendor list names registrants, never device counts");
+    check_contains(
+        ident_report,
+        "Hints (name-pattern guesses only): 7 observation(s)",
+        "hint line is labeled as name-pattern guesses only");
+
+    /* No identification evidence -> no lines (no zero-noise). */
+    RoomSweepReportFindings quiet_ident;
+    room_sweep_report_findings_init(&quiet_ident);
+    char quiet_report[1024];
+    room_sweep_report_format(&state, quiet_report, sizeof(quiet_report));
+    room_sweep_report_append_findings(&quiet_ident, quiet_report, sizeof(quiet_report), strlen(quiet_report));
+    check(
+        strstr(quiet_report, "Vendors seen") == NULL &&
+            strstr(quiet_report, "Hints (name-pattern") == NULL,
+        "identification lines are omitted when nothing was identified");
+
+    /* Vendor list overflow stops at the cap. */
+    char capped[ROOM_SWEEP_REPORT_VENDORS_MAX][ROOM_SWEEP_REPORT_VENDOR_LEN];
+    uint8_t capped_count = 0;
+    for(int i = 0; i < ROOM_SWEEP_REPORT_VENDORS_MAX + 4; i++) {
+        char label[ROOM_SWEEP_REPORT_VENDOR_LEN];
+        snprintf(label, sizeof(label), "V%02d", i);
+        room_sweep_report_vendor_note(capped, ROOM_SWEEP_REPORT_VENDORS_MAX, &capped_count, label);
+    }
+    check(capped_count == ROOM_SWEEP_REPORT_VENDORS_MAX, "vendor list is capped at the maximum");
+
     printf("RESULT: %s (%d failure(s))\n", failures ? "FAIL" : "ALL PASS", failures);
     return failures ? 1 : 0;
 }

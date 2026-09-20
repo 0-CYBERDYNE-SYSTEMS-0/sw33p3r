@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdarg.h>
+#include <string.h>
 
 typedef enum {
     RoomSweepReportSensorRf = 1U << 0,
@@ -46,6 +47,11 @@ typedef struct {
     bool gps_omitted;
 } RoomSweepReportState;
 
+/* Vendor evidence: at most this many distinct curated labels are listed in
+ * a report; each label is <= 12 chars + NUL (see room_sweep_oui.h). */
+#define ROOM_SWEEP_REPORT_VENDORS_MAX 8
+#define ROOM_SWEEP_REPORT_VENDOR_LEN 13
+
 /* Counts used to write a plain-English Room Report body. */
 typedef struct {
     uint32_t rf_observations;
@@ -63,6 +69,13 @@ typedef struct {
     uint32_t nrf_total_hits; /* RPD energy hits summed across passes */
     uint32_t gps_snapshots;
     bool full_sweep_completed;
+    /* Identification evidence (Phase 1). Vendors are distinct curated OUI
+     * labels seen among heard MACs — a vendor LIST, never a device count.
+     * Hint observations are rows whose advertised name matched a class
+     * pattern; they stay separate from the device findings above. */
+    uint32_t hint_observations;
+    char vendors[ROOM_SWEEP_REPORT_VENDORS_MAX][ROOM_SWEEP_REPORT_VENDOR_LEN];
+    uint8_t vendor_count;
 } RoomSweepReportFindings;
 
 static inline void room_sweep_report_init(RoomSweepReportState* state) {
@@ -230,6 +243,58 @@ static inline void room_sweep_report_append_sensor_names(
     if(first) room_sweep_report_append(output, capacity, used, "none");
 }
 
+/*
+ * Add a vendor label to a fixed-size distinct-label list. Returns true when
+ * the label was added, false when it was already present, the list is full,
+ * or the label is empty. Truth note: this records LABELS SEEN, never device
+ * counts — one label may cover many observed MACs.
+ */
+static inline bool room_sweep_report_vendor_note(
+    char vendors[][ROOM_SWEEP_REPORT_VENDOR_LEN],
+    uint8_t max_labels,
+    uint8_t* count,
+    const char* label) {
+    if(!vendors || !count || !label || label[0] == '\0') return false;
+    for(uint8_t i = 0; i < *count && i < max_labels; i++) {
+        if(strcmp(vendors[i], label) == 0) return false;
+    }
+    if(*count >= max_labels) return false;
+    strncpy(vendors[*count], label, ROOM_SWEEP_REPORT_VENDOR_LEN - 1U);
+    vendors[*count][ROOM_SWEEP_REPORT_VENDOR_LEN - 1U] = '\0';
+    (*count)++;
+    return true;
+}
+
+/*
+ * Extract one "key=value" evidence token from a bounded detail string
+ * (tokens are separated by ';' and the value ends at ';' or end of string,
+ * trailing spaces trimmed). Returns true and fills out when present and
+ * non-empty. Used to lift oui=/hints= tokens from observation details
+ * without re-parsing raw records.
+ */
+static inline bool room_sweep_report_detail_token(
+    const char* detail,
+    const char* key,
+    char* out,
+    size_t out_size) {
+    if(!detail || !key || !out || out_size == 0) return false;
+    out[0] = '\0';
+    size_t klen = strlen(key);
+    if(klen == 0) return false;
+    for(const char* p = detail; *p != '\0'; p++) {
+        bool at_start = (p == detail) || *(p - 1) == ' ' || *(p - 1) == ';';
+        if(at_start && strncmp(p, key, klen) == 0 && p[klen] == '=') {
+            p += klen + 1;
+            size_t i = 0;
+            while(*p != '\0' && *p != ';' && i + 1U < out_size) out[i++] = *p++;
+            while(i > 0 && out[i - 1] == ' ') i--;
+            out[i] = '\0';
+            return i > 0;
+        }
+    }
+    return false;
+}
+
 /* Coverage header. Returns bytes written excluding NUL. */
 static inline size_t room_sweep_report_format(
     const RoomSweepReportState* state,
@@ -357,6 +422,27 @@ static inline size_t room_sweep_report_append_findings(
             &used,
             "BLE: no advertisements in %lu scan windows.\n",
             (unsigned long)f->ble_windows);
+    }
+
+    if(f->vendor_count > 0) {
+        room_sweep_report_append(
+            output,
+            capacity,
+            &used,
+            "Vendors seen (curated OUI, not exhaustive): ");
+        for(uint8_t i = 0; i < f->vendor_count && i < ROOM_SWEEP_REPORT_VENDORS_MAX; i++) {
+            room_sweep_report_append(
+                output, capacity, &used, "%s%s", i > 0 ? ", " : "", f->vendors[i]);
+        }
+        room_sweep_report_append(output, capacity, &used, "\n");
+    }
+    if(f->hint_observations > 0) {
+        room_sweep_report_append(
+            output,
+            capacity,
+            &used,
+            "Hints (name-pattern guesses only): %lu observation(s).\n",
+            (unsigned long)f->hint_observations);
     }
 
     if(f->nrf_observations > 0 || f->nrf_active_channels > 0) {

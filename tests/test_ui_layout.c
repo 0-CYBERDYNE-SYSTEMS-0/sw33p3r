@@ -71,6 +71,40 @@ int main(void) {
     check(room_sweep_ui_center_x(0, 128, 128) == 0, "full-width text in full-width box starts at 0");
     check(room_sweep_ui_center_x(0, 128, 200) == 0, "text wider than the box flushes to box start");
 
+    /* Wireless list rows: RSSI column, name clip, right-aligned hint tag. */
+    check(UI_ROW_RSSI_X == 1 && UI_ROW_NAME_X == 28, "list rows: RSSI at x1, name from x28");
+    check(
+        room_sweep_ui_hint_x(4) == 106,
+        "4-char hint tag right-aligns at x106 (126 - 4*5)");
+    check(
+        room_sweep_ui_hint_x(3) == 111,
+        "3-char hint tag right-aligns at x111 (126 - 3*5)");
+    check(
+        room_sweep_ui_name_clip_px(4) == 73,
+        "name clips to 73px when a 4-char tag is shown (28..101, 1 glyph gap)");
+    check(
+        room_sweep_ui_name_clip_px(3) == 78,
+        "name clips to 78px when a 3-char tag is shown (28..106, 1 glyph gap)");
+    check(
+        room_sweep_ui_name_clip_px(0) == 0,
+        "degenerate tag length reports no clip width (use UI_ROW_NAME_MAX_PX)");
+    check(
+        UI_ROW_NAME_X + room_sweep_ui_name_clip_px(4) + UI_FONT_KEYBOARD_PX <=
+            room_sweep_ui_hint_x(4),
+        "clipped name plus one glyph gap never reaches a 4-char tag");
+    check(
+        UI_ROW_NAME_X + room_sweep_ui_name_clip_px(3) + UI_FONT_KEYBOARD_PX <=
+            room_sweep_ui_hint_x(3),
+        "clipped name plus one glyph gap never reaches a 3-char tag");
+    check(
+        room_sweep_ui_text_fits(
+            room_sweep_ui_hint_x(UI_ROW_HINT_MAX_CHARS), UI_ROW_HINT_MAX_CHARS, UI_FONT_KEYBOARD_PX),
+        "widest tag fits between its x and the text edge");
+    check(
+        UI_ROW_NAME_MAX_PX <= room_sweep_ui_name_clip_px(UI_ROW_HINT_MAX_CHARS) ||
+            UI_ROW_NAME_X + UI_ROW_NAME_MAX_PX <= UI_TEXT_RIGHT_EDGE,
+        "legacy no-tag clip width still respects the text edge");
+
     if(failures) {
         printf("RESULT: %d failure(s)\n", failures);
         return 1;

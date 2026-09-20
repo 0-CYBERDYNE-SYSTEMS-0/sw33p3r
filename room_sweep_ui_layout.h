@@ -90,6 +90,40 @@ static inline uint8_t room_sweep_ui_center_x(uint8_t box_x, uint8_t box_w, uint8
 }
 
 /*
+ * Wireless list rows (Wi/BT LIST page). The "%4d " RSSI text occupies the
+ * left of the line starting at x=1; the advertised name clips from
+ * UI_ROW_NAME_X; an identification hint tag (3-4 chars, e.g. "CAM?") is
+ * right-aligned at the text edge with one glyph of gap so a clipped name
+ * and the tag never collide.
+ */
+#define UI_ROW_RSSI_X 1
+#define UI_ROW_NAME_X 28
+#define UI_ROW_NAME_MAX_PX 96
+#define UI_ROW_HINT_MAX_CHARS 4
+
+/*
+ * X that right-aligns a tag_chars-long FontKeyboard hint tag against the
+ * text edge (4 chars -> 106, 3 chars -> 111).
+ */
+static inline uint8_t room_sweep_ui_hint_x(uint8_t tag_chars) {
+    return room_sweep_ui_right_align_x(
+        UI_TEXT_RIGHT_EDGE,
+        (uint8_t)((uint32_t)tag_chars * UI_FONT_KEYBOARD_PX));
+}
+
+/*
+ * Name clip width in px for a row carrying a tag_chars-long hint tag:
+ * [UI_ROW_NAME_X .. tag_x - one glyph gap]. 0 when there is no room
+ * (tag_chars == 0 callers should use UI_ROW_NAME_MAX_PX instead).
+ */
+static inline uint8_t room_sweep_ui_name_clip_px(uint8_t tag_chars) {
+    if(tag_chars == 0) return 0; /* degenerate: caller uses UI_ROW_NAME_MAX_PX */
+    uint8_t tag_x = room_sweep_ui_hint_x(tag_chars);
+    if(tag_x <= (uint8_t)(UI_ROW_NAME_X + UI_FONT_KEYBOARD_PX)) return 0;
+    return (uint8_t)(tag_x - UI_FONT_KEYBOARD_PX - UI_ROW_NAME_X);
+}
+
+/*
  * Footer/hint copy budget. FontKeyboard averages ~6px/char, so a hint drawn
  * at UI_MARGIN_X must stay <= UI_HINT_MAX_CHARS to clear the 128px screen
  * (anything longer clips at the right edge — QA 2026-09-04). The static
