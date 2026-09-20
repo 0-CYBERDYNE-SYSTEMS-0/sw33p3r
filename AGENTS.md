@@ -90,7 +90,10 @@ Single ViewPort app, one draw function, **7 tabs** (`SweepMode` in
 - USART pins 13/14 @ 115200 **after `expansion_disable()`** (restore on exit).
   Line ending is `\n` only (not CRLF).
 - Fixed scan-only commands: `sniffbeacon`, `sniffbt`, `stopscan`, `nmea`,
-  `gps -g nmea`, `help` (no `scanap` on modern Marauder).
+  `gps -g nmea`, `help`. (`scanap`/`scansta`/`sniffprobe` exist on the current
+  BFFB build — verified 2026-09-20, see `docs/BFFB_MOMENTUM.md` — but are not
+  sent today; the list is policy, not a capability list. Expansion candidates
+  live in `specs/full-capability-expansion-2026-09-20.md`.)
 - GPS primary: Flipper GPIO **LPUART 15/16 @ 9600**; Marauder `nmea` stream is
   the fallback. Verify against `docs/BFFB_MOMENTUM.md`.
 
