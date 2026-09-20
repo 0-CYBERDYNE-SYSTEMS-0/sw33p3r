@@ -87,6 +87,135 @@ capability-byte suffix, and an SSID may legitimately end in short tokens
 
 **GPS (`nmea`):** `Serial.println` of queued NMEA + `generateGXgga` / `generateGXrmc`.
 
+## On-device CLI help transcript (2026-09-20, mntm-012 rig `Rug1k0`)
+
+Captured verbatim from the BFFB ESP32 by a prior Room Sweep session's raw UART
+dump (`#help` echo + response; ring-bounded, so ordering is start/end of the
+help block). This is **this exact firmware build's** command set, not the
+upstream wiki's:
+
+```text
+============ Commands ============
+channel [-s <channel>]
+settings [-s <setting> enable/disable>]/[-r]
+clearlist -a/-c/-s
+reboot
+update -s/-w
+ls <directory>
+led -s <hex color>/-p <rainbow>
+gpsdata
+gps [-g] <fix/sat/lon/lat/alt/date/accuracy/text/nmea>
+    [-n] <native/all/gps/glonass/galileo/navic/qzss/beidou>
+         [-b = use BD vs GB for beidou]
+nmea
+evilportal [-c start [-w html.html]/sethtml <html.html>]
+sigmon
+scanap
+scansta
+sniffraw
+sniffbeacon
+sniffprobe
+sniffpwn
+sniffesp
+ssid -r <index>
+save -a/-s
+load -a/-s
+sniffbt
+blespam -t <apple/google/samsung/windows/all>
+btwardrive [-c]
+sniffskim
+==================================
+```
+
+Findings for the expansion spec (`specs/full-capability-expansion-2026-09-20.md`):
+
+- **Present:** `sniffprobe` (hidden-SSID recovery), `scansta` (station/client
+  list), `scanap`, `sniffraw`, `sniffesp` (other-Marauder/ESP32 beacon
+  detection), `sigmon`, `sniffpwn`. Attack commands (`evilportal`, `blespam`,
+  `btwardrive`, `sniffskim`) exist but are **never sent** per MISSION.md.
+- **Absent from help:** `sniffdeauth` and `scanall` — Phase 10 (deauth
+  detection) is an honest-skip candidate on this build; STA capture pivots to
+  `scansta` + `list -s` instead of `scanall`.
+- **`sniffbt` has no `-t` variant in this help** (upstream's
+  `sniffbt -t airtag|flipper|flock|meta` is NOT confirmed here). Phase 1 must
+  live-verify `-t` through the USB-UART bridge before building on it; if
+  absent, tracker filtering moves host-side or is honestly skipped.
+- **Still unverified:** serial output formats of `sniffprobe`/`scansta`/
+  `sniffesp`/`sniffraw`. Raw capture requires the GPIO app's **USB-UART
+  Bridge**, which refuses to start while any host session (RPC or CLI) is
+  connected — start it on-device, then run the probe battery from the host.
+
+## Live probe battery (2026-09-20, USB-UART bridge, mntm-012 rig `Rug1k0`)
+
+Every command below was sent to the ESP32 through the GPIO app's USB-UART
+bridge and the raw response captured (`.omo/evidence/marauder-probe-*`,
+local-only). This is the verified format record for the expansion spec.
+
+**Bridge fact:** with the bridge active, the Flipper's single CDC port IS the
+ESP32 CLI (`stopscan` → `#stopscan\r\nStopping WiFi tran/recv\r\n> `). The
+Flipper text CLI/RPC is unavailable while bridged. Exit the bridge on-device
+(long BACK) to restore.
+
+**`sniffbeacon` (live, re-verified):** prompt `> ` prefixes only the FIRST
+line after the banner; later lines are bare:
+```text
+> RSSI: -54 Ch: 2 BSSID: c8:4f:86:db:66:9d ESSID: Gill Mechanical
+RSSI: -53 Ch: 2 BSSID: c8:4f:86:db:66:9d ESSID: Gill Mechanical
+```
+
+**`scanap` (exists on this build; format DIFFERS from upstream claim):**
+the capability data is a SEPARATE FOLLOW-UP LINE, not a suffix on the AP line,
+and the AP line carries a TRAILING SPACE after the SSID:
+```text
+> RSSI: -47 Ch: 5 BSSID: ac:91:9b:d3:2b:fe ESSID: Verizon_3TFXQX␠
+Beacon: 11 14 1 100040
+```
+The four `Beacon:` values are NOT interpreted here (no upstream source pulled
+for this build); any future parser must treat them as opaque. The old
+"`ESSID: Name 00 00` same-line suffix" format was NOT observed on this build.
+
+**`list -a`:** `[0][CH:5] Verizon_3TFXQX <raw byte>` — index, channel, SSID,
+then a raw byte (binary, garbles UTF-8). Do not parse the byte.
+
+**`scansta`:** requires `scanap` FIRST — without it:
+`The AP list is empty. Scan APs first with scanap`. With it, stations
+associate against that AP list. `list -s` prints `0 selected` when empty.
+Station line format still UNOBSERVED (no client associated during capture).
+
+**`sniffraw` (discovered — per-frame transmitter radar):** one line per
+received 802.11 frame on the current channel, INCLUDING stations, not just APs:
+```text
+RSSI: -44 Ch: 6 BSSID: 86:9a:c8:b0:3c:47
+RSSI: -32 Ch: 6 BSSID: ea:5b:25:d1:62:14
+```
+This is the only command observed that surfaces non-AP transmitters live.
+
+**`sniffbt` (live, re-verified):** abutting-record stream confirmed, and the
+trailer is misleading: `Scan complete! Found 0 devices` counts SAVED devices
+(SavePCAP setting), not observed ones — the `>  RSSI: … Device: …` stream is
+the real payload. The Flipper's own BLE name (`Rug1k0`) appears in the stream:
+the ESP32 hears the Flipper itself.
+
+**`sniffbt -t airtag|flipper|flock|meta`:** all four ACCEPTED syntactically
+(banner identical), but the output stream was NOT filtered — the same
+heterogeneous device mix (Bose headphone, random MACs, the Flipper itself)
+appears under every filter. **Tracker filtering is NOT demonstrable on this
+build over serial.** Any Phase 1 claim must be gated on this or pivoted
+host-side.
+
+**`sniffprobe`:** starts (`Starting Probe sniff. Stop with stopscan`) but
+produced ZERO lines in a 6 s window (no client probed during capture).
+Command exists; line format remains UNPINNED — needs a longer window or a
+deliberately probing device before a parser is written against it.
+
+**`sniffesp`:** starts (`Starting Espressif device sniff…`) — no Espressif
+beacons in window, format unobserved. **`sniffpwn`:** `Starting Pwnagotchi
+sniff…` — a hostile-tooling detector (other people's offensive WiFi gear).
+**`sigmon`:** `Starting Signal Strength Scan…` — no output in window.
+**`settings`:** dumps name/type/value blocks (ForcePMKID, ForceProbe,
+SavePCAP, EnableLED — all `true` on this rig).
+**`sniffdeauth`, `scanall`:** confirmed ABSENT from this build's CLI.
+
 ## Momentum firmware (this project)
 
 - Target: **Momentum mntm-012**, **API 87.1**, **target 7**
@@ -97,5 +226,11 @@ capability-byte suffix, and an SSID may legitimately end in short tokens
 ## What not to claim
 
 - Do not claim Flipper GPIO GPS works on BFFB (wiki explicitly says it does not).
-- Do not send legacy `scanap` on modern Marauder (command absent).
+- ~~Do not send legacy `scanap` on modern Marauder (command absent).~~
+  **Superseded 2026-09-20:** the on-device help transcript shows `scanap` (and
+  `scansta`) DO exist on this build. The rule stays for a different reason:
+  Room Sweep sends only `sniffbeacon` by policy — beacon-only capture needs no
+  active scan, and `scanap` output carries the capability-byte suffix that
+  already bit the parser once (see the superseded invariant in
+  `specs/marauder-parser-2026-08-15.md`).
 - Do not set Flipper USART to 9600 for BFFB GPS (wrong link; GPS is behind Marauder CLI).

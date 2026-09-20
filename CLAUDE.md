@@ -115,8 +115,10 @@ Other modules: `nmea.c/h` (host-tested NMEA parser: GGA/RMC/GLL/ZDA/GSV),
   `expansion_enable()` on exit). Line ending is `\n` only (Marauder
   `readStringUntil('\n')` + trim — not CRLF).
 - Commands sent are fixed and scan-only: `sniffbeacon` (WiFi AP), `sniffbt`
-  (BLE), `stopscan`, `nmea`, `gps -g nmea`, `help`. Modern Marauder has no
-  `scanap`. WiFi lines: `-RSSI Ch: n MAC ESSID: …`; BLE: `-RSSI Device: name|mac`.
+  (BLE), `stopscan`, `nmea`, `gps -g nmea`, `help`. (`scanap`/`scansta`/
+  `sniffprobe` exist on the current BFFB build — verified 2026-09-20 — but are
+  not sent; policy list, not a capability list.) WiFi lines:
+  `-RSSI Ch: n MAC ESSID: …`; BLE: `-RSSI Device: name|mac`.
 - GPS primary path is Flipper GPIO **LPUART 15/16 @ 9600** (Momentum setting:
   NMEA GPS UART = Extra 15,16); Marauder `nmea` stream over USART is the
   fallback when GPIO is silent. BFFB's GPS module is wired to the ESP32 only.
