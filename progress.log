@@ -157,3 +157,23 @@
   findings strings + real hit totals + zero-hit passes), test_full_sweep_state
   (has_pos gate semantics). No new Flipper API symbols.
 - New spec: specs/sigint-truth-audit-2026-09-11.md (12-issue table).
+
+## 2026-09-20 — Phase 1: identification layer (feat/phase1-identification-2026-09 → main 0996397)
+- room_sweep_oui.h: 62-prefix curated OUI lookup + randomized detection; every
+  prefix cross-checked against the IEEE registry (6 memory errors corrected).
+- room_sweep_classify.h: name-pattern hints (CAM?/PRT?/HS?/IOT?/DRN?/DEV?/TRK?)
+  with word-boundary guards; Hidden/unknown neutral; hints always carry "?".
+- Wired: Wi/BT list hint tags, Wi/BT detail Vendor:+HINT: lines, CSV
+  oui=/hints= tokens, report vendors/hints lines, Info tab ident row.
+- Tests: test_oui (286 asserts), test_classify (77), test_ui_layout +
+  test_report_state extended. Gates: init.sh ALL PASS (20 suites), _verify_api
+  CLEAN, ufbt zero warnings.
+- On-device (rig Rug1k0, mntm-012): ufbt launch + live drive. Verified PRT?
+  tag on real "DIRECT-ed-HP M283 LaserJet" (no false tags on 5 other APs),
+  Vendor: randomized on a locally-administered -IoT AP, Vendor: unlisted on
+  listed-nothing MACs, Info tab "ident: curated OUI". Screenshots in
+  .omo/evidence/device-recon-2026-09-20/ (local only).
+- Known limitation: BLE random-static addresses (0xC0 bits) are not flagged by
+  the 0x02 locally-administered test — BLE randomized labeling under-reports;
+  documented, follow-up candidate.
+- Rollback: tag restore/pre-phase1-2026-09-20 (pushed).
