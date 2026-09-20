@@ -73,8 +73,8 @@ Marauder command: `sniffbeacon` (AP beacons only).
 
 | Page (Hold Right) | Shows |
 |-------------------|--------|
-| **Detail** | One selected AP: SSID, RSSI, channel, MAC |
-| **List** | Up to 5 rows RSSI + name |
+| **Detail** | One selected AP: SSID, `Vendor:` (curated OUI label, `unlisted`, or `randomized` for a self-assigned MAC), RSSI, channel, MAC, and a `HINT: x? (name guess)` line when the SSID matches a device-class pattern |
+| **List** | Up to 5 rows RSSI + name + right-aligned `?` hint tag |
 | **Help** | Short control reminder |
 
 - **Up/Down:** select AP  
@@ -83,7 +83,15 @@ Marauder command: `sniffbeacon` (AP beacons only).
 - **Hold Left:** analyzer for the **selected/locked** AP  
 - Scan window: **Settings → ScanWin** (15/30/60 s)
 
-**Meter truth:** the fat analyzer bar tracks **that AP’s live table RSSI**.
+**Vendor truth:** `Vendor:` names the company that registered the MAC's
+3-byte OUI prefix — a short curated, IEEE-verified table, not an exhaustive
+database, so real devices read `unlisted`. `randomized` means the first
+octet marks the address as locally administered (privacy phones and spoofed
+MACs) — it says nothing about the vendor. **HINT truth:** the hint is a
+pattern match on the *advertised name* — a guess with a `?` on purpose; the
+placeholder `Hidden/unknown` never produces one.
+
+**Meter truth:** the fat analyzer bar tracks **that AP's live table RSSI**.
 If beacons stop, after ~2 s the bar **fades**; by ~6 s it is **empty (LOST)**.
 You are not auto-cycling every network on the fat bar—only the selection.
 
@@ -91,7 +99,10 @@ Beacon heard ≠ Internet, telemetry, recording, ownership, or intent.
 
 ### BLE
 
-Same page/control pattern as Wi-Fi. Command: `sniffbt`.
+Same page/control pattern as Wi-Fi. Command: `sniffbt`. Detail rows carry
+the same `Vendor:` and `HINT:` lines; tracker names (`tile`, `smarttag`,
+`trackr`, `airtag`) show `TRK?` — most AirTags advertise no name at all, so
+no hint is not evidence of absence.
 
 ### nRF24 (nR tab)
 
@@ -159,7 +170,7 @@ While **DISARMED** on external CC1101, Hold ◀/▶ steps ExtBand (AUTO / 400 / 
 
 | Page | Content |
 |------|---------|
-| 1 Radio | RF path, SPI, Marauder, GPS source |
+| 1 Radio | RF path, SPI, Marauder, GPS source, ident (curated OUI) |
 | 2 State | Record, baseline, lock target, dump, UART |
 | 3 Keys | Control cheat-sheet |
 | 4 Files | SD path, last report number |
@@ -218,8 +229,8 @@ Path: `/ext/apps_data/room_sweep/`
 
 | File | Contents |
 |------|----------|
-| `session-N.csv` | Events; Wi/BT IDs as session ordinals |
-| `report-N.txt` | Plain Room Report |
+| `session-N.csv` | Events; Wi/BT IDs as session ordinals; identified Wi/BT observation details carry `oui=<label\|unlisted\|randomized>` and, when the name matched a pattern, `hints=<tag>` |
+| `report-N.txt` | Plain Room Report; adds a `Vendors seen` list (when curated labels matched) and a `Hints (name-pattern guesses only)` count |
 | `uart-N.txt` | Only from Raw Dump (may include raw IDs/GPS) |
 
 Recording is size-capped; scans continue if logging stops.
@@ -247,6 +258,8 @@ Settings → FullSweep → OK:
 
 - RSSI ≠ distance  
 - Beacon/ad ≠ telemetry or intent  
+- `Vendor:` is a curated prefix registrant, not the device; `unlisted` is normal; `randomized` is a self-assigned address, not a vendor  
+- `HINT:` tags are name-pattern guesses — always keep their `?`  
 - Coverage: 16 RF presets, 3 CC1101 bands (348–387 and 464–779 MHz invisible), no 5 GHz
 - Misses: non-transmitting recorders, burst TX between samples, out-of-band, wired
 - No hit ≠ proof of absence  

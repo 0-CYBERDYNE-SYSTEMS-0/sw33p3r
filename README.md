@@ -24,8 +24,10 @@ No jamming, blocking, deauth, capture/replay, or flood modes.
 ## What it does
 
 Room Sweep detects the **presence** of RF activity and reads self-reported
-names (what devices advertise about themselves) via the ESP32. It identifies
-nothing — not device type, not "camera" or "bug," not owner, not intent. On
+names (what devices advertise about themselves) via the ESP32. It never
+confirms what a transmitter *is* — no owner, no intent, no verified device
+type. What it adds on top of raw detection is honest bookkeeping: a curated
+OUI vendor label per MAC and `?`-marked guesses from advertised names. On
 the RF tab, "signal" means only "energy above -75 dBm."
 
 - **Survey the room.** 16 RF presets with an alert line and baseline snapshot,
@@ -33,7 +35,10 @@ the RF tab, "signal" means only "energy above -75 dBm."
   history.
 - **Wi-Fi & Bluetooth via Marauder.** AP beacons (`sniffbeacon`) and BLE
   advertisements (`sniffbt`): list, detail, lock a target, then hunt it with a
-  four-page analyzer — Hunt / Field / Energy Map / Meter.
+  four-page analyzer — Hunt / Field / Energy Map / Meter. Rows carry a curated
+  OUI vendor label (`Vendor: Samsung`), "randomized" for self-assigned MACs,
+  and `?`-suffixed name-pattern hints (`CAM?`) — leads and guesses, never
+  identification.
 - **2.4 GHz energy survey.** nRF24 RPD channel energy — hits are activity
   counts, not packets or devices. Receive only.
 - **GPS walk-to radar.** Mark-centered, north-up, real meters with
@@ -48,8 +53,12 @@ the RF tab, "signal" means only "energy above -75 dBm."
 
 ## What it does NOT do
 
-- It identifies nothing: no device type, no camera/bug/tracker
-  classification, no owner, no intent.
+- It identifies nothing by itself: no device type confirmation, no owner, no
+  intent. What it can say is (a) which company registered a MAC's OUI prefix
+  (a short curated table, `unlisted` when absent, `randomized` for
+  self-assigned addresses), and (b) that an advertised *name* looks like a
+  device class — always printed with a `?` because a name is a guess, and a
+  name is not the device.
 - Signal strength is a real measurement but not a distance meter. Absolute
   meters are impossible without knowing the transmitter's power, and indoor
   reflections bend every reading.
@@ -67,8 +76,12 @@ Can catch:
 
 - A sub-GHz audio bug transmitting continuously in an ISM band: a persistent
   hot channel in Survey or Sweep.
-- A 2.4 GHz Wi-Fi camera that is on the air: it appears in the AP list.
-- A BLE device advertising openly: it appears in the BT list.
+- A 2.4 GHz Wi-Fi camera that is on the air: it appears in the AP list, with
+  its OUI vendor and a `CAM?` hint if its advertised name says camera.
+- A BLE tracker or camera advertising a name like "Tile" or "Arlo": it
+  appears in the BT list with the matching `?` hint — the name is a
+  self-report, not a verdict.
+- An ESP32/Marauder-class dev board via its Espressif OUI or name.
 
 Will miss:
 
@@ -135,9 +148,12 @@ its footer.
 
 Candidates for future work, **not current features**: Sub-GHz protocol-family
 identification (Princeton/CAME-style OOK decoding — Momentum exports the
-decoder library to FAPs), IEEE OUI vendor display for Wi/BT MACs, and a
-GPS-gradient bearing estimate while walking. Even those would never name a
-device model or its owner.
+decoder library to FAPs) and a GPS-gradient bearing estimate while walking.
+The earlier "IEEE OUI vendor display" idea shipped as Phase 1 of the
+capability expansion: a **curated, IEEE-registry-verified vendor table**
+(~60 confident prefixes), not an exhaustive database — unlisted MACs print
+`unlisted`, and every name-pattern hint keeps its `?`. Even these never name
+a device model or its owner.
 
 ## Legal & responsible use
 

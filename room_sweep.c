@@ -36,6 +36,8 @@
 #include "room_sweep_settings.h"
 #include "room_sweep_gps_state.h"
 #include "room_sweep_wireless.h"
+#include "room_sweep_oui.h"
+#include "room_sweep_classify.h"
 #include "room_sweep_full_sweep.h"
 #include "room_sweep_radio_path.h"
 #include "room_sweep_nrf24_state.h"
@@ -1508,6 +1510,34 @@ static void process_uart_lines(App* app) {
                     WifiAp* observed = &app->wifi_aps[app->wifi_last_updated];
                     bool unidentified = !observed->bssid[0] &&
                                         strcmp(observed->ssid, "Hidden/unknown") == 0;
+                    /* Evidence tokens lead the detail so a truncated tail can
+                     * never eat them; a row without a MAC gets no oui token
+                     * (there is nothing to look up). */
+                    char detail[48];
+                    const char* wifi_hint = room_sweep_classify_hint_text(
+                        room_sweep_classify_ssid(observed->ssid));
+                    if(unidentified) {
+                        strncpy(
+                            detail,
+                            "unidentified AP observations; not a device count",
+                            sizeof(detail) - 1U);
+                        detail[sizeof(detail) - 1U] = '\0';
+                    } else if(observed->bssid[0]) {
+                        snprintf(
+                            detail,
+                            sizeof(detail),
+                            "oui=%s; AP beacon%s%s",
+                            room_sweep_oui_evidence(observed->bssid),
+                            wifi_hint[0] ? " hints=" : "",
+                            wifi_hint);
+                    } else {
+                        snprintf(
+                            detail,
+                            sizeof(detail),
+                            "AP beacon; no MAC%s%s",
+                            wifi_hint[0] ? " hints=" : "",
+                            wifi_hint);
+                    }
                     record_enqueue_ex(
                         app,
                         "observation",
@@ -1520,9 +1550,7 @@ static void process_uart_lines(App* app) {
                         observed->observations,
                         "observed",
                         "",
-                        unidentified ?
-                            "unidentified AP observations; not a device count" :
-                            "AP beacon heard; Internet telemetry not measured");
+                        detail);
                 }
                 if(app->target_kind == TargetWifi) {
                     for(uint8_t i = 0; i < MAX_WIFI_APS; i++) {
@@ -1563,6 +1591,31 @@ static void process_uart_lines(App* app) {
                     BleDev* observed = &app->ble_devs[app->ble_last_updated];
                     bool unidentified = !observed->mac[0] &&
                                         strcmp(observed->name, "Hidden/unknown") == 0;
+                    char detail[48];
+                    const char* ble_hint = room_sweep_classify_hint_text(
+                        room_sweep_classify_ble_name(observed->name));
+                    if(unidentified) {
+                        strncpy(
+                            detail,
+                            "unidentified BLE observations; not a device count",
+                            sizeof(detail) - 1U);
+                        detail[sizeof(detail) - 1U] = '\0';
+                    } else if(observed->mac[0]) {
+                        snprintf(
+                            detail,
+                            sizeof(detail),
+                            "oui=%s; BLE adv%s%s",
+                            room_sweep_oui_evidence(observed->mac),
+                            ble_hint[0] ? " hints=" : "",
+                            ble_hint);
+                    } else {
+                        snprintf(
+                            detail,
+                            sizeof(detail),
+                            "BLE adv; no MAC%s%s",
+                            ble_hint[0] ? " hints=" : "",
+                            ble_hint);
+                    }
                     record_enqueue_ex(
                         app,
                         "observation",
@@ -1575,9 +1628,7 @@ static void process_uart_lines(App* app) {
                         observed->observations,
                         "observed",
                         "",
-                        unidentified ?
-                            "unidentified BLE observations; not a device count" :
-                            "active scan advertisement/scan response; Internet telemetry not measured");
+                        detail);
                 }
                 if(app->target_kind == TargetBle) {
                     for(uint8_t i = 0; i < MAX_BLE_DEVS; i++) {
@@ -3718,26 +3769,36 @@ static void draw_wifi_tab(Canvas* canvas, App* app) {
                 canvas_set_color(canvas, ColorWhite);
             }
             snprintf(buf, sizeof(buf), "%4d ", (int)row_ap.rssi);
-            canvas_draw_str(canvas, 1, y, buf);
+            canvas_draw_str(canvas, UI_ROW_RSSI_X, y, buf);
+            const char* tag =
+                room_sweep_classify_hint_text(room_sweep_classify_ssid(row_ap.ssid));
             draw_str_clip(
                 canvas,
-                28,
+                UI_ROW_NAME_X,
                 y,
                 row_ap.ssid[0] ? row_ap.ssid : "?",
-                96);
+                tag[0] ? room_sweep_ui_name_clip_px((uint8_t)strlen(tag)) :
+                         UI_ROW_NAME_MAX_PX);
+            if(tag[0]) canvas_draw_str(canvas, room_sweep_ui_hint_x((uint8_t)strlen(tag)), y, tag);
             canvas_set_color(canvas, ColorBlack);
         }
         canvas_draw_str(canvas, 2, 63, "U/D OK L=AN R=help");
         return;
     }
 
-    /* DETAIL page — one selected AP, clean rows */
+    /* DETAIL page — one selected AP, clean rows. Identification lines are
+     * computed at draw time from the row's own fields; "randomized" marks a
+     * locally administered MAC and hints are name-pattern guesses. */
     canvas_set_font(canvas, FontSecondary);
     bool unidentified = !ap.bssid[0] && strcmp(ap.ssid, "Hidden/unknown") == 0;
     draw_str_clip(
-        canvas, 2, 26, unidentified ? "Unidentified" : (ap.ssid[0] ? ap.ssid : "?"), 124);
+        canvas, 2, 22, unidentified ? "Unidentified" : (ap.ssid[0] ? ap.ssid : "?"), 124);
 
     canvas_set_font(canvas, FontKeyboard);
+    const char* vendor = ap.bssid[0] ? room_sweep_oui_evidence(ap.bssid) : "(no MAC)";
+    snprintf(buf, sizeof(buf), "Vendor: %s", vendor);
+    canvas_draw_str(canvas, 2, 31, buf);
+
     snprintf(
         buf,
         sizeof(buf),
@@ -3745,15 +3806,23 @@ static void draw_wifi_tab(Canvas* canvas, App* app) {
         (int)ap.rssi,
         (unsigned)ap.channel,
         (unsigned)ap.observations);
-    canvas_draw_str(canvas, 2, 38, buf);
+    canvas_draw_str(canvas, 2, 39, buf);
 
     if(ap.bssid[0]) {
-        canvas_draw_str(canvas, 2, 48, ap.bssid);
+        canvas_draw_str(canvas, 2, 47, ap.bssid);
     } else {
-        canvas_draw_str(canvas, 2, 48, "id: session ordinal");
+        canvas_draw_str(canvas, 2, 47, "id: session ordinal");
     }
-    canvas_draw_str(canvas, 2, 56, locked ? "LOCK on  OK=unlock" : "AP OK=lock HOK=scan");
-    canvas_draw_str(canvas, 2, 63, "U/D OK L=AN R=list");
+    const char* hint = room_sweep_classify_hint_text(room_sweep_classify_ssid(ap.ssid));
+    if(hint[0]) {
+        /* The "(name guess)" suffix carries the truth contract: a hint is a
+         * lead, never identification. */
+        snprintf(buf, sizeof(buf), "HINT: %s (name guess)", hint);
+        canvas_draw_str(canvas, 2, 54, buf);
+    } else {
+        canvas_draw_str(canvas, 2, 54, locked ? "LOCK on  OK=unlock" : "AP OK=lock HOK=scan");
+    }
+    canvas_draw_str(canvas, 2, 61, "U/D OK L=AN R=list");
 }
 
 /* ================================================================== */
@@ -3850,38 +3919,59 @@ static void draw_ble_tab(Canvas* canvas, App* app) {
                 canvas_set_color(canvas, ColorWhite);
             }
             snprintf(buf, sizeof(buf), "%4d ", (int)row_dev.rssi);
-            canvas_draw_str(canvas, 1, y, buf);
+            canvas_draw_str(canvas, UI_ROW_RSSI_X, y, buf);
             const char* lab = row_dev.name[0] ? row_dev.name :
                               row_dev.mac[0]  ? row_dev.mac :
                                                 "?";
-            draw_str_clip(canvas, 28, y, lab, 96);
+            const char* tag =
+                room_sweep_classify_hint_text(room_sweep_classify_ble_name(row_dev.name));
+            draw_str_clip(
+                canvas,
+                UI_ROW_NAME_X,
+                y,
+                lab,
+                tag[0] ? room_sweep_ui_name_clip_px((uint8_t)strlen(tag)) :
+                         UI_ROW_NAME_MAX_PX);
+            if(tag[0]) canvas_draw_str(canvas, room_sweep_ui_hint_x((uint8_t)strlen(tag)), y, tag);
             canvas_set_color(canvas, ColorBlack);
         }
         canvas_draw_str(canvas, 2, 63, "U/D OK L=AN R=help");
         return;
     }
 
+    /* DETAIL page — identification computed at draw time; same truth rules
+     * as the Wi-Fi detail page ("randomized", hints are guesses). */
     canvas_set_font(canvas, FontSecondary);
     bool unidentified = !dev.mac[0] && strcmp(dev.name, "Hidden/unknown") == 0;
     draw_str_clip(
         canvas,
         2,
-        26,
+        22,
         unidentified ? "Unidentified" : (dev.name[0] ? dev.name : "?"),
         124);
 
     canvas_set_font(canvas, FontKeyboard);
+    const char* vendor = dev.mac[0] ? room_sweep_oui_evidence(dev.mac) : "(no MAC)";
+    snprintf(buf, sizeof(buf), "Vendor: %s", vendor);
+    canvas_draw_str(canvas, 2, 31, buf);
+
     snprintf(
         buf,
         sizeof(buf),
         "%ddBm  n%u",
         (int)dev.rssi,
         (unsigned)dev.observations);
-    canvas_draw_str(canvas, 2, 38, buf);
-    if(dev.mac[0]) canvas_draw_str(canvas, 2, 48, dev.mac);
-    else canvas_draw_str(canvas, 2, 48, "id: session ordinal");
-    canvas_draw_str(canvas, 2, 56, locked ? "LOCK on  OK=unlock" : UI_HINT_BT_ADV);
-    canvas_draw_str(canvas, 2, 63, "U/D OK L=AN R=list");
+    canvas_draw_str(canvas, 2, 39, buf);
+    if(dev.mac[0]) canvas_draw_str(canvas, 2, 47, dev.mac);
+    else canvas_draw_str(canvas, 2, 47, "id: session ordinal");
+    const char* hint = room_sweep_classify_hint_text(room_sweep_classify_ble_name(dev.name));
+    if(hint[0]) {
+        snprintf(buf, sizeof(buf), "HINT: %s (name guess)", hint);
+        canvas_draw_str(canvas, 2, 54, buf);
+    } else {
+        canvas_draw_str(canvas, 2, 54, locked ? "LOCK on  OK=unlock" : UI_HINT_BT_ADV);
+    }
+    canvas_draw_str(canvas, 2, 61, "U/D OK L=AN R=list");
 }
 
 /* ================================================================== */
@@ -4417,6 +4507,7 @@ static void draw_info_tab(Canvas* canvas, App* app) {
             "GPS:%s",
             gps_has_sentences ? (gps_from_gpio ? "EXT" : "BFFB") : "wait");
         canvas_draw_str(canvas, UI_MARGIN_X, 44, buf);
+        canvas_draw_str(canvas, UI_MARGIN_X, 54, "ident: curated OUI");
         canvas_draw_str(canvas, UI_MARGIN_X, UI_ROW_FOOTER_BASELINE, "U/D or R page");
         return;
     }
