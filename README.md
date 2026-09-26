@@ -30,7 +30,7 @@ type. What it adds on top of raw detection is honest bookkeeping: a curated
 OUI vendor label per MAC and `?`-marked guesses from advertised names. On
 the RF tab, "signal" means only "energy above -75 dBm."
 
-- **Survey the room.** 16 RF presets with an alert line and baseline snapshot,
+- **Survey the room.** 20 RF presets with an alert line and baseline snapshot,
   a mechanical band sweep, peak refine, and a scrolling waterfall with ~10 s of
   history.
 - **Wi-Fi & Bluetooth via Marauder.** AP beacons (`sniffbeacon`) and BLE
@@ -48,8 +48,10 @@ the RF tab, "signal" means only "energy above -75 dBm."
 - **Session evidence.** `session-N.csv` plus a plain-English `report-N.txt`;
   Wi-Fi/BLE identities stay session ordinals and GPS coordinates are written
   only if GPS Log is ON.
-- **FullSweep.** One press sequences RF → Wi-Fi → BLE → nRF24 → GPS with hard
-  timeouts, closes the session, and saves the report.
+- **FullSweep.** One press sequences RF → Wi-Fi → BLE → Wi-raw (clients) →
+  Wi-probe (hidden-SSID recovery) → nRF24 → GPS with hard timeouts, closes
+  the session, and saves the report. A pass with no hardware behind it is
+  skipped honestly rather than faked.
 
 ## What it does NOT do
 
@@ -64,37 +66,52 @@ the RF tab, "signal" means only "energy above -75 dBm."
   reflections bend every reading.
 - The strongest row in a Wi/BT list is the loudest broadcaster, not the
   nearest device. Comparing two devices' RSSI says nothing about distance.
-- Coverage is partial: 16 fixed RF presets, three CC1101 bands
+- Coverage is partial: 20 fixed RF presets, three CC1101 bands
   (300–348 / 387–464 / 779–928 MHz) with real gaps, and 5 GHz Wi-Fi
   completely invisible.
 
-## Can it find surveillance devices?
+## What it can now find
 
-Sometimes — and only when the device is transmitting while you listen.
+Read the middle column as a lead, never as a verdict: every row is either a
+measurement in front of you (energy, an address, a name a device broadcast)
+or a heuristic that prints its own `?`.
 
-Can catch:
+| The room contains | What Room Sweep can show | What it still cannot say |
+|---|---|---|
+| A sub-GHz transmitter on the air | A hot preset in Survey, a peak in Sweep/Refine, a burst pattern in Watch (`BURSTS/LAST/DUTY`) | What it is, or whether it is a bug rather than a doorbell |
+| Wi-Fi access points | SSID, BSSID, channel, RSSI range and observation count, OUI vendor, `?` name hints | Whether the network is hostile, or whose it is |
+| Two or more APs sharing one exact SSID | A `!` mark, `SAME NAME ON n BSSIDS`, `rogue=` in the CSV — a cloned-SSID *lead* (mesh and roaming share names legitimately) | Which one, if any, is the rogue |
+| A hidden network with a client nearby | `[hidden]` rows repaired to a real name from the client's own probe request | Anything about the client, or the network beyond its name |
+| Client radios and phones that are transmitting | The Wi-raw transmitter radar: one row per `sniffraw` frame with address, channel, RSSI range — clients included | Device type or owner; a `?` hint is a guess from an advertised name |
+| A known device from an earlier session | A `WATCH` badge and `watch=1`, if you flagged that address with the opt-in watchlist | That it is the *same physical* device — addresses can be spoofed and randomize |
+| An AirTag/Tile-class advert, a camera-named AP, a printer | Curated-OUI vendor plus a `?` hint (`TRK?` `CAM?` `PRT?`) | Confirmation: the name is a self-report and the OUI is a registrant, not a model |
+| Something advertising like offensive Wi-Fi tooling | `TOOL` rows and `SNIFFESP`/`PWN` window evidence — a class match on the advertisement | Intent. A Pwnagotchi is also a toy; an ESP32 is also a dev board |
+| Cellular activity at the band edge | Energy on the `850`/`880` presets | Anything cellular: the CC1101 cannot decode it, so this is energy in a band, not a phone |
 
-- A sub-GHz audio bug transmitting continuously in an ISM band: a persistent
-  hot channel in Survey or Sweep.
-- A 2.4 GHz Wi-Fi camera that is on the air: it appears in the AP list, with
-  its OUI vendor and a `CAM?` hint if its advertised name says camera.
-- A BLE tracker or camera advertising a name like "Tile" or "Arlo": it
-  appears in the BT list with the matching `?` hint — the name is a
-  self-report, not a verdict.
-- An ESP32/Marauder-class dev board via its Espressif OUI or name.
+Two examples of the first rows, spelled out: a sub-GHz audio bug
+transmitting continuously shows as a persistent hot channel in Survey or
+Sweep; a 2.4 GHz Wi-Fi camera that is on the air appears in the AP list with
+its OUI vendor and a `CAM?` hint if its advertised name says camera.
 
-Will miss:
+Will miss, and cannot be made to catch on this hardware:
 
-- Devices that record without transmitting.
-- Burst or interval transmitters, between their transmissions.
-- Everything outside the covered bands (5 GHz, cellular, the CC1101 gaps).
-- Wired devices.
+- **Silent recorders** — a device that records without transmitting is
+  invisible to every receiver ever built.
+- **Burst or interval transmitters**, between their transmissions.
+- **5 GHz Wi-Fi** entirely, and **LTE/5G mid-band** (the CC1101 tops out at
+  928 MHz; the `850`/`880` presets are energy at the cellular band edge, not
+  cellular reception).
+- **Bluetooth Classic audio** — the BLE scan reads advertisements, not
+  Classic pairing or audio.
+- **The CC1101's real gaps** (348–387 MHz, 464–779 MHz) and **wired
+  devices**.
 
 No hit is not proof of absence.
 
 ## Field guide
 
-Every screen explained, one page each, built from real device captures:
+Every screen explained, one page each, built from sanitized UI captures and
+synthetic data fixtures:
 
 **[Download the Field Guide (PDF)](docs/room_sweep_field_guide.pdf)** ·
 [Read it as a web page](https://0-cyberdyne-systems-0.github.io/sw33p3r/room_sweep_field_guide.html) ·

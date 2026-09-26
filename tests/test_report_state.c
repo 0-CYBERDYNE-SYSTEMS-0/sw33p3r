@@ -255,6 +255,124 @@ int main(void) {
     }
     check(capped_count == ROOM_SWEEP_REPORT_VENDORS_MAX, "vendor list is capped at the maximum");
 
+    /* ---------------------------------------------------------- */
+    /* Duplicate-SSID correlation (Phase 6)                       */
+    /* ---------------------------------------------------------- */
+    RoomSweepReportFindings rogue;
+    room_sweep_report_findings_init(&rogue);
+    check(rogue.rogue_groups == 0, "findings init has no rogue groups");
+    rogue.rogue_groups = 2;
+    char rogue_report[1024];
+    room_sweep_report_format(&state, rogue_report, sizeof(rogue_report));
+    room_sweep_report_append_findings(&rogue, rogue_report, sizeof(rogue_report), strlen(rogue_report));
+    check_contains(
+        rogue_report,
+        "Possible cloned SSIDs (same name, different BSSID): 2 group(s)",
+        "duplicate-SSID line is a possible-clone lead, not a verdict");
+    check_contains(
+        rogue_report,
+        "Mesh/roaming systems legitimately share one name across addresses",
+        "mesh caveat travels with the rogue line");
+    RoomSweepReportFindings no_rogue;
+    room_sweep_report_findings_init(&no_rogue);
+    char no_rogue_report[1024];
+    room_sweep_report_format(&state, no_rogue_report, sizeof(no_rogue_report));
+    room_sweep_report_append_findings(
+        &no_rogue, no_rogue_report, sizeof(no_rogue_report), strlen(no_rogue_report));
+    check(
+        strstr(no_rogue_report, "Possible cloned SSIDs") == NULL,
+        "no duplicate-SSID line when no groups exist");
+
+    /* ---------------------------------------------------------- */
+    /* Opt-in cross-session watchlist (Phase 9)                   */
+    /* ---------------------------------------------------------- */
+    RoomSweepReportFindings watch;
+    room_sweep_report_findings_init(&watch);
+    check(!watch.watchlist_enabled && watch.watchlist_matches == 0,
+          "findings init has the watchlist OFF and empty");
+    watch.watchlist_enabled = true;
+    watch.watchlist_matches = 2;
+    char watch_report[1024];
+    room_sweep_report_format(&state, watch_report, sizeof(watch_report));
+    room_sweep_report_append_findings(
+        &watch, watch_report, sizeof(watch_report), strlen(watch_report));
+    check_contains(
+        watch_report,
+        "Watchlist matches: 2",
+        "watchlist section reports the distinct-match count");
+    check_contains(
+        watch_report,
+        "only persistent-identity feature",
+        "the report states the watchlist is the app's only persistent-identity feature");
+    check_contains(
+        watch_report,
+        "opt-in",
+        "the report states the watchlist is opt-in");
+    check_contains(
+        watch_report,
+        "not proof it is the same physical device",
+        "the report carries the address-match caveat");
+    /* Disabled: no section, even with a stale count. */
+    RoomSweepReportFindings watch_off;
+    room_sweep_report_findings_init(&watch_off);
+    watch_off.watchlist_enabled = false;
+    watch_off.watchlist_matches = 5;
+    char watch_off_report[1024];
+    room_sweep_report_format(&state, watch_off_report, sizeof(watch_off_report));
+    room_sweep_report_append_findings(
+        &watch_off, watch_off_report, sizeof(watch_off_report), strlen(watch_off_report));
+    check(
+        strstr(watch_off_report, "Watchlist matches") == NULL &&
+            strstr(watch_off_report, "persistent-identity") == NULL,
+        "watchlist section is omitted entirely when the feature stayed OFF");
+
+    /* ---------------------------------------------------------- */
+    /* Per-device RSSI evidence range (Phase 7)                   */
+    /* ---------------------------------------------------------- */
+    RoomSweepReportFindings ranged;
+    room_sweep_report_findings_init(&ranged);
+    check(ranged.wifi_strongest_min == 0 && ranged.wifi_strongest_max == 0,
+          "findings init has no strongest range");
+    ranged.wifi_observations = 5;
+    ranged.wifi_windows = 2;
+    ranged.wifi_strongest_rssi = -38;
+    ranged.wifi_strongest_min = -72;
+    ranged.wifi_strongest_max = -38;
+    ranged.ble_observations = 4;
+    ranged.ble_windows = 2;
+    ranged.ble_strongest_rssi = -50;
+    ranged.ble_strongest_min = -80;
+    ranged.ble_strongest_max = -50;
+    char ranged_report[1024];
+    room_sweep_report_format(&state, ranged_report, sizeof(ranged_report));
+    room_sweep_report_append_findings(
+        &ranged, ranged_report, sizeof(ranged_report), strlen(ranged_report));
+    check_contains(
+        ranged_report,
+        "Wi-Fi: 5 AP beacons heard across 2 scan windows; strongest about -38dBm (range -72..-38)",
+        "strongest Wi-Fi line carries the observed range");
+    check_contains(
+        ranged_report,
+        "BLE: 4 advertisements heard across 2 scan windows; strongest about -50dBm (range -80..-50)",
+        "strongest BLE line carries the observed range");
+    /* A single sighting (min == max) keeps the plain line, no fake spread. */
+    RoomSweepReportFindings single;
+    room_sweep_report_findings_init(&single);
+    single.wifi_observations = 1;
+    single.wifi_windows = 1;
+    single.wifi_strongest_rssi = -60;
+    char single_report[1024];
+    room_sweep_report_format(&state, single_report, sizeof(single_report));
+    room_sweep_report_append_findings(
+        &single, single_report, sizeof(single_report), strlen(single_report));
+    check_contains(
+        single_report,
+        "strongest about -60dBm.",
+        "no range printed when no spread was observed");
+    check(
+        strstr(single_report, "(range") == NULL,
+        "range omitted when the strongest device was heard once");
+
     printf("RESULT: %s (%d failure(s))\n", failures ? "FAIL" : "ALL PASS", failures);
     return failures ? 1 : 0;
 }

@@ -5,6 +5,7 @@
 
 #include <furi.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define LOG_DIR APP_DATA_PATH("")
@@ -29,6 +30,10 @@ typedef struct {
     uint32_t observation_count[5]; /* RF, WIFI, BLE, GPS, NRF24 */
     uint32_t scan_windows[3]; /* WIFI, BLE, NRF24 */
     int strongest_rssi[4]; /* RF, WIFI, BLE, NRF24 */
+    /* Phase 7: min/max of the strongest WIFI/BLE device, lifted from the
+     * min=/max= tokens of the observation that set the strongest RSSI. */
+    int strongest_min[4];
+    int strongest_max[4];
     uint32_t strongest_freq[4];
     char strongest_id[4][16];
     uint32_t nrf_active_channels;
@@ -41,6 +46,11 @@ typedef struct {
     char vendors[ROOM_SWEEP_REPORT_VENDORS_MAX][ROOM_SWEEP_REPORT_VENDOR_LEN];
     uint8_t vendor_count;
     uint32_t hint_observations;
+    /* Phase 6: max duplicate-SSID group count seen during the session. */
+    uint8_t rogue_groups;
+    /* Phase 9: opt-in watchlist — latched enable + max distinct matches. */
+    bool watchlist_enabled;
+    uint32_t watchlist_matches;
     char session_path[SESSION_PATH_MAX];
     char uart_path[SESSION_PATH_MAX];
     char report_path[SESSION_PATH_MAX];
@@ -169,10 +179,31 @@ static void clean_csv(const char* input, char* output, size_t output_size) {
     output[used] = '\0';
 }
 
-static RoomSweepRecordIdKind id_kind_for_event(const char* source) {
-    if(source && strcmp(source, "WIFI") == 0) return RoomSweepRecordIdAccessPoint;
+static RoomSweepRecordIdKind id_kind_for_event(
+    const char* source,
+    const char* event,
+    const char* submode) {
+    if(source && strcmp(source, "WIFI") == 0) {
+        /* Phase 4/5/10 Wi sources: observation rows carry a source-specific
+         * ordinal (STA-NN / PR-NN / TL-NN). The one-shot hidden_resolved
+         * event references the AP's OWN ordinal, so it keeps the
+         * AccessPoint kind and collides with that row's existing ref. */
+        if(event && strcmp(event, "observation") == 0) {
+            if(submode && strcmp(submode, "raw") == 0) return RoomSweepRecordIdSta;
+            if(submode && strcmp(submode, "probe") == 0) return RoomSweepRecordIdProbe;
+            if(submode && strcmp(submode, "tool") == 0) return RoomSweepRecordIdTool;
+        }
+        return RoomSweepRecordIdAccessPoint;
+    }
     if(source && strcmp(source, "BLE") == 0) return RoomSweepRecordIdBle;
-    if(source && strcmp(source, "RF") == 0) return RoomSweepRecordIdRf;
+    if(source && strcmp(source, "RF") == 0) {
+        /* Phase 8 burst watch: the id is the fixed label WATCH, not an
+         * identity (it must not spend a fingerprint-map slot). */
+        if(event && strcmp(event, "observation") == 0 && submode &&
+           strcmp(submode, "watch") == 0)
+            return RoomSweepRecordIdWatch;
+        return RoomSweepRecordIdRf;
+    }
     if(source && strcmp(source, "GPS") == 0) return RoomSweepRecordIdGps;
     return RoomSweepRecordIdOther;
 }
@@ -319,7 +350,7 @@ bool session_log_write_event(const SessionLogEvent* event) {
     clean_csv(event->error_code, error_clean, sizeof(error_clean));
     if(!room_sweep_record_identifier_ref(
            &s_log.identifiers,
-           id_kind_for_event(source_clean),
+           id_kind_for_event(source_clean, event_clean, submode_clean),
            event->id,
            id_ref,
            sizeof(id_ref))) {
@@ -399,6 +430,19 @@ bool session_log_write_event(const SessionLogEvent* event) {
                 s_log.strongest_id[strong_i],
                 id_ref,
                 sizeof(s_log.strongest_id[strong_i]) - 1U);
+            /* Phase 7: the strongest device's own observed range. Only WIFI
+             * (1) and BLE (2) observation details carry min=/max= tokens;
+             * other sources leave the pair at 0 and the report omits the
+             * range. */
+            char range_token[12];
+            if(room_sweep_report_detail_token(
+                   detail_clean, "min", range_token, sizeof(range_token))) {
+                s_log.strongest_min[strong_i] = atoi(range_token);
+            }
+            if(room_sweep_report_detail_token(
+                   detail_clean, "max", range_token, sizeof(range_token))) {
+                s_log.strongest_max[strong_i] = atoi(range_token);
+            }
         }
         if(index == 4) {
             s_log.nrf_total_hits += event->nrf_total_hits;
@@ -472,6 +516,16 @@ void session_log_note_sensor_unavailable(uint8_t sensor_mask) {
     }
 }
 
+void session_log_note_rogue_groups(uint8_t groups) {
+    if(groups > s_log.rogue_groups) s_log.rogue_groups = groups;
+}
+
+void session_log_note_watchlist(bool enabled, uint32_t distinct_matches) {
+    if(enabled) s_log.watchlist_enabled = true;
+    if(distinct_matches > s_log.watchlist_matches)
+        s_log.watchlist_matches = distinct_matches;
+}
+
 static bool write_report(void) {
     if(!s_log.storage || !s_log.report_path[0]) return false;
     char report[REPORT_BUFFER_SIZE];
@@ -484,9 +538,13 @@ static bool write_report(void) {
     findings.wifi_observations = s_log.observation_count[1];
     findings.wifi_windows = s_log.scan_windows[0];
     findings.wifi_strongest_rssi = s_log.strongest_rssi[1];
+    findings.wifi_strongest_min = s_log.strongest_min[1];
+    findings.wifi_strongest_max = s_log.strongest_max[1];
     findings.ble_observations = s_log.observation_count[2];
     findings.ble_windows = s_log.scan_windows[1];
     findings.ble_strongest_rssi = s_log.strongest_rssi[2];
+    findings.ble_strongest_min = s_log.strongest_min[2];
+    findings.ble_strongest_max = s_log.strongest_max[2];
     findings.nrf_observations = s_log.observation_count[4];
     findings.nrf_active_channels = s_log.nrf_active_channels;
     findings.nrf_top_channel = s_log.nrf_top_channel;
@@ -494,6 +552,9 @@ static bool write_report(void) {
     findings.gps_snapshots = s_log.observation_count[3];
     findings.full_sweep_completed = s_log.full_sweep_completed;
     findings.hint_observations = s_log.hint_observations;
+    findings.rogue_groups = s_log.rogue_groups;
+    findings.watchlist_enabled = s_log.watchlist_enabled;
+    findings.watchlist_matches = s_log.watchlist_matches;
     memcpy(findings.vendors, s_log.vendors, sizeof(findings.vendors));
     findings.vendor_count = s_log.vendor_count;
     used = room_sweep_report_append_findings(&findings, report, sizeof(report), used);

@@ -54,9 +54,33 @@ Plan: `specs/per-tab-feedback.md`.
 
 Plan: `specs/per-tab-feedback.md`.
 
+## DONE (2026-09-20/21 — capability rollout "identify every emitter")
+
+Phases 0-11 per `specs/full-capability-expansion-2026-09-20.md`. Receipts:
+`.omo/evidence/phase-receipts-2026-09-21.md`; per-phase detail in
+`progress.log`.
+
+[x] Phase 0 fingerprint probe; phases 1-3 ident layer (device-verified)
+[x] Phases 4/5/10 Wi capture sources; phase 5's sniffprobe grammar un-gated
+    with a redacted fixture (2026-09-21)
+[x] Phases 6-9 rogue / stats / burst watch / opt-in watchlist;
+    7/8/9 device-verified from session artifacts
+[x] Phase 11 capstone: 20 presets, Wi-probe sweep pass, Info Caps page;
+    11a/11b device-verified
+[x] Device-found fixes: OOM-on-launch (app state 20644→14500 B + NULL guard),
+    identity-map saturation, baseline burst loss
+[x] Gates throughout: ./init.sh ALL PASS (25 suites), _verify_api.py CLEAN,
+    ufbt zero warnings
+
 ## PENDING (user)
 
 [ ] Visual QA on device: radar sweep/blips, waterfall scroll, big meter,
-    GPS radar walk-to (needs outdoor fix), honest labels
+    GPS radar walk-to (needs outdoor fix), honest labels — **still open, and
+    now the only way to see pixels**: the RPC screen stream cannot allocate
+    next to this app (reproduced three times), so nothing pixel-level
+    (survey strip, badges, Info Caps page) has been seen on hardware
 [ ] Field-test TX radiate (user consent)
-[ ] Capture live BFFB line dumps if parser still mismatches
+[ ] Capture a live window with a hostile-tooling emitter → pin and un-gate
+    sniffesp/sniffpwn (phase 10); same for scansta's station-line format
+[ ] Optional: RAW source per-MAC interval logging (measured 11.7% drop rate
+    under heavy traffic, session-20.csv)

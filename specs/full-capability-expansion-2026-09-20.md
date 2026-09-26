@@ -29,7 +29,7 @@ firmware build. Everything Phase 0 confirms gets written into
 
 ### Phase 0 — COMPLETE (2026-09-20)
 
-Device `Rug1k0`, mntm-012/API 87.1/target 7 confirmed over RPC. The prior
+The mntm-012/API 87.1/target 7 test rig was confirmed over RPC. The prior
 sessions' raw dumps supplied this build's `help` transcript, and the USB-UART
 bridge (started on-device with the host session closed — it refuses while any
 host session is connected) carried the full 16-step probe battery
@@ -529,6 +529,31 @@ bool room_sweep_deauth_parse_line(const char* line, RoomSweepDeauthRecord* out);
 
 ### Phase 11 — Coverage, docs, and full-sweep integration (capstone)
 
+**LANDED 2026-09-21** (`c2e6089`, `2d365d2`) — host-verified; the device walk
+is owed (the rig went unresponsive mid-session). Pivots and deviations:
+
+- **Presets:** landed as 850 / 880 / 902 / 927.5 MHz with 3-char display
+  labels (`850`, `880`, `902`, `927`). The `850c`/`880c` shorthand in this
+  spec became the USER_GUIDE's cellular-edge hint instead of a 4-char label,
+  because the strip's label budget is 3-4 chars and the "c" reads as a
+  channel suffix. The tables moved to Flipper-free `room_sweep_rf_presets.h`
+  so `tests/test_rf_presets.c` can pin the invariants the audit would have
+  been done by eye: array-count sync (the band column is indexed directly),
+  CC1101 band membership, band-vs-frequency agreement, and label width.
+- **STA:** no separate STA phase landed. On this build `sniffraw` already
+  reports one line per 802.11 frame with stations included, and that pass
+  already exists in the sequencer — so the Wi-raw pass *is* the client view,
+  and `scanap`+`scansta` stay unsent until the station-line format is pinned
+  live (the Phase 0 gate, unchanged). The probe phase landed as specified.
+- **Found and fixed while wiring the probe phase:** a full-sweep Wi pass
+  routed its UART lines by the Settings Wi source, so the raw radar pass
+  collected nothing unless the operator had pre-selected RAW. A running pass
+  now owns the routing (`wifi_effective_source`).
+- **Info card:** landed as a 6th page (`CAPS`), with the page count as one
+  constant instead of three hardcoded 5s.
+
+Original scope, for reference:
+
 - RF presets: extend `rf_channels`/`rf_labels` 16 → 20, adding 850/880/902/
   915-cored entries labeled for what they are — `850c`/`880c` get the one-line
   hint "cellular uplink overlap; energy here may be a SIM tracker" in
@@ -561,10 +586,18 @@ commit → commit on the phase branch, merge to `main`. No co-author trailers.
 
 ## Definition of done (program level)
 
-- [ ] Phase 0 transcript exists; BFFB_MOMENTUM.md is the verified truth.
+- [x] Phase 0 transcript exists; BFFB_MOMENTUM.md is the verified truth.
 - [ ] Phases 1–11 each landed as one iteration with receipts, or are marked
       honestly skipped with the reason in features.json/progress.log.
-- [ ] Every new on-screen/CSV/report string passes the truth-contract reading.
-- [ ] No TX-path file changes outside `MARAUDER_CMD_*` additions.
-- [ ] USER_GUIDE and README describe the new capabilities in plain language
+      **Code: all 11 have landed.** Device receipts: phases 0/1 only, plus the
+      2026-09-21 OOM fix. Owed on hardware: the phase 6–9 walk, the live
+      captures that un-gate the probe/esp/pwn parsers, and the phase 11 walk.
+- [x] Every new on-screen/CSV/report string passes the truth-contract reading.
+- [x] No TX-path file changes outside `MARAUDER_CMD_*` additions.
+- [x] USER_GUIDE and README describe the new capabilities in plain language
       with the hardware-invisible list still intact.
+- [ ] **New, from the 2026-09-21 device session:** the app's run-time
+      contiguous headroom (7128 B largest block with the app up) is thin
+      enough that RPC screen streaming reboots the device, and it is the
+      leading suspect in an unresolved mid-run hang. Treat app memory as a
+      first-class constraint, not an afterthought.

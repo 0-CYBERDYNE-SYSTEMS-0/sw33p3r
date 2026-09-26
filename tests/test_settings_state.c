@@ -1,5 +1,6 @@
 /* Host tests: grouped settings + scan window presets. */
 #include <stdio.h>
+#include <string.h>
 
 #include "../room_sweep_settings.h"
 
@@ -15,7 +16,7 @@ static void check(int condition, const char* message) {
 }
 
 int main(void) {
-    check(RoomSweepSetCount == 13, "thirteen settings items");
+    check(RoomSweepSetCount == 15, "fifteen settings items");
     check(RoomSweepSetGroupCount == 5, "five settings groups");
 
     check(
@@ -24,6 +25,9 @@ int main(void) {
     check(
         room_sweep_set_group_of(RoomSweepSetScanWin) == RoomSweepSetGroupWireless,
         "ScanWin is Wireless");
+    check(
+        room_sweep_set_group_of(RoomSweepSetWifiSrc) == RoomSweepSetGroupWireless,
+        "Wi Src is Wireless");
     check(
         room_sweep_set_group_of(RoomSweepSetTxDur) == RoomSweepSetGroupRadio,
         "TXDur is Radio");
@@ -36,6 +40,12 @@ int main(void) {
     check(
         room_sweep_set_group_of(RoomSweepSetRecord) == RoomSweepSetGroupSession,
         "Record is Session");
+    check(
+        room_sweep_set_group_of(RoomSweepSetWatchlist) == RoomSweepSetGroupSession,
+        "Watchlist is Session (privacy-relevant, not persisted)");
+    check(
+        room_sweep_set_group_first(RoomSweepSetGroupSession) == RoomSweepSetRecord,
+        "Session group starts at Record");
 
     check(
         room_sweep_set_group_first(RoomSweepSetGroupWireless) == RoomSweepSetRescan,
@@ -61,6 +71,28 @@ int main(void) {
     check(room_sweep_scan_timeout_step(1, true) == 2, "longer steps 30->60");
     check(room_sweep_scan_timeout_step(2, true) == 0, "longer wraps 60->15");
     check(room_sweep_scan_timeout_step(0, false) == 2, "shorter wraps 15->60");
+
+    /* Wi capture source (Phase 4/5/10): default, cycle, labels. */
+    check(WiSourceBeacon == 0, "BEACON is the zero/default source");
+    check(
+        room_sweep_wi_source_step(WiSourceBeacon, true) == WiSourceRaw,
+        "down cycles BEACON->RAW");
+    check(
+        room_sweep_wi_source_step(WiSourceTool, true) == WiSourceBeacon,
+        "down wraps TOOL->BEACON");
+    check(
+        room_sweep_wi_source_step(WiSourceBeacon, false) == WiSourceTool,
+        "up wraps BEACON->TOOL");
+    check(
+        strcmp(room_sweep_wi_source_label(WiSourceBeacon), "BEACON") == 0,
+        "BEACON label");
+    check(strcmp(room_sweep_wi_source_label(WiSourceRaw), "RAW") == 0, "RAW label");
+    check(strcmp(room_sweep_wi_source_label(WiSourceProbe), "PROBE") == 0, "PROBE label");
+    check(strcmp(room_sweep_wi_source_label(WiSourceTool), "TOOL") == 0, "TOOL label");
+    check(
+        strcmp(room_sweep_wi_source_tag(WiSourceBeacon), "SCAN") == 0,
+        "BEACON header tag stays SCAN");
+    check(strcmp(room_sweep_wi_source_tag(WiSourceRaw), "RAW") == 0, "RAW header tag");
 
     check(
         room_sweep_set_group_label(RoomSweepSetGroupSession)[0] != '\0',

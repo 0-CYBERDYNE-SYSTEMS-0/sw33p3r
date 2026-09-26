@@ -84,6 +84,38 @@ echo "== host name-pattern class hints =="
 cc -std=c11 -Wall -Wextra -Werror -pedantic -I. tests/test_classify.c -o /tmp/test_classify
 /tmp/test_classify
 
+echo "== host duplicate-SSID rogue correlation =="
+cc -std=c11 -Wall -Wextra -Werror -pedantic -I. tests/test_rogue.c -o /tmp/test_rogue
+/tmp/test_rogue
+
+echo "== host RSSI evidence stats =="
+cc -std=c11 -Wall -Wextra -Werror -pedantic -I. tests/test_stats.c -o /tmp/test_stats
+/tmp/test_stats
+
+echo "== host sniffraw transmitter table =="
+cc -std=c11 -Wall -Wextra -Werror -pedantic -I. tests/test_sta.c -o /tmp/test_sta
+/tmp/test_sta
+
+echo "== host sniffprobe + hidden repair =="
+cc -std=c11 -Wall -Wextra -Werror -pedantic -I. tests/test_probe.c -o /tmp/test_probe
+/tmp/test_probe
+
+echo "== host hostile-tooling source =="
+cc -std=c11 -Wall -Wextra -Werror -pedantic -I. tests/test_tool.c -o /tmp/test_tool
+/tmp/test_tool
+
+echo "== host RF burst watch =="
+cc -std=c11 -Wall -Wextra -Werror -pedantic -I. tests/test_watch.c -o /tmp/test_watch
+/tmp/test_watch
+
+echo "== host cross-session watchlist =="
+cc -std=c11 -Wall -Wextra -Werror -pedantic -I. tests/test_watchlist.c -o /tmp/test_watchlist
+/tmp/test_watchlist
+
+echo "== host RF presets =="
+cc -std=c11 -Wall -Wextra -Werror -pedantic -I. tests/test_rf_presets.c -o /tmp/test_rf_presets
+/tmp/test_rf_presets
+
 echo "== ufbt build =="
 ufbt
 

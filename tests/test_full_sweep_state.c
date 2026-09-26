@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <string.h>
 
 #include "../room_sweep_full_sweep.h"
 #include "../room_sweep_radio_path.h"
@@ -31,8 +32,16 @@ int main(void) {
     check(room_sweep_full_sweep_advance(&s, true), "Wi-Fi advance");
     check(s.phase == RoomSweepFullBle, "then BLE");
     check(room_sweep_full_sweep_advance(&s, false), "BLE skip still advances");
-    check(s.phase == RoomSweepFullNrf24, "then nRF24");
+    check(s.phase == RoomSweepFullRaw, "then Wi-raw (Phase 4 radar pass)");
     check((s.phases_completed & ROOM_SWEEP_FULL_BIT_BLE) == 0, "failed BLE not counted");
+
+    check(room_sweep_full_sweep_advance(&s, true), "Wi-raw advance");
+    check((s.phases_completed & ROOM_SWEEP_FULL_BIT_RAW) != 0, "raw bit set");
+    check(s.phase == RoomSweepFullProbe, "then Wi-probe (Phase 11 hidden-SSID pass)");
+
+    check(room_sweep_full_sweep_advance(&s, true), "Wi-probe advance");
+    check((s.phases_completed & ROOM_SWEEP_FULL_BIT_PROBE) != 0, "probe bit set");
+    check(s.phase == RoomSweepFullNrf24, "then nRF24");
 
     check(room_sweep_full_sweep_advance(&s, true), "nRF24 advance");
     check(s.phase == RoomSweepFullGps, "then GPS");
@@ -43,8 +52,51 @@ int main(void) {
 
     room_sweep_full_sweep_init(&s);
     room_sweep_full_sweep_start(&s);
-    for(int i = 0; i < 5; i++) room_sweep_full_sweep_advance(&s, true);
+    for(int i = 0; i < 7; i++) room_sweep_full_sweep_advance(&s, true);
     check(room_sweep_full_sweep_completed_all(&s), "all phases ok → completed_all");
+
+    /* Wi-raw honest skip: no UART scanner → advance(ok=false) leaves the
+     * bit unset but the sequence continues (never blocks the sweep). */
+    room_sweep_full_sweep_init(&s);
+    room_sweep_full_sweep_start(&s);
+    check(room_sweep_full_sweep_advance(&s, true), "RF advance 2");
+    check(room_sweep_full_sweep_advance(&s, true), "Wi-Fi advance 2");
+    check(room_sweep_full_sweep_advance(&s, true), "BLE advance 2");
+    check(room_sweep_full_sweep_advance(&s, false), "raw skip advances");
+    check(s.phase == RoomSweepFullProbe, "raw skip still reaches the probe pass");
+    check(
+        (s.phases_completed & ROOM_SWEEP_FULL_BIT_RAW) == 0,
+        "skipped raw not counted");
+    check(room_sweep_full_sweep_advance(&s, false), "probe skip advances");
+    check(s.phase == RoomSweepFullNrf24, "probe skip still reaches nRF24");
+    check(
+        (s.phases_completed & ROOM_SWEEP_FULL_BIT_PROBE) == 0,
+        "skipped probe not counted");
+    check(
+        room_sweep_full_sweep_hard_timeout(RoomSweepFullRaw, ROOM_SWEEP_FULL_RAW_MS),
+        "raw phase has a hard ceiling");
+    check(
+        room_sweep_full_sweep_phase_limit_ms(RoomSweepFullRaw) == ROOM_SWEEP_FULL_RAW_MS,
+        "raw limit constant matches helper");
+    check(
+        strcmp(room_sweep_full_sweep_phase_label(RoomSweepFullRaw), "Wi-raw") == 0,
+        "raw phase label");
+    check(
+        room_sweep_full_sweep_hard_timeout(RoomSweepFullProbe, ROOM_SWEEP_FULL_PROBE_MS),
+        "probe phase has a hard ceiling");
+    check(
+        room_sweep_full_sweep_phase_limit_ms(RoomSweepFullProbe) ==
+            ROOM_SWEEP_FULL_PROBE_MS,
+        "probe limit constant matches helper");
+    check(
+        ROOM_SWEEP_FULL_PROBE_MS > ROOM_SWEEP_FULL_RAW_MS,
+        "probe window is longer than the raw pass (probes are bursty)");
+    check(
+        strcmp(room_sweep_full_sweep_phase_label(RoomSweepFullProbe), "Probe") == 0,
+        "probe phase label");
+    check(
+        (ROOM_SWEEP_FULL_BIT_ALL & ROOM_SWEEP_FULL_BIT_PROBE) != 0,
+        "completed_all requires the probe bit");
 
     room_sweep_full_sweep_init(&s);
     room_sweep_full_sweep_start(&s);

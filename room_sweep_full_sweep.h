@@ -5,7 +5,14 @@
 
 /*
  * Host-testable full-room-sweep phase machine.
- * Detect-only order: RF → Wi-Fi → BLE → nRF24 → GPS → done.
+ * Detect-only order: RF → Wi-Fi → BLE → Wi-raw → Wi-probe → nRF24 → GPS → done.
+ * The Wi-raw pass (Phase 4, 2026-09-20 expansion) runs a short sniffraw
+ * transmitter-radar window after BLE — that pass IS the client/station view
+ * on this firmware, since sniffraw reports one line per 802.11 frame with
+ * stations included. The Wi-probe pass (Phase 11) runs a sniffprobe window
+ * for hidden-SSID recovery. A dedicated scanap+scansta pass stays out until
+ * the station-line format is pinned live (format gate, docs/BFFB_MOMENTUM.md).
+ * Both passes are skipped honestly (bit unset) when no UART scanner exists.
  * Never arms TX. Every phase has a hard wall-clock timeout.
  */
 
@@ -14,6 +21,8 @@ typedef enum {
     RoomSweepFullRf,
     RoomSweepFullWifi,
     RoomSweepFullBle,
+    RoomSweepFullRaw,
+    RoomSweepFullProbe,
     RoomSweepFullNrf24,
     RoomSweepFullGps,
     RoomSweepFullDone,
@@ -31,14 +40,19 @@ typedef struct {
 #define ROOM_SWEEP_FULL_BIT_BLE (1U << 2)
 #define ROOM_SWEEP_FULL_BIT_NRF24 (1U << 3)
 #define ROOM_SWEEP_FULL_BIT_GPS (1U << 4)
+#define ROOM_SWEEP_FULL_BIT_RAW (1U << 5)
+#define ROOM_SWEEP_FULL_BIT_PROBE (1U << 6)
 #define ROOM_SWEEP_FULL_BIT_ALL \
     (ROOM_SWEEP_FULL_BIT_RF | ROOM_SWEEP_FULL_BIT_WIFI | ROOM_SWEEP_FULL_BIT_BLE | \
-     ROOM_SWEEP_FULL_BIT_NRF24 | ROOM_SWEEP_FULL_BIT_GPS)
+     ROOM_SWEEP_FULL_BIT_RAW | ROOM_SWEEP_FULL_BIT_PROBE | ROOM_SWEEP_FULL_BIT_NRF24 | \
+     ROOM_SWEEP_FULL_BIT_GPS)
 
 /* Hard per-phase ceilings (ms). GPS always ends by this; no infinite wait. */
 #define ROOM_SWEEP_FULL_RF_MS 10000U
 #define ROOM_SWEEP_FULL_WIFI_MS 15000U
 #define ROOM_SWEEP_FULL_BLE_MS 15000U
+#define ROOM_SWEEP_FULL_RAW_MS 6000U
+#define ROOM_SWEEP_FULL_PROBE_MS 8000U /* probes are bursty: longer than the raw pass */
 #define ROOM_SWEEP_FULL_NRF24_MS 12000U
 #define ROOM_SWEEP_FULL_GPS_MS 8000U
 #define ROOM_SWEEP_FULL_GPS_MIN_MS 2000U /* earliest exit if a fix/sentence exists */
@@ -66,6 +80,10 @@ static inline uint8_t room_sweep_full_sweep_bit_for_phase(RoomSweepFullPhase pha
         return ROOM_SWEEP_FULL_BIT_WIFI;
     case RoomSweepFullBle:
         return ROOM_SWEEP_FULL_BIT_BLE;
+    case RoomSweepFullRaw:
+        return ROOM_SWEEP_FULL_BIT_RAW;
+    case RoomSweepFullProbe:
+        return ROOM_SWEEP_FULL_BIT_PROBE;
     case RoomSweepFullNrf24:
         return ROOM_SWEEP_FULL_BIT_NRF24;
     case RoomSweepFullGps:
@@ -83,6 +101,10 @@ static inline uint32_t room_sweep_full_sweep_phase_limit_ms(RoomSweepFullPhase p
         return ROOM_SWEEP_FULL_WIFI_MS;
     case RoomSweepFullBle:
         return ROOM_SWEEP_FULL_BLE_MS;
+    case RoomSweepFullRaw:
+        return ROOM_SWEEP_FULL_RAW_MS;
+    case RoomSweepFullProbe:
+        return ROOM_SWEEP_FULL_PROBE_MS;
     case RoomSweepFullNrf24:
         return ROOM_SWEEP_FULL_NRF24_MS;
     case RoomSweepFullGps:
@@ -124,6 +146,10 @@ static inline RoomSweepFullPhase room_sweep_full_sweep_next_after(RoomSweepFullP
     case RoomSweepFullWifi:
         return RoomSweepFullBle;
     case RoomSweepFullBle:
+        return RoomSweepFullRaw;
+    case RoomSweepFullRaw:
+        return RoomSweepFullProbe;
+    case RoomSweepFullProbe:
         return RoomSweepFullNrf24;
     case RoomSweepFullNrf24:
         return RoomSweepFullGps;
@@ -173,6 +199,10 @@ static inline const char* room_sweep_full_sweep_phase_label(RoomSweepFullPhase p
         return "Wi-Fi";
     case RoomSweepFullBle:
         return "BLE";
+    case RoomSweepFullRaw:
+        return "Wi-raw";
+    case RoomSweepFullProbe:
+        return "Probe";
     case RoomSweepFullNrf24:
         return "nRF24";
     case RoomSweepFullGps:

@@ -168,8 +168,9 @@
 - Tests: test_oui (286 asserts), test_classify (77), test_ui_layout +
   test_report_state extended. Gates: init.sh ALL PASS (20 suites), _verify_api
   CLEAN, ufbt zero warnings.
-- On-device (rig Rug1k0, mntm-012): ufbt launch + live drive. Verified PRT?
-  tag on real "DIRECT-ed-HP M283 LaserJet" (no false tags on 5 other APs),
+- On-device (mntm-012 test rig): ufbt launch + live drive. Verified PRT?
+  tag on a synthetic printer-network fixture (no false tags on other synthetic
+  AP fixtures),
   Vendor: randomized on a locally-administered -IoT AP, Vendor: unlisted on
   listed-nothing MACs, Info tab "ident: curated OUI". Screenshots in
   .omo/evidence/device-recon-2026-09-20/ (local only).
@@ -177,3 +178,162 @@
   the 0x02 locally-administered test — BLE randomized labeling under-reports;
   documented, follow-up candidate.
 - Rollback: tag restore/pre-phase1-2026-09-20 (pushed).
+
+## 2026-09-20 — Phases 6-7 + BLE randomized fix (feat/capability-rollout-2026-09)
+- fix(ident): BLE random-static detection. On-device verification follow-up:
+  BLE random-STATIC (top bits 0xC0) escaped the 0x02 locally-administered
+  test. room_sweep_oui_is_randomized_ble = 0x02 OR 0xC0;
+  room_sweep_oui_evidence_ble gives curated OUI hits precedence (f4:f5:e8
+  stays Google, not "randomized"); Wi-Fi paths unchanged (c8:4f:86 never
+  randomized). Resolvable/private (01/00) subtypes remain undetectable —
+  documented in USER_GUIDE honest limits.
+- feat(rogue) phase 6: room_sweep_rogue.h exact case-sensitive SSID
+  grouping (hidden + no-BSSID rows excluded). Wi list "!" marker (left of
+  the hint-tag column), detail badge SAME NAME ON n BSSIDS, CSV rogue=n
+  token, report "Possible cloned SSIDs ... K group(s)" + mesh caveat.
+  session_log keeps max groups seen.
+- feat(stats) phase 7: room_sweep_stats.h integer-only absorb/avg
+  (sum = Sigma(rssi+120), uint32-safe at obs=65535; sub -120 dBm clamps in
+  the sum only, min/max stay true). WifiAp/BleDev +8 B/row (~192 B total).
+  Wi/BT detail "-38dBm -72..-38 n14" (23-char/117 px budget verified;
+  channel left the stats line, stays in CSV). CSV min=/max=/avg= via
+  whole-token composer inside detail[48] — tail phrase yields first, values
+  never cut. Report strongest lines gain (range a..b), lifted from the
+  strongest observation's tokens.
+- Tests: test_rogue (new), test_stats (new), test_oui/test_ui_layout/
+  test_report_state extended. Gates: init.sh ALL PASS (23 suites + ufbt
+  zero warnings), _verify_api.py CLEAN (65 symbols). No device deploy.
+- feat(watch) phase 8: RF burst watch lock-and-log. room_sweep_watch.h
+  (Flipper-free, integer-only): rising edge above the shared -75 dBm gate
+  opens a burst, 600 ms silence closes it; ACTIVE span (first-to-last
+  above sample) banked for duty/duration — the gap is latency, not TX
+  time. RfSubWatch locks ONE frequency (fresh candidate tuned_hz else
+  nearest ExtBand-legal preset at/after peak_ch) at sub-mode entry and
+  never re-locks mid-window; existing RF thread feeds it at the 5 ms
+  survey cadence (no new thread, tiny locals). Watch page BURSTS/LAST/
+  DUTY (live RSSI on header row); closed burst = one CSV observation row
+  (id WATCH, submode watch, count=active ms, rssi=burst max, detail
+  duty=N% bursts=M) + existing press-pulse via feedback (no new
+  notification sequence).
+- Tests: test_watch (new, 80 checks: edges, gap boundary 599/600, max
+  per burst, rx-inactive decay, duty clamps + uint32 overflow guard,
+  1e6-tick long run, tick-wrap), test_ui_layout +1 hint check. Gates:
+  init.sh ALL PASS, _verify_api.py CLEAN, ufbt zero warnings. No device
+  deploy.
+
+## 2026-09-21 — device-deploy session: OOM-on-launch crash found + fixed (feat/capability-rollout-2026-09)
+- First device deploy of the phases 6-9 build (mntm-012 test rig/API 87.1).
+  It did not open: two of three launches rebooted the Flipper with the
+  framework's "out of memory" screen.
+- Root cause (SD breadcrumb instrumentation, reverted after): App state is ONE
+  contiguous malloc of 20644 B taken at entry, where the largest free block
+  measured 27640 B in a good heap state and dipped below the need in a worse
+  one - a fragmentation failure, not total-free starvation (38880 B was free
+  when the 20644 B allocation failed). The record queue was 8 KiB of that
+  (32 slots x 256 B = 40%); phases 4-9 had grown the struct without a deploy.
+- Fix: RECORD_QUEUE_CAPACITY 32 -> 8 (App 14500 B) + NULL-checked app-state
+  allocation that logs/sounds and exits instead of letting the framework
+  reboot the device. Runtime contiguous headroom after startup: 4176 -> 9912 B.
+- Verified on device: 10/10 launch->exit cycles clean, entry heap stable
+  across cycles (free ~38770, maxblk ~29200+). Receipt:
+  .omo/evidence/oom-regression-2026-09-21.md. Gates: init.sh ALL PASS (24
+  suites), _verify_api.py CLEAN, ufbt zero warnings.
+- Lesson recorded in the receipt: phases 6-9 were host-verified only; this is
+  exactly the class of defect the per-phase device gate exists to catch.
+
+## 2026-09-21 — Phase 11a: 20-preset RF survey (feat/capability-rollout-2026-09)
+- rf presets 16 -> 20: adds 850 / 880 (cellular uplink edge), 902 / 927.5
+  (US 902-928 ISM edges). Tables moved to Flipper-free
+  room_sweep_rf_presets.h so the invariants are host-testable; new suite
+  test_rf_presets (18 checks) pins: parallel-array counts (the band column is
+  indexed directly - a short table meant tuning an arbitrary frequency),
+  CC1101 band membership, band column vs frequency, uniqueness, label width,
+  and the strip budget.
+- Survey strip math derived from the preset count in room_sweep_ui_layout.h
+  (rf_bar_stride/width/x, rf_label_step) + test_ui_layout cases at 16 and 20
+  (16 keeps the 8px stride, 20 gets 6px; labels 0/24/48/72/96 all fit).
+  Waterfall channel count follows the presets; its vertical divisor is now
+  derived. Latent overflow fixed: radar blips[16] -> RF_NUM_CHANNELS.
+- Cost: survey pass 640 -> 800 ms; baseline CSV +4 rows; waterfall 20 rows
+  in the same band. Docs updated (README, USER_GUIDE preset table + cellular
+  caveat, field guide, control map).
+- Gates: init.sh ALL PASS (25 suites), ufbt zero warnings. NO DEVICE DEPLOY
+  this item - the rig was unresponsive this session (see
+  .omo/evidence/device-unresponsive-2026-09-21.md); strip geometry is pinned
+  by host tests rather than a screenshot.
+
+## 2026-09-21 — Phase 11b/11c: sweep probe pass + capability card + docs
+- full_sweep: new Wi-probe phase (sniffprobe, 8s, own bit, label "Probe",
+  included in BIT_ALL), honest skip with no UART scanner. Wi-raw documented
+  as the client/station view on this build (sniffraw reports every frame
+  incl. stations); scanap+scansta stay out until the station-line format is
+  pinned (format gate).
+- Defect fixed: a full-sweep Wi pass routed UART lines by the SETTINGS Wi
+  source, so the raw radar pass collected nothing unless the operator had
+  pre-selected RAW. wifi_effective_source() (pass wins over setting) now
+  drives routing + table count + Wi header tag. Command selection simplified
+  (wifi_command_for_source + wrapper).
+- Info tab: Caps page (5/6) added - vendors+hints / hidden-SSID repair /
+  clients (Wi-raw) / rogue+watch flags; INFO_PAGE_COUNT replaces three
+  hardcoded 5s; LIMITS is now an explicit page 6/6 (was the fallback else).
+- Docs: README "What it can now find" table (thing in the room -> what the
+  app shows -> what it still cannot say) + expanded hardware-blind list
+  (silent recorders, 5 GHz, LTE mid-band, BT Classic audio, CC1101 gaps,
+  wired); USER_GUIDE Info pages + FullSweep steps; control map sweep order;
+  field guide preset count.
+- features.json: two functional entries (11a, 11b) + one verification entry
+  with passes:false (device walk owed; phases 6-9 receipt + parser un-gating
+  both blocked on the rig).
+- Tests: test_full_sweep_state extended (probe transition/bit/skip/limit/
+  label/window-ordering). Gates: init.sh ALL PASS (25 suites),
+  _verify_api.py CLEAN, ufbt zero warnings. NO DEVICE DEPLOY (rig hung).
+
+## 2026-09-21 — device walk begins: fixes for map saturation + baseline burst
+- First on-device validation session after the power cycle. Harvested what the
+  interrupted v1 run left: session-16.csv (2010 records, 262 KB) proves the
+  app kept scanning and logging for 4.5 min AFTER the host console stopped
+  answering — so that "hang" was host-side USB, not an app hang. Its report
+  carried the first device evidence for phase 7 (range -22..-14) and the phase
+  9 watchlist report lines.
+- Receipt run A (script killed by my own timeout, artifacts salvaged):
+  watchlist.txt created with a redacted synthetic entry, report
+  "Watchlist matches: 1", 63 rows with watch=1, 8 WATCH burst rows, 620 rows
+  with min=/max=/avg=. Found two defects in the process:
+  (1) baseline burst 20 rows -> 8-slot queue -> 9 rows dropped on device;
+  (2) identifier map saturated at 32 -> WATCH rows and later BLE rows came out
+  id=REDACTED.
+- Fixed both: map 32 -> 64, WATCH becomes a literal (non-identity) id refused
+  on mismatch, baseline handler drains in groups as it enqueues. test_record_state
+  +9 cases. Gates: init.sh ALL PASS (25 suites), _verify_api CLEAN, ufbt clean.
+- Receipt run A2 (fixed build, single connection, console alive throughout):
+  20/20 baseline rows (RF-01..RF-20 incl. the 4 phase-11 presets), 32 WATCH rows
+  all id=WATCH, ZERO REDACTED rows, 174 watch=1 rows. Phase 7/8/9/11a all now
+  device-verified from artifacts.
+- Console deaths (2 now) are reproducible but host-side: the app keeps running;
+  the CDC stops delivering. Workaround: short sessions, one connection,
+  harvest artifacts first (see .omo/evidence/device-unresponsive-2026-09-21.md).
+
+## 2026-09-21 — device walk completed: phases 7/8/9/11a/11b + phase 5 un-gate
+- Harvested the dead session's captures (probe dump, session artifacts):
+  the probe format came off the wire and MATCHES the shipped grammar exactly
+  (RSSI: -NN Ch: N Client: <mac> Requesting: <ssid>), so phase 5's format gate
+  is satisfied and the parser is un-gated (6c83d28) with six redacted records
+  as test fixtures. The validation session supplied 10 probe rows (PR-01..PR-06);
+  room-specific identifiers are intentionally omitted here.
+- FullSweep device run (session-22.csv): every pass hit its configured ceiling
+  — RF 10.1s, Wi-Fi 15.1s, BLE 15.0s, Wi-raw 6.0s, Wi-probe 8.1s, nRF24 honest
+  skip, GPS 2.0s min-dwell — then full_sweep_done partial + "finished" report.
+  Phase 11b device-verified, including the effective-source routing fix (the
+  three Wi passes appear as distinct ordinal fingerprints AP-01/AP-12/AP-14).
+- RAW source (session-20.csv): 1955 submode=raw rows with STA-NN ordinals
+  work; measured limit — ~55 rows/s outran the 8-slot recorder queue and 271
+  rows (11.7%) were dropped (counted + reported). Logged as a follow-up
+  candidate (per-MAC interval logging), not silently accepted.
+- Phase 6 premise checked against a redacted fixture: four synthetic SSIDs,
+  one BSSID each, no duplicates, so the correlation has nothing to correlate
+  in that fixture.
+- Screenshots confirmed unavailable a third time, now on the fixed build
+  (RPC screen stream reboots the device). Pixel-level items stay host-pinned
+  and are described that way.
+- Console flakiness: four silences now, all host-side (the app keeps logging).
+  Practice: short runs, one connection, harvest first.

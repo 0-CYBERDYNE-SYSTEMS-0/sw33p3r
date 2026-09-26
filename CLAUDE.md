@@ -72,7 +72,9 @@ plain `cc`:
 - `room_sweep_full_sweep.h`, `room_sweep_radio_path.h`,
   `room_sweep_nrf24_state.h`, `room_sweep_settings.h`.
 - `room_sweep_analyzer.h`, `room_sweep_radar.h`, `room_sweep_waterfall.h`,
-  `room_sweep_ui_layout.h`.
+  `room_sweep_ui_layout.h`, `room_sweep_rf_presets.h` (20-preset survey table;
+  host-tested invariants — all three parallel arrays in sync, every frequency
+  inside a real CC1101 band).
 
 When changing behavior, put the decision logic in one of these headers and add
 a host test; keep `room_sweep.c` as the wiring/rendering layer.
@@ -115,9 +117,15 @@ Other modules: `nmea.c/h` (host-tested NMEA parser: GGA/RMC/GLL/ZDA/GSV),
   `expansion_enable()` on exit). Line ending is `\n` only (Marauder
   `readStringUntil('\n')` + trim — not CRLF).
 - Commands sent are fixed and scan-only: `sniffbeacon` (WiFi AP), `sniffbt`
-  (BLE), `stopscan`, `nmea`, `gps -g nmea`, `help`. (`scanap`/`scansta`/
-  `sniffprobe` exist on the current BFFB build — verified 2026-09-20 — but are
-  not sent; policy list, not a capability list.) WiFi lines:
+  (BLE), `stopscan`, `nmea`, `gps -g nmea`, `help`, plus the Phase 4/5/10 Wi
+  capture sources (2026-09-20 expansion): `sniffraw` (transmitter radar, Wi
+  Src RAW), `sniffprobe` (client probes, Wi Src PROBE — also sent by the
+  FullSweep Wi-probe pass, phase 11), `sniffesp`/`sniffpwn`
+  (hostile-tooling, Wi Src TOOL, alternating windows). `scanap`/`scansta`
+  exist on the current BFFB build but stay unsent; `sniffprobe`'s output
+  format is validated against a redacted fixture (2026-09-21), while esp/pwn
+  remain pinned from upstream source only — annotated "not yet observed live" (see
+  `docs/BFFB_MOMENTUM.md`). WiFi lines:
   `-RSSI Ch: n MAC ESSID: …`; BLE: `-RSSI Device: name|mac`.
 - GPS primary path is Flipper GPIO **LPUART 15/16 @ 9600** (Momentum setting:
   NMEA GPS UART = Extra 15,16); Marauder `nmea` stream over USART is the

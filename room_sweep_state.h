@@ -12,7 +12,9 @@
  * or device-type identification — a CC1101 RSSI readout cannot identify any
  * of those. UI copy must describe it as energy above a threshold.
  */
-#define ROOM_SWEEP_SIGNAL_THRESHOLD_DBM (-75.0f)
+/* Keep an integer spelling available to integer-only state machines. */
+#define ROOM_SWEEP_SIGNAL_THRESHOLD_DBM_INT (-75)
+#define ROOM_SWEEP_SIGNAL_THRESHOLD_DBM ((float)ROOM_SWEEP_SIGNAL_THRESHOLD_DBM_INT)
 #define ROOM_SWEEP_CANDIDATE_EXPIRY_MS 30000U
 
 typedef enum {

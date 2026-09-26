@@ -25,7 +25,7 @@ another signal, it is out of scope by definition.
 ## The gate: `./init.sh`
 
 `./init.sh` must pass before any PR or commit is considered done. It compiles
-all 18 host test suites with `cc -std=c11 -Wall -Wextra -Werror` (several also
+all 27 host test suites with `cc -std=c11 -Wall -Wextra -Werror` (several also
 with `-pedantic`) into `/tmp` and runs them, then builds the FAP with `ufbt`.
 CI runs the same script on every push/PR to `main`.
 

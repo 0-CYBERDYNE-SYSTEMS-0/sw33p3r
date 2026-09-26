@@ -282,7 +282,7 @@
         <tr><td>Path</td><td><code>/ext/apps_data/room_sweep/</code></td></tr>
         <tr><td>Files</td><td><code>session-N.csv</code> · <code>report-N.txt</code> · <code>uart-N.txt</code> (Raw Dump only)</td></tr>
         <tr><td>Privacy</td><td>Wi/BT IDs are session ordinals. GPS coords only if GPS Log ON.</td></tr>
-        <tr><td>FullSweep</td><td>RF 10 s → Wi-Fi 15 s → BLE 15 s → nRF24 12 s → GPS 8 s (GPS may finish after 2 s if usable NMEA exists — parsed position or sentences). nR skipped if SPI Path is not nRF24. Never arms TX.</td></tr>
+        <tr><td>FullSweep</td><td>RF 10 s → Wi-Fi 15 s → BLE 15 s → Wi-raw 6 s (clients) → Wi-probe 8 s (hidden-SSID recovery) → nRF24 12 s → GPS 8 s (GPS may finish after 2 s if usable NMEA exists — parsed position or sentences). nR skipped if SPI Path is not nRF24; a Wi pass with no Marauder attached is skipped honestly (bit unset) and the sweep continues. Never arms TX.</td></tr>
         <tr><td>Banner</td><td>Top strip <code>FULL &lt;phase&gt; &lt;s&gt;</code>. Then inverted <code>SWEEP DONE</code> + <code>saved report-N</code>.</td></tr>
       </table>
     </div>
@@ -316,7 +316,7 @@
   </div>
 
   <template id="card-rf">
-    <p class="lede">Sub-GHz CC1101 survey. Internal or BFFB external. 16 presets. Analyzer via Hold ◀.</p>
+    <p class="lede">Sub-GHz CC1101 survey. Internal or BFFB external. 20 presets. Analyzer via Hold ◀.</p>
     <div class="keys" style="margin-bottom:18px">
       <div class="key"><b>▲ / ▼ short</b>Survey → Sweep → Peak → Waterfall</div>
       <div class="key"><b>Hold ▲ / ▼</b>Open lock card. Short ▲/▼ returns to map.</div>
@@ -330,7 +330,7 @@
       <tr><td>Peak</td><td>Start / cancel refine</td><td>Lock result</td></tr>
       <tr><td>Waterfall</td><td>—</td><td>Lock qualified hit</td></tr>
     </table>
-    <p class="lede" style="margin-top:14px">Waterfall: 16 presets × 24 columns, push every 400 ms (~2.5 Hz, ~9.6 s). Passive. Analyzer energy-map rings are RSSI (angles are a channel wheel, not a direction), not meters.</p>
+    <p class="lede" style="margin-top:14px">Waterfall: 20 presets × 24 columns, push every 400 ms (~2.5 Hz, ~9.6 s). Passive. Analyzer energy-map rings are RSSI (angles are a channel wheel, not a direction), not meters.</p>
   </template>
 
   <template id="card-wi">

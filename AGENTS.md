@@ -57,7 +57,9 @@ Single ViewPort app, one draw function, **7 tabs** (`SweepMode` in
   `room_sweep_full_sweep.h`, `room_sweep_radio_path.h`,
   `room_sweep_nrf24_state.h`, `room_sweep_settings.h`,
   `room_sweep_analyzer.h`, `room_sweep_radar.h`, `room_sweep_waterfall.h`,
-  `room_sweep_ui_layout.h`.
+  `room_sweep_ui_layout.h`, `room_sweep_rf_presets.h` (20-preset survey table;
+  host-tested invariants — all three parallel arrays in sync, every frequency
+  inside a real CC1101 band).
 - Other modules: `nmea.c/h` (host-tested NMEA parser),
   `session_log.c/h` (session writer, main-loop-only), `nrf24_survey.c/h`.
 - `application.fam` — ufbt manifest: stack 6 KiB, `sources=["*.c","!tests"]`.
@@ -90,10 +92,15 @@ Single ViewPort app, one draw function, **7 tabs** (`SweepMode` in
 - USART pins 13/14 @ 115200 **after `expansion_disable()`** (restore on exit).
   Line ending is `\n` only (not CRLF).
 - Fixed scan-only commands: `sniffbeacon`, `sniffbt`, `stopscan`, `nmea`,
-  `gps -g nmea`, `help`. (`scanap`/`scansta`/`sniffprobe` exist on the current
-  BFFB build — verified 2026-09-20, see `docs/BFFB_MOMENTUM.md` — but are not
-  sent today; the list is policy, not a capability list. Expansion candidates
-  live in `specs/full-capability-expansion-2026-09-20.md`.)
+  `gps -g nmea`, `help`, plus the Phase 4/5/10 Wi capture sources
+  (2026-09-20 expansion): `sniffraw` (transmitter radar, Wi Src RAW),
+  `sniffprobe` (client probes, Wi Src PROBE — also sent by the FullSweep
+  Wi-probe pass, phase 11), `sniffesp`/`sniffpwn`
+  (hostile-tooling, Wi Src TOOL, alternating windows). `scanap`/`scansta`
+  exist on the current BFFB build but stay unsent; `sniffprobe`'s format is
+  validated against a redacted fixture (2026-09-21 — `RSSI: -NN Ch: N Client:
+  <mac> Requesting: <ssid>`), while esp/pwn remain upstream-pinned only,
+  annotated "not yet observed live" (see `docs/BFFB_MOMENTUM.md`).
 - GPS primary: Flipper GPIO **LPUART 15/16 @ 9600**; Marauder `nmea` stream is
   the fallback. Verify against `docs/BFFB_MOMENTUM.md`.
 

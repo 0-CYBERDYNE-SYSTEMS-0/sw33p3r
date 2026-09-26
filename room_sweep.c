@@ -38,6 +38,13 @@
 #include "room_sweep_wireless.h"
 #include "room_sweep_oui.h"
 #include "room_sweep_classify.h"
+#include "room_sweep_rogue.h"
+#include "room_sweep_stats.h"
+#include "room_sweep_watch.h"
+#include "room_sweep_watchlist.h"
+#include "room_sweep_sta.h"
+#include "room_sweep_probe.h"
+#include "room_sweep_tool.h"
 #include "room_sweep_full_sweep.h"
 #include "room_sweep_radio_path.h"
 #include "room_sweep_nrf24_state.h"
@@ -155,7 +162,14 @@ static const NotificationSequence seq_tx_alert = {
 /* ================================================================== */
 /* App state                                                           */
 /* ================================================================== */
-#define RECORD_QUEUE_CAPACITY 32U
+/* App state is ONE contiguous allocation taken at entry, where the largest
+ * free block is only a few KB above sizeof(App) (measured on device). The
+ * record queue dominated that size at 32 slots x 256 B = 8 KiB, so it holds
+ * a 3 s burst at the observed producer rate (RF logging is throttled to one
+ * event per LOG_HIT_MIN_MS; the main loop drains every pass). Overflow is
+ * still counted in record_queue_drops and reported as session drop evidence,
+ * so a shorter queue degrades honestly rather than silently losing rows. */
+#define RECORD_QUEUE_CAPACITY 8U
 #define INPUT_QUEUE_CAPACITY 16U
 
 typedef struct {
@@ -254,6 +268,19 @@ typedef struct {
     uint16_t wifi_window_observations;
     uint8_t wifi_scroll;
     uint8_t wifi_last_updated;
+
+    /* Wi capture source (Phase 4/5/10): which Marauder scan the Wi tab
+     * runs and which table process_uart_lines feeds. Default BEACON. */
+    WiSource wifi_source;
+    RawDev raw_devs[MAX_RAW_DEVS];
+    uint8_t raw_count;
+    ProbeDev probe_devs[MAX_PROBE_DEVS];
+    uint8_t probe_count;
+    ToolDev tool_devs[MAX_TOOL_DEVS];
+    uint8_t tool_count;
+    uint8_t tool_current_kind; /* 0 none, 1 esp, 2 pwn — planner state */
+    bool full_sweep_raw_active; /* the sequencer's RAW pass owns the window */
+    bool full_sweep_probe_active; /* the sequencer's PROBE pass owns the window */
 
     /* BLE parsed results */
     BleDev ble_devs[MAX_BLE_DEVS];
@@ -384,6 +411,31 @@ typedef struct {
     RoomSweepWaterfallState waterfall;
     uint32_t waterfall_last_push_tick;
 
+    /* Phase 8 RF burst watch (lock-and-log, passive). The RF thread owns
+     * the watch state machine; the main loop draws and consumes the
+     * close-pulse edge. watch_freq_hz is the locked frequency (0 = idle)
+     * set once per watch entry — never re-locked mid-window. */
+    RoomSweepWatch watch;
+    volatile uint32_t watch_freq_hz;
+    uint32_t watch_tuned_hz; /* RF-thread tune cache, radio_mutex-guarded */
+    volatile bool watch_close_pulse; /* set by RF thread, consumed by feedback */
+
+    /* Phase 9 opt-in cross-session watchlist. OFF by construction on every
+     * launch (never persisted): ZERO file activity unless the user enables
+     * it in Settings. Raw MACs live ONLY in watchlist.txt (same privacy
+     * class as Raw Dump) — session CSVs keep ordinals. Watch state shares
+     * app->mutex with the wireless tables. */
+    bool watchlist_on;
+    bool watchlist_loaded; /* the file is read at most once per enable */
+    bool watchlist_error;  /* last file op failed (Settings shows ERR) */
+    RoomSweepWatchlist watchlist;
+    uint16_t wifi_watch_mask; /* bit per wifi_aps row on the watchlist */
+    uint16_t ble_watch_mask;  /* bit per ble_devs row on the watchlist */
+    uint16_t watch_hit_mask;  /* bit per ENTRY seen this session (report N) */
+    uint16_t watch_local_mask; /* bit per ENTRY flagged this launch */
+    uint32_t watch_flag_session[ROOM_SWEEP_WATCH_MAX]; /* ordinal at flag */
+    uint32_t watch_notice_until_tick; /* WATCH FULL transient banner */
+
     /* GPS hunt trail (mark-centered radar, in-RAM only — never logged) */
     RoomSweepGpsTrail gps_trail;
     uint32_t gps_trail_last_push_tick;
@@ -393,7 +445,7 @@ typedef struct {
     uint8_t ble_ui_page; /* 0=detail 1=list 2=help */
     uint8_t rf_ui_page; /* 0=map/sub-mode 1=lock card */
     uint8_t nrf_ui_page; /* 0=status 1=results */
-    /* GPS uses gps_page + extra help via Long R; Info uses info_page 0..3 */
+    /* GPS uses gps_page + extra help via Long R; Info uses info_page 0..5 */
 
     /* Settings overlay */
     bool settings_active;
@@ -432,6 +484,7 @@ static const uint32_t tx_freq_presets[TX_FREQ_PRESET_COUNT] = {
 #define SET_VIBRO     RoomSweepSetVibro
 #define SET_RESCAN    RoomSweepSetRescan
 #define SET_SCANWIN   RoomSweepSetScanWin
+#define SET_WIFISRC   RoomSweepSetWifiSrc
 #define SET_LOG       RoomSweepSetRecord
 #define SET_EXTBAND   RoomSweepSetExtBand
 #define SET_SPIPATH   RoomSweepSetSpiPath
@@ -441,6 +494,7 @@ static const uint32_t tx_freq_presets[TX_FREQ_PRESET_COUNT] = {
 #define SET_DUMP      RoomSweepSetDump
 #define SET_TXDUR     RoomSweepSetTxDur
 #define SET_FULLSWEEP RoomSweepSetFullSweep
+#define SET_WATCHLIST RoomSweepSetWatchlist
 #define SET_COUNT     RoomSweepSetCount
 
 #define RESCAN_INTERVAL_MS 5000
@@ -452,6 +506,104 @@ static const uint32_t tx_freq_presets[TX_FREQ_PRESET_COUNT] = {
 #define TX_MAX_DURATION_S  10
 #define TX_DEFAULT_DURATION 3
 #define LOG_HIT_MIN_MS 1500
+/* TOOL source: length of one esp/pwn half-window. The planner consults the
+ * tick each time a scan window restarts, so this equals the default scan
+ * window (30 s) and the two commands alternate window by window. */
+#define ROOM_SWEEP_TOOL_WINDOW_MS 30000U
+
+/* ---- Wi capture source helpers (Phase 4/5/10) ---- */
+
+static void clear_raw_results(App* app) {
+    furi_mutex_acquire(app->mutex, FuriWaitForever);
+    memset(app->raw_devs, 0, sizeof(app->raw_devs));
+    app->raw_count = 0;
+    furi_mutex_release(app->mutex);
+}
+
+static void clear_probe_results(App* app) {
+    furi_mutex_acquire(app->mutex, FuriWaitForever);
+    memset(app->probe_devs, 0, sizeof(app->probe_devs));
+    app->probe_count = 0;
+    furi_mutex_release(app->mutex);
+}
+
+static void clear_tool_results(App* app) {
+    furi_mutex_acquire(app->mutex, FuriWaitForever);
+    memset(app->tool_devs, 0, sizeof(app->tool_devs));
+    app->tool_count = 0;
+    app->tool_current_kind = 0;
+    furi_mutex_release(app->mutex);
+}
+
+static void clear_active_source_results(App* app) {
+    if(app->wifi_source == WiSourceRaw) clear_raw_results(app);
+    else if(app->wifi_source == WiSourceProbe) clear_probe_results(app);
+    else if(app->wifi_source == WiSourceTool) clear_tool_results(app);
+}
+
+/*
+ * Effective Wi source for this instant. A full-sweep pass owns the Wi window
+ * while it runs (the sequencer sends its own command), so both the UART
+ * routing and the table/header the operator sees follow the PASS, not the
+ * Settings choice — otherwise a RAW/PROBE pass would collect nothing unless
+ * the user happened to have pre-selected that source.
+ */
+static WiSource wifi_effective_source(const App* app) {
+    if(app->full_sweep_raw_active) return WiSourceRaw;
+    if(app->full_sweep_probe_active) return WiSourceProbe;
+    return app->wifi_source;
+}
+
+static uint8_t wifi_source_table_count(App* app) {
+    switch(wifi_effective_source(app)) {
+    case WiSourceRaw:
+        return app->raw_count;
+    case WiSourceProbe:
+        return app->probe_count;
+    case WiSourceTool:
+        return app->tool_count;
+    case WiSourceBeacon:
+    default:
+        return app->wifi_count;
+    }
+}
+
+/*
+ * Command for a Wi capture source. TOOL consults the host planner: on a
+ * window boundary it flips (caller then stopscans first, which
+ * marauder_start_scan always does) and the flip is remembered so "keep
+ * current" resends the same command.
+ */
+static const char* wifi_command_for_source(App* app, WiSource source) {
+    switch(source) {
+    case WiSourceRaw:
+        return MARAUDER_CMD_RAW;
+    case WiSourceProbe:
+        return MARAUDER_CMD_PROBE;
+    case WiSourceTool: {
+        int next = room_sweep_tool_next_window(
+            furi_get_tick(), ROOM_SWEEP_TOOL_WINDOW_MS, app->tool_current_kind);
+        if(next == ROOM_SWEEP_TOOL_KIND_ESP) {
+            app->tool_current_kind = ROOM_SWEEP_TOOL_KIND_ESP;
+            return MARAUDER_CMD_ESP;
+        }
+        if(next == ROOM_SWEEP_TOOL_KIND_PWN) {
+            app->tool_current_kind = ROOM_SWEEP_TOOL_KIND_PWN;
+            return MARAUDER_CMD_PWN;
+        }
+        return app->tool_current_kind == ROOM_SWEEP_TOOL_KIND_PWN ? MARAUDER_CMD_PWN :
+                                                                    MARAUDER_CMD_ESP;
+    }
+    case WiSourceBeacon:
+    default:
+        return MARAUDER_CMD_WIFI;
+    }
+}
+
+/* Command for whichever source currently owns the Wi window. */
+static const char* wifi_source_command(App* app) {
+    return wifi_command_for_source(app, wifi_effective_source(app));
+}
 
 static bool rf_channel_allowed(App* app, uint8_t ch) {
     if(app->radio_path != RadioPathExternal || app->ext_band == ExtBandAuto) return true;
@@ -467,6 +619,40 @@ static uint8_t rf_default_sweep_band(App* app) {
         if(app->ext_band == ExtBand900) return 2;
     }
     return app->sweep_band_idx;
+}
+
+/*
+ * Phase 8 RF burst watch: entering the sub-mode locks ONE frequency — the
+ * fresh candidate's tuned frequency when one exists, else the nearest
+ * ExtBand-legal preset at/after the last survey peak — and starts a fresh
+ * measurement window. The frequency is never re-locked while watching (a
+ * mid-window relock would corrupt the duty denominator); leaving and
+ * re-entering the sub-mode re-locks and restarts the window.
+ */
+static void rf_watch_arm(App* app) {
+    uint32_t now = furi_get_tick();
+    uint32_t lock_hz = 0;
+    furi_mutex_acquire(app->mutex, FuriWaitForever);
+    if(room_sweep_candidate_is_fresh(&app->signal_candidate, now)) {
+        lock_hz = app->signal_candidate.tuned_hz;
+    }
+    furi_mutex_release(app->mutex);
+    if(lock_hz == 0) {
+        uint8_t ch = app->peak_ch;
+        for(uint8_t i = 0; i < RF_NUM_CHANNELS; i++) {
+            uint8_t try_ch = (uint8_t)((ch + i) % RF_NUM_CHANNELS);
+            if(rf_channel_allowed(app, try_ch)) {
+                ch = try_ch;
+                break;
+            }
+        }
+        lock_hz = rf_channels[ch];
+    }
+    app->watch_freq_hz = lock_hz;
+    app->watch_tuned_hz = 0; /* force a retune in the RF thread */
+    furi_mutex_acquire(app->mutex, FuriWaitForever);
+    room_sweep_watch_reset(&app->watch, now);
+    furi_mutex_release(app->mutex);
 }
 
 static bool record_enqueue(
@@ -563,12 +749,17 @@ static const char* record_mode_for_source(const char* source, SweepMode current)
 
 static const char* record_submode_for_source(App* app, const char* source) {
     if(source && strcmp(source, "RF") == 0) {
+        if(app->rf_sub == RfSubWatch) return "watch";
         if(app->rf_sub == RfSubSweep) return "sweep";
         if(app->rf_sub == RfSubPeak) return "peak";
         return "survey";
     }
-    if(source && (strcmp(source, "WIFI") == 0 || strcmp(source, "BLE") == 0))
+    if(source && (strcmp(source, "WIFI") == 0 || strcmp(source, "BLE") == 0)) {
+        if(source[0] == 'W' && app->wifi_source == WiSourceRaw) return "raw";
+        if(source[0] == 'W' && app->wifi_source == WiSourceProbe) return "probe";
+        if(source[0] == 'W' && app->wifi_source == WiSourceTool) return "tool";
         return "scan_window";
+    }
     if(source && strcmp(source, "GPS") == 0)
         return app->gps_profile == GPS_PROFILE_EXTERNAL ? "external" : "bffb";
     if(source && strcmp(source, "TX") == 0) return "bounded_carrier";
@@ -1110,6 +1301,7 @@ static void clear_wifi_results(App* app) {
     app->wifi_window_table_full = 0;
     app->wifi_window_observations = 0;
     app->wifi_scroll = 0;
+    app->wifi_watch_mask = 0; /* watchlist entries outlive the rows */
     furi_mutex_release(app->mutex);
 }
 
@@ -1123,6 +1315,7 @@ static void clear_ble_results(App* app) {
     app->ble_window_table_full = 0;
     app->ble_window_observations = 0;
     app->ble_scroll = 0;
+    app->ble_watch_mask = 0; /* watchlist entries outlive the rows */
     furi_mutex_release(app->mutex);
 }
 
@@ -1183,7 +1376,14 @@ static void marauder_start_scan(App* app, const char* command, bool clear_result
     if(clear_results) {
         if(app->mode == SweepModeWifi) {
             clear_wireless_target(app, TargetWifi);
-            clear_wifi_results(app);
+            /* BEACON keeps clearing the AP table exactly as before; the
+             * RAW/PROBE/TOOL sources clear only their own table so the AP
+             * list survives for hidden-repair and rogue correlation. */
+            if(app->wifi_source == WiSourceBeacon) {
+                clear_wifi_results(app);
+            } else {
+                clear_active_source_results(app);
+            }
         }
         if(app->mode == SweepModeBle) {
             clear_wireless_target(app, TargetBle);
@@ -1210,7 +1410,10 @@ static void marauder_start_scan(App* app, const char* command, bool clear_result
 static void marauder_start_for_mode(App* app) {
     if(!app->serial) return;
     if(app->mode == SweepModeWifi) {
-        marauder_start_scan(app, MARAUDER_CMD_WIFI, true);
+        /* Command follows the active Wi source (Phase 4/5/10). clear=true
+         * clears THAT source's table; BEACON additionally clears the AP
+         * table (unchanged), the others keep it for correlation. */
+        marauder_start_scan(app, wifi_source_command(app), true);
     } else if(app->mode == SweepModeBle) {
         marauder_start_scan(app, MARAUDER_CMD_BLE, true);
     }
@@ -1327,6 +1530,186 @@ static void update_gps_mode(App* app) {
 /*   room_sweep_wireless.h, update-or-insert, full counters).         */
 /* ================================================================== */
 
+/* ---- Phase 9 opt-in watchlist (privacy-gated; see header contract) ---- */
+
+#define WATCHLIST_READ_CAP 1024U
+#ifndef WATCHLIST_PATH
+#define WATCHLIST_PATH APP_DATA_PATH("watchlist.txt")
+#endif
+
+/* Is this MAC on the in-RAM watchlist? OFF means no, always — callers
+ * pass the row's real MAC; labels never match. */
+static bool watchlist_watch_status(App* app, const char* mac) {
+    if(!app->watchlist_on || !mac || !mac[0]) return false;
+    return room_sweep_watchlist_find(&app->watchlist, mac) >= 0;
+}
+
+/*
+ * Fold one upserted row into the watch state: refresh the row badge bit
+ * and, on a first hit for an entry this session, bump the distinct-match
+ * count the Room Report carries. Main-loop-only (upserts run there).
+ */
+static void watchlist_note_row(
+    App* app,
+    const char* mac,
+    uint16_t* row_mask,
+    uint8_t row_idx) {
+    bool watched = watchlist_watch_status(app, mac);
+    if(watched) {
+        int hit = room_sweep_watchlist_find(&app->watchlist, mac);
+        if(hit >= 0 && hit < ROOM_SWEEP_WATCH_MAX) {
+            uint16_t bit = (uint16_t)(1U << hit);
+            if((app->watch_hit_mask & bit) == 0) {
+                app->watch_hit_mask = (uint16_t)(app->watch_hit_mask | bit);
+                session_log_note_watchlist(true, room_sweep_watchlist_hit_count(
+                                                     app->watch_hit_mask));
+            }
+        }
+    }
+    uint16_t row_bit = (uint16_t)(1U << row_idx);
+    if(watched) {
+        *row_mask = (uint16_t)(*row_mask | row_bit);
+    } else {
+        *row_mask = (uint16_t)(*row_mask & (uint16_t)~row_bit);
+    }
+}
+
+/*
+ * The ONLY place the watchlist file is ever read. Runs once per enable —
+ * reachable exclusively from the Settings toggle, because the toggle is
+ * never persisted: on a fresh launch the feature is OFF and nothing here
+ * executes at all.
+ */
+static void watchlist_load_once(App* app) {
+    if(!app->watchlist_on || app->watchlist_loaded) return;
+    app->watchlist_loaded = true;
+    if(!app->storage) return;
+    File* file = storage_file_alloc(app->storage);
+    if(!file) {
+        app->watchlist_error = true;
+        return;
+    }
+    char data[WATCHLIST_READ_CAP];
+    size_t len = 0;
+    bool ok = storage_file_open(file, WATCHLIST_PATH, FSAM_READ, FSOM_OPEN_EXISTING);
+    if(ok) {
+        len = storage_file_read(file, data, sizeof(data) - 1U);
+        if(!storage_file_close(file)) ok = false;
+    }
+    storage_file_free(file);
+    if(!ok) return; /* no file yet (first flag creates it): stay empty */
+    app->watchlist_error = false;
+    data[len] = '\0';
+    furi_mutex_acquire(app->mutex, FuriWaitForever);
+    room_sweep_watchlist_load_buffer(&app->watchlist, data, len);
+    furi_mutex_release(app->mutex);
+}
+
+/* Append one flagged entry as "mac,label\n" (create on first flag). */
+static bool watchlist_append_file(App* app, const RoomSweepWatchEntry* entry) {
+    if(!app->storage || !entry) return false;
+    File* file = storage_file_alloc(app->storage);
+    if(!file) return false;
+    char line[48];
+    int written = snprintf(line, sizeof(line), "%s,%s\n", entry->mac, entry->label);
+    bool ok = written > 0 && (size_t)written < sizeof(line);
+    if(ok) {
+        ok = storage_file_open(file, WATCHLIST_PATH, FSAM_WRITE, FSOM_OPEN_APPEND) &&
+             storage_file_write(file, line, (size_t)written) == (size_t)written &&
+             storage_file_sync(file);
+    }
+    if(!storage_file_close(file)) ok = false;
+    storage_file_free(file);
+    return ok;
+}
+
+/*
+ * Commit a user flag: RAM list first (OFF here hard-returns before any
+ * work), then the file append. Watch Full never writes. The hold-confirm
+ * pulse itself comes from the input touch seam on release.
+ */
+static void watchlist_flag_commit(
+    App* app,
+    const char* mac,
+    const char* name,
+    const char* source) {
+    if(!app->watchlist_on) return; /* hard gate: no RAM change, no I/O */
+    if(!mac || !mac[0]) return; /* identity-less rows are never flagged */
+    RoomSweepWatchEntry entry;
+    strncpy(entry.mac, mac, sizeof(entry.mac) - 1U);
+    entry.mac[sizeof(entry.mac) - 1U] = '\0';
+    room_sweep_watchlist_copy_label(entry.label, sizeof(entry.label), name);
+
+    furi_mutex_acquire(app->mutex, FuriWaitForever);
+    if(room_sweep_watchlist_find(&app->watchlist, entry.mac) >= 0) {
+        furi_mutex_release(app->mutex);
+        return; /* already watched — nothing to add */
+    }
+    if(!room_sweep_watchlist_add(&app->watchlist, &entry)) {
+        bool full = app->watchlist.count >= ROOM_SWEEP_WATCH_MAX;
+        furi_mutex_release(app->mutex);
+        if(full) app->watch_notice_until_tick = furi_get_tick() + 2000U;
+        return;
+    }
+    int idx = room_sweep_watchlist_find(&app->watchlist, entry.mac);
+    if(idx >= 0 && idx < ROOM_SWEEP_WATCH_MAX) {
+        uint16_t bit = (uint16_t)(1U << idx);
+        app->watch_local_mask = (uint16_t)(app->watch_local_mask | bit);
+        app->watch_flag_session[idx] = app->record_ordinal; /* 0 unrecorded */
+    }
+    furi_mutex_release(app->mutex);
+
+    app->watchlist_error = !watchlist_append_file(app, &entry);
+    record_enqueue(
+        app,
+        "watch_flag",
+        source,
+        entry.mac, /* the CSV layer ordinalizes it; the file is opt-in */
+        0,
+        0,
+        0,
+        app->watchlist_error ? "flagged by user; watchlist write failed" :
+                               "flagged by user; saved to watchlist.txt");
+}
+
+/* Flag the selected Wi BEACON row (the AP table the upsert matches). */
+static void watchlist_flag_wifi(App* app) {
+    char mac[18];
+    char name[33];
+    furi_mutex_acquire(app->mutex, FuriWaitForever);
+    uint8_t count = app->wifi_count;
+    uint8_t selected = app->wifi_scroll < count ? app->wifi_scroll : 0;
+    mac[0] = '\0';
+    name[0] = '\0';
+    if(count > 0) {
+        strncpy(mac, app->wifi_aps[selected].bssid, sizeof(mac) - 1U);
+        mac[sizeof(mac) - 1U] = '\0';
+        strncpy(name, app->wifi_aps[selected].ssid, sizeof(name) - 1U);
+        name[sizeof(name) - 1U] = '\0';
+    }
+    furi_mutex_release(app->mutex);
+    watchlist_flag_commit(app, mac, name, "WIFI");
+}
+
+/* Flag the selected BLE row. */
+static void watchlist_flag_ble(App* app) {
+    char mac[18];
+    char name[33];
+    furi_mutex_acquire(app->mutex, FuriWaitForever);
+    uint8_t count = app->ble_count;
+    uint8_t selected = app->ble_scroll < count ? app->ble_scroll : 0;
+    mac[0] = '\0';
+    name[0] = '\0';
+    if(count > 0) {
+        strncpy(mac, app->ble_devs[selected].mac, sizeof(mac) - 1U);
+        mac[sizeof(mac) - 1U] = '\0';
+        strncpy(name, app->ble_devs[selected].name, sizeof(name) - 1U);
+        name[sizeof(name) - 1U] = '\0';
+    }
+    furi_mutex_release(app->mutex);
+    watchlist_flag_commit(app, mac, name, "BLE");
+}
+
 /* Update an existing AP row or insert a new one. UINT8_MAX in
  * wifi_last_updated means the line parsed but didn't fit the table. */
 static bool wifi_upsert(App* app, const RoomSweepWifiRecord* rec) {
@@ -1336,12 +1719,22 @@ static bool wifi_upsert(App* app, const RoomSweepWifiRecord* rec) {
         if(app->wifi_aps[i].valid &&
            room_sweep_wireless_identity_matches(
                app->wifi_aps[i].bssid, app->wifi_aps[i].ssid, rec->bssid, rec->ssid)) {
+            /* Fold stats BEFORE the counter bump: absorb wants the
+             * pre-increment observation count. */
+            room_sweep_stats_absorb(
+                &app->wifi_aps[i].rssi_min,
+                &app->wifi_aps[i].rssi_max,
+                &app->wifi_aps[i].rssi_sum,
+                rec->rssi,
+                app->wifi_aps[i].observations);
             app->wifi_aps[i].rssi = rec->rssi;
             app->wifi_aps[i].channel = rec->channel;
             app->wifi_aps[i].last_seen = now;
             if(app->wifi_aps[i].observations < UINT16_MAX)
                 app->wifi_aps[i].observations++;
             app->wifi_last_updated = i;
+            watchlist_note_row(
+                app, app->wifi_aps[i].bssid, &app->wifi_watch_mask, i);
             return true;
         }
     }
@@ -1355,10 +1748,20 @@ static bool wifi_upsert(App* app, const RoomSweepWifiRecord* rec) {
             app->wifi_aps[i].bssid[17] = '\0';
             app->wifi_aps[i].first_seen = now;
             app->wifi_aps[i].last_seen = now;
+            /* First observation initializes the evidence stats (obs=0). */
+            room_sweep_stats_absorb(
+                &app->wifi_aps[i].rssi_min,
+                &app->wifi_aps[i].rssi_max,
+                &app->wifi_aps[i].rssi_sum,
+                rec->rssi,
+                0);
             app->wifi_aps[i].observations = 1;
+            app->wifi_aps[i].hidden_resolved = false;
             app->wifi_aps[i].valid = true; /* publish the completed row last */
             app->wifi_count++;
             app->wifi_last_updated = i;
+            watchlist_note_row(
+                app, app->wifi_aps[i].bssid, &app->wifi_watch_mask, i);
             return true;
         }
     }
@@ -1375,11 +1778,20 @@ static bool ble_upsert(App* app, const RoomSweepBleRecord* rec) {
         if(app->ble_devs[i].valid &&
            room_sweep_wireless_identity_matches(
                app->ble_devs[i].mac, app->ble_devs[i].name, rec->mac, rec->name)) {
+            /* Fold stats BEFORE the counter bump (pre-increment count). */
+            room_sweep_stats_absorb(
+                &app->ble_devs[i].rssi_min,
+                &app->ble_devs[i].rssi_max,
+                &app->ble_devs[i].rssi_sum,
+                rec->rssi,
+                app->ble_devs[i].observations);
             app->ble_devs[i].rssi = rec->rssi;
             app->ble_devs[i].last_seen = now;
             if(app->ble_devs[i].observations < UINT16_MAX)
                 app->ble_devs[i].observations++;
             app->ble_last_updated = i;
+            watchlist_note_row(
+                app, app->ble_devs[i].mac, &app->ble_watch_mask, i);
             return true;
         }
     }
@@ -1392,10 +1804,19 @@ static bool ble_upsert(App* app, const RoomSweepBleRecord* rec) {
             app->ble_devs[i].mac[17] = '\0';
             app->ble_devs[i].first_seen = now;
             app->ble_devs[i].last_seen = now;
+            /* First observation initializes the evidence stats (obs=0). */
+            room_sweep_stats_absorb(
+                &app->ble_devs[i].rssi_min,
+                &app->ble_devs[i].rssi_max,
+                &app->ble_devs[i].rssi_sum,
+                rec->rssi,
+                0);
             app->ble_devs[i].observations = 1;
             app->ble_devs[i].valid = true;
             app->ble_count++;
             app->ble_last_updated = i;
+            watchlist_note_row(
+                app, app->ble_devs[i].mac, &app->ble_watch_mask, i);
             return true;
         }
     }
@@ -1478,7 +1899,9 @@ static void process_uart_lines(App* app) {
 
         if(strstr(body, "ESP32 Marauder") || strstr(body, "sniffbeacon") ||
            strstr(body, "sniffbt") || strstr(body, "Commands") ||
-           strstr(body, "Started BLE") || strstr(body, "Beacon sniff")) {
+           strstr(body, "Started BLE") || strstr(body, "Beacon sniff") ||
+           strstr(body, "Raw sniff") || strstr(body, "Probe sniff") ||
+           strstr(body, "Pwnagotchi sniff") || strstr(body, "Espressif device sniff")) {
             app->marauder_confirmed = true;
             app->marauder_confirmed_tick = furi_get_tick();
         }
@@ -1488,7 +1911,170 @@ static void process_uart_lines(App* app) {
             continue;
         }
 
-        if(app->mode == SweepModeWifi) {
+        const WiSource route_source = wifi_effective_source(app);
+        if(app->mode == SweepModeWifi && route_source != WiSourceBeacon) {
+            /* Phase 4/5/10 sources: RAW / PROBE / TOOL routing. The AP
+             * table is NOT cleared by these scans and stays available for
+             * hidden-repair and rogue correlation. A full-sweep pass routes
+             * through here too: its source, not the Settings choice, decides
+             * how its lines are parsed. */
+            furi_mutex_acquire(app->mutex, FuriWaitForever);
+            if(route_source == WiSourceRaw) {
+                RoomSweepRawRecord rec;
+                if(room_sweep_raw_parse_line(body, &rec)) {
+                    int idx = room_sweep_raw_upsert(
+                        app->raw_devs, MAX_RAW_DEVS, &rec, furi_get_tick());
+                    if(idx >= 0 && (uint8_t)(idx + 1) > app->raw_count) {
+                        app->raw_count = (uint8_t)(idx + 1);
+                    }
+                    if(app->wifi_window_observations < UINT16_MAX)
+                        app->wifi_window_observations++;
+                    app->marauder_confirmed = true;
+                    app->marauder_confirmed_tick = furi_get_tick();
+                    app->wifi_last_scan_tick = furi_get_tick();
+                    if(app->marauder_state == MarauderIdle ||
+                       app->marauder_state == MarauderError) {
+                        app->marauder_state = MarauderScanning;
+                    }
+                    if(idx >= 0) {
+                        RawDev* row = &app->raw_devs[idx];
+                        /* Raw stations are client-class radios: the BLE
+                         * evidence (random-static test) names their MACs. */
+                        char detail[48];
+                        room_sweep_stats_detail(
+                            detail,
+                            sizeof(detail),
+                            row->mac[0] != '\0',
+                            row->mac[0] ? room_sweep_oui_evidence_ble(row->mac) : NULL,
+                            NULL,
+                            0,
+                            false, /* raw stations match no watchlist upsert */
+                            row->rssi_min,
+                            row->rssi_max,
+                            row->rssi_sum,
+                            row->observations,
+                            "raw frame");
+                        record_enqueue_ex(
+                            app,
+                            "observation",
+                            "WIFI",
+                            row->mac,
+                            row->rssi,
+                            0,
+                            row->channel,
+                            row->observations,
+                            "observed",
+                            "",
+                            detail);
+                    }
+                }
+            } else if(route_source == WiSourceProbe) {
+                RoomSweepProbeRecord rec;
+                if(room_sweep_probe_parse_line(body, &rec)) {
+                    /* Hidden-repair first: a probe that names a stored
+                     * hidden AP renames that row (history-preserving: same
+                     * row, BSSID and first_seen intact). */
+                    if(rec.target_bssid[0]) {
+                        for(uint8_t i = 0; i < MAX_WIFI_APS; i++) {
+                            WifiAp* ap = &app->wifi_aps[i];
+                            if(room_sweep_probe_names_hidden(ap->bssid, ap->ssid, &rec)) {
+                                strncpy(ap->ssid, rec.ssid, 32);
+                                ap->ssid[32] = '\0';
+                                ap->hidden_resolved = true;
+                                record_enqueue_ex(
+                                    app,
+                                    "hidden_resolved",
+                                    "WIFI",
+                                    ap->bssid,
+                                    rec.rssi,
+                                    0,
+                                    0,
+                                    ap->observations,
+                                    "resolved",
+                                    "",
+                                    "recovered from a client probe request");
+                                break; /* one BSSID per record */
+                            }
+                        }
+                    }
+                    int idx = room_sweep_probe_upsert(
+                        app->probe_devs, MAX_PROBE_DEVS, &rec, furi_get_tick());
+                    if(idx >= 0 && (uint8_t)(idx + 1) > app->probe_count) {
+                        app->probe_count = (uint8_t)(idx + 1);
+                    }
+                    if(app->wifi_window_observations < UINT16_MAX)
+                        app->wifi_window_observations++;
+                    app->marauder_confirmed = true;
+                    app->marauder_confirmed_tick = furi_get_tick();
+                    app->wifi_last_scan_tick = furi_get_tick();
+                    if(app->marauder_state == MarauderIdle ||
+                       app->marauder_state == MarauderError) {
+                        app->marauder_state = MarauderScanning;
+                    }
+                    if(idx >= 0) {
+                        char detail[48];
+                        snprintf(detail, sizeof(detail), "probe %s", rec.ssid);
+                        record_enqueue_ex(
+                            app,
+                            "observation",
+                            "WIFI",
+                            rec.client_mac[0] ? rec.client_mac : rec.ssid,
+                            rec.rssi,
+                            0,
+                            0,
+                            app->probe_devs[idx].observations,
+                            "observed",
+                            "",
+                            detail);
+                    }
+                }
+            } else if(app->wifi_source == WiSourceTool) {
+                RoomSweepToolRecord rec;
+                bool parsed = room_sweep_tool_parse_esp_line(body, &rec) ||
+                              room_sweep_tool_parse_pwn_line(body, &rec);
+                if(parsed) {
+                    int idx = room_sweep_tool_upsert(
+                        app->tool_devs, MAX_TOOL_DEVS, &rec, furi_get_tick());
+                    if(idx >= 0 && (uint8_t)(idx + 1) > app->tool_count) {
+                        app->tool_count = (uint8_t)(idx + 1);
+                    }
+                    if(app->wifi_window_observations < UINT16_MAX)
+                        app->wifi_window_observations++;
+                    app->marauder_confirmed = true;
+                    app->marauder_confirmed_tick = furi_get_tick();
+                    app->wifi_last_scan_tick = furi_get_tick();
+                    if(app->marauder_state == MarauderIdle ||
+                       app->marauder_state == MarauderError) {
+                        app->marauder_state = MarauderScanning;
+                    }
+                    if(idx >= 0) {
+                        /* One line of honest copy per row kind: "device
+                         * advertising like attack tooling — not proof of
+                         * intent" (full phrase lives in USER_GUIDE). */
+                        char detail[48];
+                        snprintf(
+                            detail,
+                            sizeof(detail),
+                            "%s; not proof of intent",
+                            rec.kind == ROOM_SWEEP_TOOL_KIND_ESP ? "esp beacon" :
+                                                                   "pwn advert");
+                        record_enqueue_ex(
+                            app,
+                            "observation",
+                            "WIFI",
+                            rec.mac[0] ? rec.mac : rec.name,
+                            rec.rssi,
+                            0,
+                            0,
+                            app->tool_devs[idx].observations,
+                            "observed",
+                            "",
+                            detail);
+                    }
+                }
+            }
+            furi_mutex_release(app->mutex);
+        } else if(app->mode == SweepModeWifi) {
             furi_mutex_acquire(app->mutex, FuriWaitForever);
             if(parse_wifi_line(app, body)) {
                 if(app->wifi_window_observations < UINT16_MAX)
@@ -1510,9 +2096,18 @@ static void process_uart_lines(App* app) {
                     WifiAp* observed = &app->wifi_aps[app->wifi_last_updated];
                     bool unidentified = !observed->bssid[0] &&
                                         strcmp(observed->ssid, "Hidden/unknown") == 0;
+                    /* Phase 6: how many BSSIDs share this row's exact SSID —
+                     * a duplicate is "possible cloned SSID", never a verdict. */
+                    int dup_n = room_sweep_rogue_dup_count(
+                        app->wifi_aps, MAX_WIFI_APS, app->wifi_last_updated);
+                    if(dup_n >= 2) {
+                        session_log_note_rogue_groups((uint8_t)room_sweep_rogue_scan(
+                            app->wifi_aps, MAX_WIFI_APS, NULL, 0));
+                    }
                     /* Evidence tokens lead the detail so a truncated tail can
                      * never eat them; a row without a MAC gets no oui token
-                     * (there is nothing to look up). */
+                     * (there is nothing to look up). The composer keeps every
+                     * token whole — truncation can never cut a value. */
                     char detail[48];
                     const char* wifi_hint = room_sweep_classify_hint_text(
                         room_sweep_classify_ssid(observed->ssid));
@@ -1522,21 +2117,21 @@ static void process_uart_lines(App* app) {
                             "unidentified AP observations; not a device count",
                             sizeof(detail) - 1U);
                         detail[sizeof(detail) - 1U] = '\0';
-                    } else if(observed->bssid[0]) {
-                        snprintf(
-                            detail,
-                            sizeof(detail),
-                            "oui=%s; AP beacon%s%s",
-                            room_sweep_oui_evidence(observed->bssid),
-                            wifi_hint[0] ? " hints=" : "",
-                            wifi_hint);
                     } else {
-                        snprintf(
+                        room_sweep_stats_detail(
                             detail,
                             sizeof(detail),
-                            "AP beacon; no MAC%s%s",
-                            wifi_hint[0] ? " hints=" : "",
-                            wifi_hint);
+                            observed->bssid[0] != '\0',
+                            observed->bssid[0] ? room_sweep_oui_evidence(observed->bssid) :
+                                                 NULL,
+                            wifi_hint,
+                            dup_n,
+                            watchlist_watch_status(app, observed->bssid),
+                            observed->rssi_min,
+                            observed->rssi_max,
+                            observed->rssi_sum,
+                            observed->observations,
+                            "AP beacon");
                     }
                     record_enqueue_ex(
                         app,
@@ -1600,21 +2195,24 @@ static void process_uart_lines(App* app) {
                             "unidentified BLE observations; not a device count",
                             sizeof(detail) - 1U);
                         detail[sizeof(detail) - 1U] = '\0';
-                    } else if(observed->mac[0]) {
-                        snprintf(
-                            detail,
-                            sizeof(detail),
-                            "oui=%s; BLE adv%s%s",
-                            room_sweep_oui_evidence(observed->mac),
-                            ble_hint[0] ? " hints=" : "",
-                            ble_hint);
                     } else {
-                        snprintf(
+                        /* Whole-token composer: stats yield before the "BLE
+                         * adv" tail when the 48-byte bound gets tight. BLE
+                         * evidence uses the BLE randomization semantics. */
+                        room_sweep_stats_detail(
                             detail,
                             sizeof(detail),
-                            "BLE adv; no MAC%s%s",
-                            ble_hint[0] ? " hints=" : "",
-                            ble_hint);
+                            observed->mac[0] != '\0',
+                            observed->mac[0] ? room_sweep_oui_evidence_ble(observed->mac) :
+                                               NULL,
+                            ble_hint,
+                            0,
+                            watchlist_watch_status(app, observed->mac),
+                            observed->rssi_min,
+                            observed->rssi_max,
+                            observed->rssi_sum,
+                            observed->observations,
+                            "BLE adv");
                     }
                     record_enqueue_ex(
                         app,
@@ -1994,6 +2592,69 @@ static int32_t rf_sweep_thread(void* ctx) {
             }
             app->peak_rssi = best_rssi;
             app->peak_fine_rssi = best_rssi;
+
+        } else if(app->rf_sub == RfSubWatch && app->watch_freq_hz > 0) {
+            /* Phase 8 burst watch: locked on ONE frequency, no hopping, no
+             * new thread — the survey cadence (5 ms) feeds the edge state
+             * machine. Thread stack rule: locals stay tiny here. */
+            uint32_t now = furi_get_tick();
+            uint32_t lock_hz = app->watch_freq_hz;
+            furi_mutex_acquire(app->radio_mutex, FuriWaitForever);
+            if(!app->running || app->tx_active || !app->radio ||
+               app->rf_sub != RfSubWatch) {
+                furi_mutex_release(app->radio_mutex);
+                furi_delay_ms(20);
+                continue;
+            }
+            if(app->watch_tuned_hz != lock_hz) {
+                subghz_devices_idle(app->radio);
+                subghz_devices_set_frequency(app->radio, lock_hz);
+                subghz_devices_flush_rx(app->radio);
+                subghz_devices_set_rx(app->radio);
+                app->watch_tuned_hz = lock_hz;
+            }
+            int8_t rssi = (int8_t)subghz_devices_get_rssi(app->radio);
+            furi_mutex_release(app->radio_mutex);
+
+            int closed = 0;
+            uint32_t burst_ms = 0;
+            int8_t burst_max = -128;
+            uint32_t burst_count = 0;
+            uint32_t duty = 0;
+            furi_mutex_acquire(app->mutex, FuriWaitForever);
+            closed = room_sweep_watch_tick(&app->watch, now, rssi, true);
+            app->peak_rssi = (float)rssi;
+            app->rf_alert = (rssi > (int8_t)RF_ALERT_THRESHOLD);
+            if(closed > 0) {
+                /* Burst ACTIVE span (first-to-last above threshold); the
+                 * 600 ms gap that closed it is detection latency. */
+                burst_ms = app->watch.last_above_tick - app->watch.open_tick;
+                burst_max = app->watch.max_rssi;
+                burst_count = app->watch.bursts;
+                duty = room_sweep_watch_duty_percent(&app->watch, now);
+                app->watch_close_pulse = true;
+            }
+            furi_mutex_release(app->mutex);
+
+            if(closed > 0) {
+                /* One CSV observation row per closed burst. No new
+                 * rate-limiting: the 600 ms gap already bounds the rate. */
+                char detail[ROOM_SWEEP_WATCH_DETAIL_MAX];
+                room_sweep_watch_detail(detail, sizeof(detail), duty, burst_count);
+                record_enqueue_ex(
+                    app,
+                    "observation",
+                    "RF",
+                    "WATCH",
+                    (int)burst_max,
+                    lock_hz,
+                    0,
+                    burst_ms,
+                    "complete",
+                    "",
+                    detail);
+            }
+            furi_delay_ms(5);
         } else {
             furi_mutex_acquire(app->radio_mutex, FuriWaitForever);
             radio_idle(app);
@@ -2255,57 +2916,111 @@ static void feedback_tick(App* app) {
     }
 
     switch(app->mode) {
-    case SweepModeRF:
+    case SweepModeRF: {
         peak = app->peak_rssi;
         alerting = (peak > RF_ALERT_THRESHOLD) || app->rf_alert;
         use_rssi_geiger = true;
         led_from_rssi(app->notif, peak, blink_phase);
+        /* Phase 8: a closed watch burst gets the same soft press-pulse the
+         * input layer uses (respects Sound/Vibro settings; reuses the
+         * existing static sequences — FLIPPER_PITFALLS #1/#4). */
+        bool watch_pulse = false;
+        furi_mutex_acquire(app->mutex, FuriWaitForever);
+        watch_pulse = app->watch_close_pulse;
+        app->watch_close_pulse = false;
+        furi_mutex_release(app->mutex);
+        if(watch_pulse && app->rf_sub == RfSubWatch) {
+            if(app->vibro_on) notification_message(app->notif, &seq_ui_tick);
+            if(app->sound_on) notification_message(app->notif, &seq_ui_confirm_beep);
+        }
         break;
+    }
     case SweepModeWifi: {
         /* Identity-aware peak: locked target > selected row > strongest,
          * each aged so leaving range decays to silence (never frozen max).
-         * Rows are gathered under the mutex; notifications happen after. */
+         * Rows are gathered under the mutex; notifications happen after.
+         * RAW/PROBE/TOOL rows join the same aged picker via their own
+         * tables (no locks on those sources; pwn rows print no RSSI and
+         * are never candidates). */
         bool t_found = false, s_found = false, g_found = false;
         int8_t t_rssi = -127, s_rssi = -127, g_rssi = -127;
         uint32_t t_age = ROOM_SWEEP_ANALYZER_DEAD_MS;
         uint32_t s_age = ROOM_SWEEP_ANALYZER_DEAD_MS;
         uint32_t g_age = ROOM_SWEEP_ANALYZER_DEAD_MS;
         furi_mutex_acquire(app->mutex, FuriWaitForever);
-        if(app->target_kind == TargetWifi && app->target_id[0]) {
-            for(uint8_t i = 0; i < MAX_WIFI_APS; i++) {
-                if(!app->wifi_aps[i].valid) continue;
-                if(strcmp(app->target_id, app->wifi_aps[i].ssid) == 0 ||
-                   (app->wifi_aps[i].bssid[0] &&
-                    strcmp(app->target_id, app->wifi_aps[i].bssid) == 0)) {
-                    t_found = true;
-                    t_rssi = app->wifi_aps[i].rssi;
-                    t_age = app->wifi_aps[i].last_seen > 0 ?
-                                now - app->wifi_aps[i].last_seen :
-                                ROOM_SWEEP_ANALYZER_DEAD_MS;
-                    /* Keep lock display in sync with live row (parity). */
-                    app->target_rssi = app->wifi_aps[i].rssi;
-                    break;
+        if(app->wifi_source != WiSourceBeacon) {
+            uint8_t rows = wifi_source_table_count(app);
+            uint8_t sel = app->wifi_scroll < rows ? app->wifi_scroll : 0;
+            for(uint8_t i = 0; i < rows; i++) {
+                int8_t r = -127;
+                uint32_t age = ROOM_SWEEP_ANALYZER_DEAD_MS;
+                if(app->wifi_source == WiSourceRaw) {
+                    if(!app->raw_devs[i].valid) continue;
+                    r = app->raw_devs[i].rssi;
+                    age = app->raw_devs[i].last_seen > 0 ?
+                              now - app->raw_devs[i].last_seen :
+                              ROOM_SWEEP_ANALYZER_DEAD_MS;
+                } else if(app->wifi_source == WiSourceProbe) {
+                    if(!app->probe_devs[i].valid) continue;
+                    r = app->probe_devs[i].rssi;
+                    age = app->probe_devs[i].last_seen > 0 ?
+                              now - app->probe_devs[i].last_seen :
+                              ROOM_SWEEP_ANALYZER_DEAD_MS;
+                } else {
+                    if(!app->tool_devs[i].valid || app->tool_devs[i].rssi >= 0) continue;
+                    r = app->tool_devs[i].rssi;
+                    age = app->tool_devs[i].last_seen > 0 ?
+                              now - app->tool_devs[i].last_seen :
+                              ROOM_SWEEP_ANALYZER_DEAD_MS;
+                }
+                if(i == sel) {
+                    s_found = true;
+                    s_rssi = r;
+                    s_age = age;
+                }
+                if(!g_found || r > g_rssi) {
+                    g_found = true;
+                    g_rssi = r;
+                    g_age = age;
                 }
             }
-        }
-        if(app->wifi_count > 0) {
-            uint8_t sel = app->wifi_scroll < app->wifi_count ? app->wifi_scroll : 0;
-            if(app->wifi_aps[sel].valid) {
-                s_found = true;
-                s_rssi = app->wifi_aps[sel].rssi;
-                s_age = app->wifi_aps[sel].last_seen > 0 ?
-                            now - app->wifi_aps[sel].last_seen :
-                            ROOM_SWEEP_ANALYZER_DEAD_MS;
+        } else {
+            if(app->target_kind == TargetWifi && app->target_id[0]) {
+                for(uint8_t i = 0; i < MAX_WIFI_APS; i++) {
+                    if(!app->wifi_aps[i].valid) continue;
+                    if(strcmp(app->target_id, app->wifi_aps[i].ssid) == 0 ||
+                       (app->wifi_aps[i].bssid[0] &&
+                        strcmp(app->target_id, app->wifi_aps[i].bssid) == 0)) {
+                        t_found = true;
+                        t_rssi = app->wifi_aps[i].rssi;
+                        t_age = app->wifi_aps[i].last_seen > 0 ?
+                                    now - app->wifi_aps[i].last_seen :
+                                    ROOM_SWEEP_ANALYZER_DEAD_MS;
+                        /* Keep lock display in sync with live row (parity). */
+                        app->target_rssi = app->wifi_aps[i].rssi;
+                        break;
+                    }
+                }
             }
-        }
-        for(uint8_t i = 0; i < MAX_WIFI_APS; i++) {
-            if(!app->wifi_aps[i].valid) continue;
-            if(!g_found || app->wifi_aps[i].rssi > g_rssi) {
-                g_found = true;
-                g_rssi = app->wifi_aps[i].rssi;
-                g_age = app->wifi_aps[i].last_seen > 0 ?
-                            now - app->wifi_aps[i].last_seen :
-                            ROOM_SWEEP_ANALYZER_DEAD_MS;
+            if(app->wifi_count > 0) {
+                uint8_t sel = app->wifi_scroll < app->wifi_count ? app->wifi_scroll : 0;
+                if(app->wifi_aps[sel].valid) {
+                    s_found = true;
+                    s_rssi = app->wifi_aps[sel].rssi;
+                    s_age = app->wifi_aps[sel].last_seen > 0 ?
+                                now - app->wifi_aps[sel].last_seen :
+                                ROOM_SWEEP_ANALYZER_DEAD_MS;
+                }
+            }
+            for(uint8_t i = 0; i < MAX_WIFI_APS; i++) {
+                if(!app->wifi_aps[i].valid) continue;
+                if(!g_found || app->wifi_aps[i].rssi > g_rssi) {
+                    g_found = true;
+                    g_rssi = app->wifi_aps[i].rssi;
+                    g_age = app->wifi_aps[i].last_seen > 0 ?
+                                now - app->wifi_aps[i].last_seen :
+                                ROOM_SWEEP_ANALYZER_DEAD_MS;
+                }
             }
         }
         furi_mutex_release(app->mutex);
@@ -2951,7 +3666,7 @@ static void draw_analyzer_meter(
     canvas_set_color(canvas, ColorBlack);
 }
 
-/* RF Waterfall sub-mode: scrolling 24-snapshot history of the 16 presets.
+/* RF Waterfall sub-mode: scrolling 24-snapshot history of the 20 presets.
  * Newest column on the right; per-channel peak-hold markers on the edge. */
 static void draw_rf_waterfall(Canvas* canvas, App* app) {
     char buf[40];
@@ -2982,14 +3697,15 @@ static void draw_rf_waterfall(Canvas* canvas, App* app) {
         canvas_draw_dot(canvas, dx, th_y);
     }
 
-    /* Columns: age 0 = newest = rightmost. 16 channels across 40 px. */
+    /* Columns: age 0 = newest = rightmost; all presets across the band. */
     for(uint8_t age = 0; age < ROOM_SWEEP_WATERFALL_COLS; age++) {
         uint8_t x = (uint8_t)(UI_MARGIN_X + (ROOM_SWEEP_WATERFALL_COLS - 1U - age) * col_w);
         for(uint8_t ch = 0; ch < ROOM_SWEEP_WATERFALL_CHANNELS; ch++) {
             int8_t v = room_sweep_waterfall_channel_at(&app->waterfall, age, ch);
             uint8_t h = room_sweep_radar_rssi_radius(v, 4);
             if(h == 0) continue;
-            uint8_t y = (uint8_t)(area_bot - (ch * (area_bot - area_top)) / 15U);
+            uint8_t y = (uint8_t)(
+                area_bot - (ch * (area_bot - area_top)) / (ROOM_SWEEP_WATERFALL_CHANNELS - 1U));
             canvas_draw_box(canvas, x, (uint8_t)(y - h + 1), 3, h);
         }
     }
@@ -2997,12 +3713,76 @@ static void draw_rf_waterfall(Canvas* canvas, App* app) {
     /* Per-channel peak-hold column on the right edge. */
     for(uint8_t ch = 0; ch < ROOM_SWEEP_WATERFALL_CHANNELS; ch++) {
         if(app->waterfall.peak[ch] <= -127) continue;
-        uint8_t y = (uint8_t)(area_bot - (ch * (area_bot - area_top)) / 15U);
+        uint8_t y = (uint8_t)(
+            area_bot - (ch * (area_bot - area_top)) / (ROOM_SWEEP_WATERFALL_CHANNELS - 1U));
         canvas_draw_dot(canvas, 124, y);
     }
 
     canvas_set_font(canvas, FontKeyboard);
     canvas_draw_str(canvas, UI_MARGIN_X, UI_ROW_FOOTER_BASELINE, "U/D:mode H:card");
+}
+
+/* ================================================================== */
+/* Drawing: RF Burst Watch sub-view (Phase 8, lock-and-log)            */
+/* Honest units only: burst count, seconds since the watched frequency */
+/* was last above the energy gate, and integer duty percent of the     */
+/* watch window. No direction/distance/identity claims exist here.     */
+/* ================================================================== */
+static void draw_rf_watch(Canvas* canvas, App* canvas_app) {
+    char buf[24];
+
+    /* Snapshot the watch state once; helpers run on the copy. */
+    RoomSweepWatch snap;
+    uint32_t freq;
+    float peak;
+    furi_mutex_acquire(canvas_app->mutex, FuriWaitForever);
+    snap = canvas_app->watch;
+    freq = canvas_app->watch_freq_hz;
+    peak = canvas_app->peak_rssi;
+    furi_mutex_release(canvas_app->mutex);
+
+    uint32_t now = furi_get_tick();
+
+    canvas_set_font(canvas, FontSecondary);
+    canvas_draw_str(canvas, UI_MARGIN_X, UI_ROW_HEADER_BASELINE, "RF WATCH");
+    canvas_set_font(canvas, FontKeyboard);
+    room_sweep_watch_freq_label(buf, sizeof(buf), freq);
+    canvas_draw_str(canvas, 52, UI_ROW_HEADER_BASELINE, buf);
+
+    /* Live RSSI right-aligned on the header row (worst "-120dBm" ends at
+     * x85, clear of the label's x52..82 span). */
+    snprintf(buf, sizeof(buf), "%.0fdBm", (double)peak);
+    canvas_set_font(canvas, FontSecondary);
+    uint16_t pw = canvas_string_width(canvas, buf);
+    canvas_draw_str(canvas, (uint8_t)(127 - (int)pw), UI_ROW_HEADER_BASELINE, buf);
+
+    /* Body: BURSTS / LAST / DUTY at the standard row baselines. */
+    canvas_set_font(canvas, FontKeyboard);
+    uint8_t baseline = UI_ROW_BODY_FIRST_BASELINE;
+    snprintf(buf, sizeof(buf), "BURSTS %lu", (unsigned long)snap.bursts);
+    canvas_draw_str(canvas, UI_MARGIN_X, baseline, buf);
+
+    baseline = (uint8_t)(baseline + UI_ROW_BODY_PITCH);
+    if(room_sweep_watch_has_burst(&snap)) {
+        snprintf(
+            buf,
+            sizeof(buf),
+            "LAST %lus",
+            (unsigned long)room_sweep_watch_last_age_s(&snap, now));
+    } else {
+        snprintf(buf, sizeof(buf), "LAST -");
+    }
+    canvas_draw_str(canvas, UI_MARGIN_X, baseline, buf);
+
+    baseline = (uint8_t)(baseline + UI_ROW_BODY_PITCH);
+    snprintf(
+        buf,
+        sizeof(buf),
+        "DUTY %lu%%",
+        (unsigned long)room_sweep_watch_duty_percent(&snap, now));
+    canvas_draw_str(canvas, UI_MARGIN_X, baseline, buf);
+
+    canvas_draw_str(canvas, UI_MARGIN_X, UI_ROW_FOOTER_BASELINE, UI_HINT_RF_WATCH);
 }
 
 /* GPS Radar page: mark-centered, north-up, REAL meters (no RSSI fiction).
@@ -3360,7 +4140,9 @@ static void draw_scanner_analyzer(Canvas* canvas, App* app) {
     /* Page dispatch: 0=hunt, 1=field, 2=radar, 3=big meter (Hold R cycles). */
     uint8_t page = app->analyzer_ui_page % 4U;
     if(page == 2) {
-        RadarBlip blips[16];
+        /* Sized off the preset count: one blip per RF preset, capped at 16 for
+         * the Wi-Fi/BLE cases (see analyzer_radar_blips). */
+        RadarBlip blips[RF_NUM_CHANNELS > 16 ? RF_NUM_CHANNELS : 16];
         uint8_t n = analyzer_radar_blips(app, blips);
         draw_analyzer_radar(canvas, app, title, an, blips, n);
         return;
@@ -3451,8 +4233,12 @@ static void draw_rf_survey(Canvas* canvas, App* app) {
     uint16_t w = canvas_string_width(canvas, buf);
     canvas_draw_str(canvas, (uint8_t)(127 - (int)w), UI_ROW_HEADER_BASELINE, buf);
 
-    /* Bar chart (y 15..56) */
-    const uint8_t bar_w = 7, bar_gap = 1, area_h = 38, base_y = 54;
+    /* Bar chart (y 15..56). Bar x and width are derived from the preset count
+     * so the strip always fits the 128px panel (helpers in
+     * room_sweep_ui_layout.h, pinned by tests/test_ui_layout.c): 16 presets
+     * keep the historical 8px stride, 20 get 6px. */
+    const uint8_t bar_w = room_sweep_ui_rf_bar_width(RF_NUM_CHANNELS);
+    const uint8_t area_h = 38, base_y = 54;
 
     /* Threshold line */
     int th_y = base_y - (int)((RF_ALERT_THRESHOLD + 100.0f) * area_h / 70.0f);
@@ -3468,7 +4254,7 @@ static void draw_rf_survey(Canvas* canvas, App* app) {
         int h = (int)((r + 100.0f) * area_h / 70.0f);
         if(h < 0) h = 0;
         if(h > area_h) h = area_h;
-        uint8_t x = i * (bar_w + bar_gap);
+        uint8_t x = room_sweep_ui_rf_bar_x(i, RF_NUM_CHANNELS);
 
         /* Baseline is a display reference only (room_sweep_survey_bar_filled):
          * filled = above the -75 dBm energy threshold, or >3 dB over the
@@ -3494,10 +4280,16 @@ static void draw_rf_survey(Canvas* canvas, App* app) {
 
     canvas_draw_line(canvas, 0, base_y, 127, base_y);
 
-    /* Frequency labels */
+    /* Frequency labels: one per label step, each under its own bar. With 20
+     * presets that is 5 labels (indices 0/4/8/12/16), all inside the text
+     * margin — the CSV and baseline rows name every preset. */
     canvas_set_font(canvas, FontKeyboard);
-    for(uint8_t i = 0; i < RF_NUM_CHANNELS; i += 4) {
-        canvas_draw_str(canvas, i * (bar_w + bar_gap), UI_ROW_FOOTER_BASELINE, rf_labels[i]);
+    for(uint8_t i = 0; i < RF_NUM_CHANNELS; i += room_sweep_ui_rf_label_step(RF_NUM_CHANNELS)) {
+        canvas_draw_str(
+            canvas,
+            room_sweep_ui_rf_bar_x(i, RF_NUM_CHANNELS),
+            UI_ROW_FOOTER_BASELINE,
+            rf_labels[i]);
     }
 
     /* Meta row: LOCK/BASE tag or control hints. The alert badge moved out of
@@ -3696,14 +4488,49 @@ static void draw_wifi_tab(Canvas* canvas, App* app) {
     }
 
     furi_mutex_acquire(app->mutex, FuriWaitForever);
-    uint8_t count = app->wifi_count;
+    uint8_t count = wifi_source_table_count(app);
     uint16_t window_observations = app->wifi_window_observations;
     uint8_t selected = app->wifi_scroll < count ? app->wifi_scroll : 0;
-    WifiAp ap = count > 0 ? app->wifi_aps[selected] : (WifiAp){0};
-    bool locked = count > 0 && app->target_kind == TargetWifi &&
-                  ((ap.bssid[0] && strcmp(app->target_id, ap.bssid) == 0) ||
-                   strcmp(app->target_id, ap.ssid) == 0);
+    /* Per-source snapshot of the selected row (list + detail pages render
+     * from these copies). */
+    WifiAp ap = {0};
+    RawDev raw = {0};
+    ProbeDev probe = {0};
+    ToolDev tool = {0};
+    /* Phase 6: eligible rows sharing the selected AP's exact SSID (>= 2 =
+     * possible cloned SSID). BEACON rows only. */
+    int rogue_n = 0;
+    bool locked = false;
+    /* Phase 9: watch state of the selected row, copied under the mutex
+     * (list rows re-check wifi_watch_mask per row under the mutex too). */
+    bool ap_watched = false;
+    bool ap_watch_local = false;
+    uint32_t ap_watch_session = 0;
+    if(app->wifi_source == WiSourceBeacon) {
+        ap = count > 0 ? app->wifi_aps[selected] : (WifiAp){0};
+        rogue_n =
+            count > 0 ? room_sweep_rogue_dup_count(app->wifi_aps, MAX_WIFI_APS, selected) : 0;
+        locked = count > 0 && app->target_kind == TargetWifi &&
+                 ((ap.bssid[0] && strcmp(app->target_id, ap.bssid) == 0) ||
+                  strcmp(app->target_id, ap.ssid) == 0);
+        if(app->watchlist_on && count > 0) {
+            int hit = room_sweep_watchlist_find(&app->watchlist, ap.bssid);
+            if(hit >= 0 && hit < ROOM_SWEEP_WATCH_MAX) {
+                ap_watched = true;
+                ap_watch_local = (app->watch_local_mask >> hit) & 1;
+                ap_watch_session = app->watch_flag_session[hit];
+            }
+        }
+    } else if(app->wifi_source == WiSourceRaw) {
+        raw = count > 0 ? app->raw_devs[selected] : (RawDev){0};
+    } else if(app->wifi_source == WiSourceProbe) {
+        probe = count > 0 ? app->probe_devs[selected] : (ProbeDev){0};
+    } else {
+        tool = count > 0 ? app->tool_devs[selected] : (ToolDev){0};
+    }
     furi_mutex_release(app->mutex);
+    bool watch_notice =
+        app->watch_notice_until_tick != 0 && furi_get_tick() < app->watch_notice_until_tick;
 
     const char* st =
         !app->marauder_confirmed ? "wait" :
@@ -3712,9 +4539,17 @@ static void draw_wifi_tab(Canvas* canvas, App* app) {
         app->marauder_state == MarauderError    ? "ERR" :
                                                  "idle";
 
-    /* Header: one short line only */
+    /* Header: source tag + state + selection ("WI RAW scan 2/5"). */
     canvas_set_font(canvas, FontKeyboard);
-    snprintf(buf, sizeof(buf), "Wi %s %u/%u%s", st, count ? selected + 1U : 0, count, locked ? " L" : "");
+    snprintf(
+        buf,
+        sizeof(buf),
+        "WI %s %s %u/%u%s",
+        room_sweep_wi_source_tag(wifi_effective_source(app)),
+        st,
+        count ? selected + 1U : 0,
+        count,
+        locked ? " L" : "");
     canvas_draw_str(canvas, 2, 14, buf);
     snprintf(buf, sizeof(buf), "%us", win_s);
     canvas_draw_str(canvas, 110, 14, buf);
@@ -3734,9 +4569,17 @@ static void draw_wifi_tab(Canvas* canvas, App* app) {
             canvas,
             2,
             30,
-            app->marauder_state == MarauderDone ? "No AP this window" : "Listening...");
+            app->marauder_state == MarauderDone ? "Nothing this window" : "Listening...");
         canvas_set_font(canvas, FontKeyboard);
-        canvas_draw_str(canvas, 2, 44, "beacon only");
+        if(app->wifi_source == WiSourceRaw) {
+            canvas_draw_str(canvas, 2, 44, UI_HINT_WI_RAW_IDLE);
+        } else if(app->wifi_source == WiSourceProbe) {
+            canvas_draw_str(canvas, 2, 44, UI_HINT_WI_PROBE_IDLE);
+        } else if(app->wifi_source == WiSourceTool) {
+            canvas_draw_str(canvas, 2, 44, UI_HINT_WI_TOOL_IDLE);
+        } else {
+            canvas_draw_str(canvas, 2, 44, "beacon only");
+        }
         canvas_draw_str(canvas, 2, 63, "OK=scan L=AN R=page");
         return;
     }
@@ -3744,83 +4587,271 @@ static void draw_wifi_tab(Canvas* canvas, App* app) {
     if(page == 2) {
         canvas_set_font(canvas, FontKeyboard);
         canvas_draw_str(canvas, 2, 24, "Wi HELP");
-        canvas_draw_str(canvas, 2, 34, "U/D select AP");
-        canvas_draw_str(canvas, 2, 42, "OK lock  HoldOK scan");
+        if(app->wifi_source == WiSourceRaw) {
+            canvas_draw_str(canvas, 2, 34, "every 802.11 frame");
+            canvas_draw_str(canvas, 2, 42, "stations included");
+        } else if(app->wifi_source == WiSourceProbe) {
+            canvas_draw_str(canvas, 2, 34, "client probe requests");
+            canvas_draw_str(canvas, 2, 42, "names remembered nets");
+        } else if(app->wifi_source == WiSourceTool) {
+            canvas_draw_str(canvas, 2, 34, "esp/pwn windows");
+            canvas_draw_str(canvas, 2, 42, UI_HINT_WI_TOOL_TRUTH);
+        } else {
+            canvas_draw_str(canvas, 2, 34, "U/D select AP");
+            canvas_draw_str(canvas, 2, 42, "OK lock  HoldOK scan");
+        }
         canvas_draw_str(canvas, 2, 50, "L analyzer R pages");
         /* y58 only — the old y63 "R=detail" row overdraw this line. */
         canvas_draw_str(canvas, 2, 58, "ScanWin in Settings");
         return;
     }
     if(page == 1) {
-        /* LIST: up to 5 rows of RSSI + clipped SSID */
+        /* LIST: up to 5 rows of RSSI + row label per source. */
         canvas_set_font(canvas, FontKeyboard);
         uint8_t start = 0;
         if(selected >= 4) start = (uint8_t)(selected - 3);
+        /* Phase 6 "!" duplicate-SSID marks (BEACON only): one mutex pass
+         * over the WHOLE table — a row can be duped against a row that is
+         * not visible. */
+        uint16_t rogue_marks = 0;
+        if(app->wifi_source == WiSourceBeacon) {
+            furi_mutex_acquire(app->mutex, FuriWaitForever);
+            for(uint8_t i = 0; i < count && i < MAX_WIFI_APS; i++) {
+                if(room_sweep_rogue_dup_count(app->wifi_aps, MAX_WIFI_APS, i) >= 2) {
+                    rogue_marks = (uint16_t)(rogue_marks | (1U << i));
+                }
+            }
+            furi_mutex_release(app->mutex);
+        }
         for(uint8_t row = 0; row < 5; row++) {
             uint8_t idx = (uint8_t)(start + row);
             if(idx >= count) break;
             uint8_t y = (uint8_t)(UI_ROW_BODY_FIRST_BASELINE + row * 8U);
             bool sel = (idx == selected);
             furi_mutex_acquire(app->mutex, FuriWaitForever);
-            WifiAp row_ap = app->wifi_aps[idx];
+            char label[33];
+            int8_t row_rssi = -127;
+            const char* tag = "";
+            bool marked = false;
+            bool row_watched = false; /* Phase 9: on the user watchlist */
+            if(app->wifi_source == WiSourceBeacon) {
+                WifiAp row_ap = app->wifi_aps[idx];
+                row_rssi = row_ap.rssi;
+                /* Phase 5: hidden rows render "[hidden] ee:ff" (last two
+                 * octets; the full BSSID stays on the detail page and four
+                 * octets would not fit the 98px name column). */
+                if(!row_ap.ssid[0] ||
+                   strcmp(row_ap.ssid, "Hidden/unknown") == 0) {
+                    size_t mac_len = strlen(row_ap.bssid);
+                    if(mac_len >= 5) {
+                        snprintf(
+                            label,
+                            sizeof(label),
+                            "[hidden] %.5s",
+                            row_ap.bssid + mac_len - 5);
+                    } else {
+                        snprintf(label, sizeof(label), "[hidden]");
+                    }
+                } else {
+                    strncpy(label, row_ap.ssid, sizeof(label) - 1);
+                    label[sizeof(label) - 1] = '\0';
+                }
+                tag = room_sweep_classify_hint_text(room_sweep_classify_ssid(row_ap.ssid));
+                marked = (rogue_marks & (1U << idx)) != 0;
+                row_watched = app->watchlist_on && ((app->wifi_watch_mask >> idx) & 1U) != 0;
+            } else if(app->wifi_source == WiSourceRaw) {
+                row_rssi = app->raw_devs[idx].rssi;
+                strncpy(label, app->raw_devs[idx].mac, sizeof(label) - 1);
+                label[sizeof(label) - 1] = '\0';
+            } else if(app->wifi_source == WiSourceProbe) {
+                row_rssi = app->probe_devs[idx].rssi;
+                strncpy(
+                    label,
+                    app->probe_devs[idx].ssid[0] ? app->probe_devs[idx].ssid : "?",
+                    sizeof(label) - 1);
+                label[sizeof(label) - 1] = '\0';
+                /* Probe SSIDs are advertised names — hints apply. */
+                tag = room_sweep_classify_hint_text(
+                    room_sweep_classify_ssid(app->probe_devs[idx].ssid));
+            } else {
+                ToolDev* t = &app->tool_devs[idx];
+                row_rssi = t->rssi;
+                strncpy(label, t->name[0] ? t->name : "?", sizeof(label) - 1);
+                label[sizeof(label) - 1] = '\0';
+            }
             furi_mutex_release(app->mutex);
             if(sel) {
                 canvas_draw_box(canvas, 0, (uint8_t)(y - 6), 128, 8);
                 canvas_set_color(canvas, ColorWhite);
             }
-            snprintf(buf, sizeof(buf), "%4d ", (int)row_ap.rssi);
+            if(row_rssi < 0) {
+                snprintf(buf, sizeof(buf), "%4d ", (int)row_rssi);
+            } else {
+                /* pwn rows carry no RSSI: honest blank, not a fake 0. */
+                snprintf(buf, sizeof(buf), "  -- ");
+            }
             canvas_draw_str(canvas, UI_ROW_RSSI_X, y, buf);
-            const char* tag =
-                room_sweep_classify_hint_text(room_sweep_classify_ssid(row_ap.ssid));
-            draw_str_clip(
-                canvas,
-                UI_ROW_NAME_X,
-                y,
-                row_ap.ssid[0] ? row_ap.ssid : "?",
-                tag[0] ? room_sweep_ui_name_clip_px((uint8_t)strlen(tag)) :
-                         UI_ROW_NAME_MAX_PX);
-            if(tag[0]) canvas_draw_str(canvas, room_sweep_ui_hint_x((uint8_t)strlen(tag)), y, tag);
+            uint8_t tag_chars = tag[0] ? (uint8_t)strlen(tag) : 0;
+            /* Phase 9: a WATCH badge shifts the tag strip one glyph left;
+             * the "!" mark rides one glyph ahead of whichever element is
+             * leftmost. Name clip follows the same chain, so no collision. */
+            uint8_t mark_x = row_watched ? room_sweep_ui_mark_x_watched(tag_chars) :
+                                           room_sweep_ui_mark_x(tag_chars);
+            uint8_t tag_x = row_watched && tag_chars ?
+                                room_sweep_ui_hint_x_watched(tag_chars) :
+                                room_sweep_ui_hint_x(tag_chars);
+            uint8_t clip_px = UI_ROW_NAME_MAX_PX;
+            if(row_watched) {
+                clip_px = marked ? room_sweep_ui_name_clip_px_watch_marked(tag_chars) :
+                                   room_sweep_ui_name_clip_px_watch(tag_chars);
+            } else if(marked) {
+                clip_px = room_sweep_ui_name_clip_px_marked(tag_chars);
+            } else if(tag_chars) {
+                clip_px = room_sweep_ui_name_clip_px(tag_chars);
+            }
+            if(marked) canvas_draw_str(canvas, mark_x, y, "!");
+            draw_str_clip(canvas, UI_ROW_NAME_X, y, label, clip_px);
+            if(tag_chars) canvas_draw_str(canvas, tag_x, y, tag);
+            if(row_watched) canvas_draw_str(canvas, room_sweep_ui_watch_x(), y, "WATCH");
             canvas_set_color(canvas, ColorBlack);
         }
         canvas_draw_str(canvas, 2, 63, "U/D OK L=AN R=help");
         return;
     }
 
-    /* DETAIL page — one selected AP, clean rows. Identification lines are
-     * computed at draw time from the row's own fields; "randomized" marks a
-     * locally administered MAC and hints are name-pattern guesses. */
+    /* DETAIL page — one selected row per source, clean rows. Vendor truth:
+     * AP BSSIDs use the Wi-Fi OUI evidence; raw stations and probe clients
+     * are client-class radios and use the BLE evidence (random-static
+     * test); tooling esp MACs are WiFi beacons and use the Wi evidence.
+     * "randomized" marks a locally administered MAC. */
     canvas_set_font(canvas, FontSecondary);
-    bool unidentified = !ap.bssid[0] && strcmp(ap.ssid, "Hidden/unknown") == 0;
-    draw_str_clip(
-        canvas, 2, 22, unidentified ? "Unidentified" : (ap.ssid[0] ? ap.ssid : "?"), 124);
-
-    canvas_set_font(canvas, FontKeyboard);
-    const char* vendor = ap.bssid[0] ? room_sweep_oui_evidence(ap.bssid) : "(no MAC)";
-    snprintf(buf, sizeof(buf), "Vendor: %s", vendor);
-    canvas_draw_str(canvas, 2, 31, buf);
-
-    snprintf(
-        buf,
-        sizeof(buf),
-        "%ddBm  Ch%u  n%u",
-        (int)ap.rssi,
-        (unsigned)ap.channel,
-        (unsigned)ap.observations);
-    canvas_draw_str(canvas, 2, 39, buf);
-
-    if(ap.bssid[0]) {
-        canvas_draw_str(canvas, 2, 47, ap.bssid);
+    if(app->wifi_source == WiSourceRaw) {
+        draw_str_clip(canvas, 2, 22, raw.mac[0] ? raw.mac : "?", 124);
+        canvas_set_font(canvas, FontKeyboard);
+        snprintf(
+            buf,
+            sizeof(buf),
+            "Vendor: %s",
+            raw.mac[0] ? room_sweep_oui_evidence_ble(raw.mac) : "(no MAC)");
+        canvas_draw_str(canvas, 2, 31, buf);
+        room_sweep_stats_line(
+            buf, sizeof(buf), raw.rssi, raw.rssi_min, raw.rssi_max, raw.observations);
+        canvas_draw_str(canvas, 2, 39, buf);
+        if(raw.channel) {
+            snprintf(buf, sizeof(buf), "Ch: %u", (unsigned)raw.channel);
+        } else {
+            snprintf(buf, sizeof(buf), "Ch: ?");
+        }
+        canvas_draw_str(canvas, 2, 47, buf);
+        canvas_draw_str(canvas, 2, 54, "a transmitter heard");
+    } else if(app->wifi_source == WiSourceProbe) {
+        draw_str_clip(
+            canvas, 2, 22, probe.ssid[0] ? probe.ssid : "?", 124);
+        canvas_set_font(canvas, FontKeyboard);
+        snprintf(
+            buf,
+            sizeof(buf),
+            "Vendor: %s",
+            probe.client_mac[0] ? room_sweep_oui_evidence_ble(probe.client_mac) : "(no MAC)");
+        canvas_draw_str(canvas, 2, 31, buf);
+        room_sweep_stats_line(
+            buf, sizeof(buf), probe.rssi, probe.rssi, probe.rssi, probe.observations);
+        canvas_draw_str(canvas, 2, 39, buf);
+        if(probe.client_mac[0]) {
+            canvas_draw_str(canvas, 2, 47, probe.client_mac);
+        } else {
+            canvas_draw_str(canvas, 2, 47, "id: session ordinal");
+        }
+        if(probe.target_bssid[0]) {
+            snprintf(buf, sizeof(buf), "for %s", probe.target_bssid);
+            canvas_draw_str(canvas, 2, 54, buf);
+        } else {
+            canvas_draw_str(canvas, 2, 54, "net BSSID not in line");
+        }
+    } else if(app->wifi_source == WiSourceTool) {
+        draw_str_clip(
+            canvas, 2, 22, tool.name[0] ? tool.name : "?", 124);
+        canvas_set_font(canvas, FontKeyboard);
+        if(tool.kind == ROOM_SWEEP_TOOL_KIND_ESP && tool.mac[0]) {
+            snprintf(buf, sizeof(buf), "Vendor: %s", room_sweep_oui_evidence(tool.mac));
+        } else {
+            snprintf(buf, sizeof(buf), "Vendor: %s", tool.mac[0] ? tool.mac : "(no MAC)");
+        }
+        canvas_draw_str(canvas, 2, 31, buf);
+        if(tool.rssi < 0) {
+            room_sweep_stats_line(
+                buf, sizeof(buf), tool.rssi, tool.rssi, tool.rssi, tool.observations);
+            canvas_draw_str(canvas, 2, 39, buf);
+        } else {
+            canvas_draw_str(canvas, 2, 39, "signal not printed");
+        }
+        canvas_draw_str(
+            canvas,
+            2,
+            47,
+            tool.kind == ROOM_SWEEP_TOOL_KIND_ESP ? "esp beacon" : "pwn advert");
+        canvas_draw_str(canvas, 2, 54, UI_HINT_WI_TOOL_TRUTH);
     } else {
-        canvas_draw_str(canvas, 2, 47, "id: session ordinal");
-    }
-    const char* hint = room_sweep_classify_hint_text(room_sweep_classify_ssid(ap.ssid));
-    if(hint[0]) {
-        /* The "(name guess)" suffix carries the truth contract: a hint is a
-         * lead, never identification. */
-        snprintf(buf, sizeof(buf), "HINT: %s (name guess)", hint);
-        canvas_draw_str(canvas, 2, 54, buf);
-    } else {
-        canvas_draw_str(canvas, 2, 54, locked ? "LOCK on  OK=unlock" : "AP OK=lock HOK=scan");
+        /* BEACON detail (unchanged shape). */
+        bool unidentified = !ap.bssid[0] && strcmp(ap.ssid, "Hidden/unknown") == 0;
+        draw_str_clip(
+            canvas, 2, 22, unidentified ? "Unidentified" : (ap.ssid[0] ? ap.ssid : "?"), 124);
+
+        canvas_set_font(canvas, FontKeyboard);
+        const char* vendor = ap.bssid[0] ? room_sweep_oui_evidence(ap.bssid) : "(no MAC)";
+        snprintf(buf, sizeof(buf), "Vendor: %s", vendor);
+        canvas_draw_str(canvas, 2, 31, buf);
+
+        /* Phase 7 evidence range ("-38dBm -72..-38 n14"). */
+        room_sweep_stats_line(
+            buf, sizeof(buf), ap.rssi, ap.rssi_min, ap.rssi_max, ap.observations);
+        canvas_draw_str(canvas, 2, 39, buf);
+
+        if(ap.bssid[0]) {
+            canvas_draw_str(canvas, 2, 47, ap.bssid);
+        } else {
+            canvas_draw_str(canvas, 2, 47, "id: session ordinal");
+        }
+        const char* hint = room_sweep_classify_hint_text(room_sweep_classify_ssid(ap.ssid));
+        if(watch_notice) {
+            /* Phase 9: the list hit its 16-entry ceiling; the flag was not
+             * written. Transient, then the normal lines return. */
+            canvas_draw_str(canvas, 2, 54, UI_HINT_WATCH_FULL);
+        } else if(ap_watched) {
+            /* Phase 9: this address is on the user's watchlist. The flag
+             * date exists only for entries flagged in this launch. */
+            if(ap_watch_local) {
+                if(ap_watch_session > 0) {
+                    snprintf(
+                        buf,
+                        sizeof(buf),
+                        "flagged: session %lu",
+                        (unsigned long)ap_watch_session);
+                    canvas_draw_str(canvas, 2, 54, buf);
+                } else {
+                    canvas_draw_str(canvas, 2, 54, "flagged: this session");
+                }
+            } else {
+                canvas_draw_str(canvas, 2, 54, UI_HINT_WATCH_ON);
+            }
+        } else if(rogue_n >= 2) {
+            /* Phase 6 badge takes the y54 row. The hint loses its detail
+             * line when both apply — the hint tag stays on the list row
+             * and in the CSV. */
+            snprintf(buf, sizeof(buf), "SAME NAME ON %d BSSIDS", rogue_n);
+            canvas_draw_str(canvas, 2, 54, buf);
+        } else if(ap.hidden_resolved) {
+            /* Phase 5: the name arrived via a client probe request. */
+            canvas_draw_str(canvas, 2, 54, "hidden; named by probe");
+        } else if(hint[0]) {
+            /* The "(name guess)" suffix carries the truth contract. */
+            snprintf(buf, sizeof(buf), "HINT: %s (name guess)", hint);
+            canvas_draw_str(canvas, 2, 54, buf);
+        } else if(app->watchlist_on) {
+            canvas_draw_str(canvas, 2, 54, UI_HINT_DETAIL_WATCH);
+        } else {
+            canvas_draw_str(canvas, 2, 54, locked ? "LOCK on  OK=unlock" : "AP OK=lock HOK=scan");
+        }
     }
     canvas_draw_str(canvas, 2, 61, "U/D OK L=AN R=list");
 }
@@ -3850,7 +4881,21 @@ static void draw_ble_tab(Canvas* canvas, App* app) {
     bool locked = count > 0 && app->target_kind == TargetBle &&
                   ((dev.mac[0] && strcmp(app->target_id, dev.mac) == 0) ||
                    strcmp(app->target_id, dev.name) == 0);
+    /* Phase 9: watch state of the selected row, copied under the mutex. */
+    bool dev_watched = false;
+    bool dev_watch_local = false;
+    uint32_t dev_watch_session = 0;
+    if(app->watchlist_on && count > 0) {
+        int hit = room_sweep_watchlist_find(&app->watchlist, dev.mac);
+        if(hit >= 0 && hit < ROOM_SWEEP_WATCH_MAX) {
+            dev_watched = true;
+            dev_watch_local = (app->watch_local_mask >> hit) & 1;
+            dev_watch_session = app->watch_flag_session[hit];
+        }
+    }
     furi_mutex_release(app->mutex);
+    bool watch_notice =
+        app->watch_notice_until_tick != 0 && furi_get_tick() < app->watch_notice_until_tick;
 
     const char* st =
         !app->marauder_confirmed ? "wait" :
@@ -3913,6 +4958,7 @@ static void draw_ble_tab(Canvas* canvas, App* app) {
             bool sel = (idx == selected);
             furi_mutex_acquire(app->mutex, FuriWaitForever);
             BleDev row_dev = app->ble_devs[idx];
+            bool row_watched = app->watchlist_on && ((app->ble_watch_mask >> idx) & 1U) != 0;
             furi_mutex_release(app->mutex);
             if(sel) {
                 canvas_draw_box(canvas, 0, (uint8_t)(y - 6), 128, 8);
@@ -3925,14 +4971,20 @@ static void draw_ble_tab(Canvas* canvas, App* app) {
                                                 "?";
             const char* tag =
                 room_sweep_classify_hint_text(room_sweep_classify_ble_name(row_dev.name));
-            draw_str_clip(
-                canvas,
-                UI_ROW_NAME_X,
-                y,
-                lab,
-                tag[0] ? room_sweep_ui_name_clip_px((uint8_t)strlen(tag)) :
-                         UI_ROW_NAME_MAX_PX);
-            if(tag[0]) canvas_draw_str(canvas, room_sweep_ui_hint_x((uint8_t)strlen(tag)), y, tag);
+            uint8_t tag_chars = tag[0] ? (uint8_t)strlen(tag) : 0;
+            /* Phase 9: a WATCH badge shifts the hint tag one glyph left. */
+            uint8_t tag_x = row_watched && tag_chars ?
+                                room_sweep_ui_hint_x_watched(tag_chars) :
+                                room_sweep_ui_hint_x(tag_chars);
+            uint8_t clip_px = UI_ROW_NAME_MAX_PX;
+            if(row_watched) {
+                clip_px = room_sweep_ui_name_clip_px_watch(tag_chars);
+            } else if(tag_chars) {
+                clip_px = room_sweep_ui_name_clip_px(tag_chars);
+            }
+            draw_str_clip(canvas, UI_ROW_NAME_X, y, lab, clip_px);
+            if(tag_chars) canvas_draw_str(canvas, tag_x, y, tag);
+            if(row_watched) canvas_draw_str(canvas, room_sweep_ui_watch_x(), y, "WATCH");
             canvas_set_color(canvas, ColorBlack);
         }
         canvas_draw_str(canvas, 2, 63, "U/D OK L=AN R=help");
@@ -3951,23 +5003,42 @@ static void draw_ble_tab(Canvas* canvas, App* app) {
         124);
 
     canvas_set_font(canvas, FontKeyboard);
-    const char* vendor = dev.mac[0] ? room_sweep_oui_evidence(dev.mac) : "(no MAC)";
+    /* BLE addresses use the BLE evidence function: random-STATIC (top bits
+     * 11) reads "randomized" unless a real curated OUI names the vendor. */
+    const char* vendor = dev.mac[0] ? room_sweep_oui_evidence_ble(dev.mac) : "(no MAC)";
     snprintf(buf, sizeof(buf), "Vendor: %s", vendor);
     canvas_draw_str(canvas, 2, 31, buf);
 
-    snprintf(
-        buf,
-        sizeof(buf),
-        "%ddBm  n%u",
-        (int)dev.rssi,
-        (unsigned)dev.observations);
+    /* Phase 7 evidence range, same compact format as the Wi-Fi detail. */
+    room_sweep_stats_line(
+        buf, sizeof(buf), dev.rssi, dev.rssi_min, dev.rssi_max, dev.observations);
     canvas_draw_str(canvas, 2, 39, buf);
     if(dev.mac[0]) canvas_draw_str(canvas, 2, 47, dev.mac);
     else canvas_draw_str(canvas, 2, 47, "id: session ordinal");
     const char* hint = room_sweep_classify_hint_text(room_sweep_classify_ble_name(dev.name));
-    if(hint[0]) {
+    if(watch_notice) {
+        /* Phase 9: list full — the flag was not written. */
+        canvas_draw_str(canvas, 2, 54, UI_HINT_WATCH_FULL);
+    } else if(dev_watched) {
+        if(dev_watch_local) {
+            if(dev_watch_session > 0) {
+                snprintf(
+                    buf,
+                    sizeof(buf),
+                    "flagged: session %lu",
+                    (unsigned long)dev_watch_session);
+                canvas_draw_str(canvas, 2, 54, buf);
+            } else {
+                canvas_draw_str(canvas, 2, 54, "flagged: this session");
+            }
+        } else {
+            canvas_draw_str(canvas, 2, 54, UI_HINT_WATCH_ON);
+        }
+    } else if(hint[0]) {
         snprintf(buf, sizeof(buf), "HINT: %s (name guess)", hint);
         canvas_draw_str(canvas, 2, 54, buf);
+    } else if(app->watchlist_on) {
+        canvas_draw_str(canvas, 2, 54, UI_HINT_DETAIL_WATCH);
     } else {
         canvas_draw_str(canvas, 2, 54, locked ? "LOCK on  OK=unlock" : UI_HINT_BT_ADV);
     }
@@ -4473,6 +5544,9 @@ static void draw_tx_tab(Canvas* canvas, App* app) {
 /* ================================================================== */
 /* Drawing: Info tab — 5 pages (U/D or Hold R)                         */
 /* ================================================================== */
+/* Info tab page count: RADIO / REC / KEYS / FILES / CAPS / LIMITS. */
+#define INFO_PAGE_COUNT 6U
+
 static void draw_info_tab(Canvas* canvas, App* app) {
     canvas_set_font(canvas, FontKeyboard);
     char buf[48];
@@ -4480,12 +5554,12 @@ static void draw_info_tab(Canvas* canvas, App* app) {
     bool gps_has_sentences = app->gps.sentences > 0;
     bool gps_from_gpio = app->gps_from_gpio;
     furi_mutex_release(app->gps_mutex);
-    uint8_t page = app->info_page % 5U;
+    uint8_t page = app->info_page % INFO_PAGE_COUNT;
 
     if(page == 0) {
         /* RADIO — one fact per row; the second column used to squeeze into
          * ~7 chars of headroom at x65 and clipped. */
-        canvas_draw_str(canvas, 92, 14, "1/5");
+        canvas_draw_str(canvas, 92, 14, "1/6");
         snprintf(
             buf,
             sizeof(buf),
@@ -4512,7 +5586,7 @@ static void draw_info_tab(Canvas* canvas, App* app) {
         return;
     }
     if(page == 1) {
-        canvas_draw_str(canvas, 92, 14, "2/5");
+        canvas_draw_str(canvas, 92, 14, "2/6");
         snprintf(buf, sizeof(buf), "Rec:%s #%lu drop:%lu",
                  app->record_storage_error ? "ERR" : app->session_log_on ? "ON" : "off",
                  (unsigned long)app->record_ordinal,
@@ -4551,7 +5625,7 @@ static void draw_info_tab(Canvas* canvas, App* app) {
         return;
     }
     if(page == 2) {
-        canvas_draw_str(canvas, 2, 14, "KEYS 3/5");
+        canvas_draw_str(canvas, 2, 14, "KEYS 3/6");
         canvas_draw_str(canvas, 2, 24, "L/R tab  HoldL AN");
         canvas_draw_str(canvas, 2, 34, "HoldR page in mode");
         canvas_draw_str(canvas, 2, 44, "OK+HOK act per tab");
@@ -4560,7 +5634,7 @@ static void draw_info_tab(Canvas* canvas, App* app) {
         return;
     }
     if(page == 3) {
-        canvas_draw_str(canvas, 2, 14, "FILES 4/5");
+        canvas_draw_str(canvas, 2, 14, "FILES 4/6");
         canvas_draw_str(canvas, 2, 24, "apps_data/room_sweep");
         snprintf(
             buf,
@@ -4576,8 +5650,20 @@ static void draw_info_tab(Canvas* canvas, App* app) {
         return;
     }
 
-    /* page 4 */
-    canvas_draw_str(canvas, 2, 14, "LIMITS 5/5");
+    if(page == 4) {
+        /* What this build can actually find, in the app's own words. Every
+         * line is a shipped capability and every "?" is deliberate. */
+        canvas_draw_str(canvas, 2, 14, "CAPS 5/6");
+        canvas_draw_str(canvas, 2, 24, "vendors + hints ?");
+        canvas_draw_str(canvas, 2, 34, "hidden SSID repair");
+        canvas_draw_str(canvas, 2, 44, "clients (Wi-raw)");
+        canvas_draw_str(canvas, 2, 54, "rogue/watch flags");
+        canvas_draw_str(canvas, 2, 63, "U/D or R next");
+        return;
+    }
+
+    /* page 5 */
+    canvas_draw_str(canvas, 2, 14, "LIMITS 6/6");
     canvas_draw_str(canvas, 2, 24, "RSSI != distance");
     canvas_draw_str(canvas, 2, 34, "no jam / no deauth");
     canvas_draw_str(canvas, 2, 44, "beacon != telemetry");
@@ -4616,6 +5702,7 @@ static void draw_settings(Canvas* canvas, App* app) {
         "Vibro",
         "Rescan",
         "ScanWin",
+        "Wi Src",
         "Record",
         "ExtBand",
         "SPI Path",
@@ -4625,6 +5712,7 @@ static void draw_settings(Canvas* canvas, App* app) {
         "Raw Dump",
         "TXDur",
         "FullSweep",
+        "Watchlist",
     };
 
     /* Collect indices in the current group (max 4 items per group). */
@@ -4649,6 +5737,8 @@ static void draw_settings(Canvas* canvas, App* app) {
         else if(i == SET_RESCAN) snprintf(val, sizeof(val), "%s", app->auto_rescan ? "ON" : "off");
         else if(i == SET_SCANWIN)
             snprintf(val, sizeof(val), "%us", room_sweep_scan_timeout_seconds(app->scan_timeout_idx));
+        else if(i == SET_WIFISRC)
+            snprintf(val, sizeof(val), "%s", room_sweep_wi_source_label(app->wifi_source));
         else if(i == SET_LOG)
             snprintf(
                 val,
@@ -4685,6 +5775,15 @@ static void draw_settings(Canvas* canvas, App* app) {
             else snprintf(val, sizeof(val), "%u", app->dump_count);
         }
         else if(i == SET_TXDUR) snprintf(val, sizeof(val), "%ds", app->tx_duration_s);
+        else if(i == SET_WATCHLIST) {
+            /* ERR only for a failed file op while ON; OFF means zero file
+             * activity happened at all. */
+            snprintf(
+                val,
+                sizeof(val),
+                "%s",
+                app->watchlist_on ? (app->watchlist_error ? "ERR" : "ON") : "off");
+        }
         else val[0] = '\0';
 
         uint16_t w = canvas_string_width(canvas, val);
@@ -4713,6 +5812,8 @@ static void draw_cb(Canvas* canvas, void* ctx) {
                 draw_rf_sweep(canvas, app);
             } else if(app->rf_sub == RfSubPeak) {
                 draw_rf_peak(canvas, app);
+            } else if(app->rf_sub == RfSubWatch) {
+                draw_rf_watch(canvas, app);
             } else {
                 draw_rf_waterfall(canvas, app);
             }
@@ -4931,7 +6032,28 @@ static void full_sweep_enter_phase(App* app, RoomSweepFullPhase phase) {
         nrf24_stop_survey(app);
         marauder_start_for_mode(app);
         break;
+    case RoomSweepFullRaw:
+        /* Phase 4 radar pass: one short sniffraw window after BLE. Tables
+         * are kept (clear=false) — the pass adds per-frame evidence rows
+         * without discarding the beacon scan's AP list. */
+        app->mode = SweepModeWifi;
+        nrf24_stop_survey(app);
+        app->full_sweep_raw_active = true;
+        if(app->serial) marauder_start_scan(app, MARAUDER_CMD_RAW, false);
+        break;
+    case RoomSweepFullProbe:
+        /* Phase 11 hidden-SSID pass: one sniffprobe window after the raw
+         * radar. Probes are bursty, so the window is longer than the raw
+         * pass. Tables are kept (clear=false): a probe that names a stored
+         * hidden AP repairs that row in place. */
+        app->mode = SweepModeWifi;
+        nrf24_stop_survey(app);
+        app->full_sweep_probe_active = true;
+        if(app->serial) marauder_start_scan(app, MARAUDER_CMD_PROBE, false);
+        break;
     case RoomSweepFullNrf24:
+        app->full_sweep_raw_active = false;
+        app->full_sweep_probe_active = false;
         if(app->serial) marauder_stop_scan(app);
         app->mode = SweepModeNrf24;
         if(room_sweep_nrf24_spi_selected(app->spi_path)) {
@@ -4961,6 +6083,8 @@ static void full_sweep_finish_and_save(App* app) {
     if(!app) return;
     uint32_t now = furi_get_tick();
     nrf24_stop_survey(app);
+    app->full_sweep_raw_active = false;
+    app->full_sweep_probe_active = false;
     if(app->serial) marauder_stop_scan(app);
 
     /* Drain queue then write completion + close session (writes report-N.txt). */
@@ -5003,12 +6127,21 @@ static void full_sweep_tick(App* app) {
     if(phase == RoomSweepFullRf) {
         ready = room_sweep_full_sweep_hard_timeout(phase, elapsed);
         ok = app->radio != NULL;
-    } else if(phase == RoomSweepFullWifi || phase == RoomSweepFullBle) {
+    } else if(phase == RoomSweepFullWifi || phase == RoomSweepFullBle ||
+              phase == RoomSweepFullRaw || phase == RoomSweepFullProbe) {
         ready = app->marauder_state == MarauderDone || app->marauder_state == MarauderError ||
                 room_sweep_full_sweep_hard_timeout(phase, elapsed);
         ok = app->serial != NULL && app->marauder_state != MarauderError;
         if(phase == RoomSweepFullWifi && app->wifi_count > 0) ok = true;
         if(phase == RoomSweepFullBle && app->ble_count > 0) ok = true;
+        /* RAW pass: any transmitter row counts as evidence; no serial
+         * scanner skips the phase honestly (bit unset, sweep continues). */
+        if(phase == RoomSweepFullRaw && app->raw_count > 0) ok = true;
+        /* PROBE pass: a probe line is evidence that the command ran and the
+         * sniffer heard a client. Zero probes in a quiet room is normal, so
+         * the pass is reported through the phase bit only when the UART was
+         * alive — serial present and no error (see ok above). */
+        if(phase == RoomSweepFullProbe && app->probe_count > 0) ok = true;
     } else if(phase == RoomSweepFullNrf24) {
         /* Error (missing module / wrong switch) → advance immediately. */
         ready = app->nrf24.phase == RoomSweepNrf24Done ||
@@ -5048,6 +6181,17 @@ static void full_sweep_tick(App* app) {
 int32_t room_sweep_app(void* p) {
     UNUSED(p);
     App* app = malloc(sizeof(App));
+    if(!app) {
+        /* The app's single large allocation could not be satisfied. Exiting
+         * is the only honest option: the framework's own OOM handler would
+         * otherwise reboot the whole Flipper, which is far worse for the
+         * operator than the app simply not opening. */
+        FURI_LOG_E("RoomSweep", "not enough contiguous heap for app state; exiting");
+        NotificationApp* notif = furi_record_open(RECORD_NOTIFICATION);
+        notification_message(notif, &sequence_error);
+        furi_record_close(RECORD_NOTIFICATION);
+        return 0;
+    }
     memset(app, 0, sizeof(App));
     room_sweep_waterfall_init(&app->waterfall);
     room_sweep_gps_trail_clear(&app->gps_trail);
@@ -5068,6 +6212,12 @@ int32_t room_sweep_app(void* p) {
     app->ble_strongest = -127;
     app->auto_rescan = true;
     app->scan_timeout_idx = 1; /* 30s default */
+    app->wifi_source = WiSourceBeacon; /* factory default, never persisted */
+    app->watchlist_on = false; /* Phase 9: opt-in; OFF reads/writes nothing */
+    app->watchlist_loaded = false;
+    app->watchlist_error = false;
+    room_sweep_watchlist_reset(&app->watchlist);
+    app->watch_notice_until_tick = 0;
     app->session_log_on = false;
     app->gps_log_coordinates = false;
     app->record_storage_error = false;
@@ -5318,7 +6468,11 @@ int32_t room_sweep_app(void* p) {
                    now - app->last_rescan_tick >= rescan_gap) {
                     marauder_start_scan(
                         app,
-                        app->mode == SweepModeWifi ? MARAUDER_CMD_WIFI : MARAUDER_CMD_BLE,
+                        app->mode == SweepModeWifi ?
+                            /* A sequencer pass owns its window; otherwise the
+                             * Settings source does. */
+                            wifi_source_command(app) :
+                            MARAUDER_CMD_BLE,
                         false);
                 }
             }
@@ -5438,6 +6592,26 @@ int32_t room_sweep_app(void* p) {
                         0,
                         0,
                         "Wi-Fi/BLE window duration changed");
+                } else if(app->settings_sel == SET_WIFISRC) {
+                    /* Phase 4/5/10 Wi capture source. Default is BEACON on
+                     * every launch (nothing is persisted). Switching stops
+                     * the old scan first (inside start_for_mode) so only
+                     * one Marauder scan runs at a time. */
+                    app->wifi_source = room_sweep_wi_source_step(app->wifi_source, true);
+                    app->wifi_scroll = 0;
+                    ui_confirm_toggle(app);
+                    record_enqueue(
+                        app,
+                        "config",
+                        "SYSTEM",
+                        "wi_source",
+                        0,
+                        0,
+                        0,
+                        room_sweep_wi_source_label(app->wifi_source));
+                    if(app->mode == SweepModeWifi && app->serial) {
+                        marauder_start_for_mode(app);
+                    }
                 } else if(app->settings_sel == SET_LOG) {
                     if(!app->session_log_on) {
                         if(!app->storage) app->storage = furi_record_open(RECORD_STORAGE);
@@ -5466,6 +6640,10 @@ int32_t room_sweep_app(void* p) {
                                    !app->gps_gpio_open : !app->serial)
                                 unavailable |= (uint8_t)RoomSweepReportSensorGps;
                             session_log_note_sensor_unavailable(unavailable);
+                            /* Phase 9: per-session watch evidence restarts;
+                             * the section appears only while ON. */
+                            app->watch_hit_mask = 0;
+                            session_log_note_watchlist(app->watchlist_on, 0);
                             record_enqueue(
                                 app,
                                 "config",
@@ -5516,6 +6694,7 @@ int32_t room_sweep_app(void* p) {
                 } else if(app->settings_sel == SET_FULLSWEEP) {
                     if(room_sweep_full_sweep_is_running(&app->full_sweep)) {
                         room_sweep_full_sweep_abort(&app->full_sweep);
+                        app->full_sweep_raw_active = false;
                         nrf24_stop_survey(app);
                         if(app->serial) marauder_stop_scan(app);
                         ui_confirm_toggle(app);
@@ -5526,6 +6705,8 @@ int32_t room_sweep_app(void* p) {
                             if(session_log_begin(app->storage)) {
                                 app->session_log_on = true;
                                 app->record_ordinal = session_log_ordinal();
+                                app->watch_hit_mask = 0;
+                                session_log_note_watchlist(app->watchlist_on, 0);
                             }
                         }
                         room_sweep_full_sweep_start(&app->full_sweep);
@@ -5585,6 +6766,11 @@ int32_t room_sweep_app(void* p) {
                     }
                     furi_mutex_release(app->mutex);
                     app->baseline_set = true;
+                    /* One row per preset is a burst the 8-slot record queue
+                     * cannot hold (on device 9 of 20 rows were dropped before
+                     * this drain). Draining in small groups keeps the queue
+                     * from overflowing while bounding time in the main loop
+                     * (record_drain writes at most 8 rows per call). */
                     for(uint8_t i = 0; i < RF_NUM_CHANNELS; i++) {
                         record_enqueue(
                             app,
@@ -5595,7 +6781,9 @@ int32_t room_sweep_app(void* p) {
                             rf_channels[i],
                             i,
                             "survey channel baseline RSSI");
+                        if((i % 4U) == 3U) record_drain(app);
                     }
+                    record_drain(app);
                     notification_message(app->notif, &seq_test_beep);
                 } else if(app->settings_sel == SET_DUMP) {
                     if(!app->storage) app->storage = furi_record_open(RECORD_STORAGE);
@@ -5637,6 +6825,45 @@ int32_t room_sweep_app(void* p) {
                     app->tx_duration_s = (app->tx_duration_s % TX_MAX_DURATION_S) + 1;
                     record_enqueue(
                         app, "config", "TX", "duration", 0, 0, 0, "bounded duration changed");
+                    ui_confirm_toggle(app);
+                } else if(app->settings_sel == SET_WATCHLIST) {
+                    /* Phase 9: opt-in cross-session watchlist. OFF never
+                     * touches the file; ON loads it once (here — the only
+                     * moment the feature can turn ON, since the toggle is
+                     * never persisted). OFF wipes the in-RAM copy too. */
+                    app->watchlist_on = !app->watchlist_on;
+                    if(app->watchlist_on) {
+                        watchlist_load_once(app);
+                        session_log_note_watchlist(
+                            true, room_sweep_watchlist_hit_count(app->watch_hit_mask));
+                        record_enqueue(
+                            app,
+                            "config",
+                            "SYSTEM",
+                            "watchlist",
+                            0,
+                            0,
+                            0,
+                            app->watchlist_error ?
+                                "watchlist ON; file read failed" :
+                                "watchlist ON: flags persist in watchlist.txt");
+                    } else {
+                        furi_mutex_acquire(app->mutex, FuriWaitForever);
+                        room_sweep_watchlist_reset(&app->watchlist);
+                        app->wifi_watch_mask = 0;
+                        app->ble_watch_mask = 0;
+                        furi_mutex_release(app->mutex);
+                        app->watchlist_error = false;
+                        record_enqueue(
+                            app,
+                            "config",
+                            "SYSTEM",
+                            "watchlist",
+                            0,
+                            0,
+                            0,
+                            "watchlist OFF: nothing read or written");
+                    }
                     ui_confirm_toggle(app);
                 }
             }
@@ -5813,7 +7040,8 @@ int32_t room_sweep_app(void* p) {
                 continue;
             }
             if(app->mode == SweepModeInfo) {
-                app->info_page = (uint8_t)((app->info_page + 1U) % 5U);
+                app->info_page =
+                    (uint8_t)((app->info_page + 1U) % INFO_PAGE_COUNT);
                 continue;
             }
         }
@@ -5831,6 +7059,11 @@ int32_t room_sweep_app(void* p) {
                         app->rf_sub, RfSubCount, input_action);
                     app->sweep_running = false;
                     app->peak_running = false;
+                    if(app->rf_sub == RfSubWatch) {
+                        /* Lock-and-log: lock the frequency + fresh window
+                         * exactly when the watch sub-mode is entered. */
+                        rf_watch_arm(app);
+                    }
                 }
             } else if(browse_phase == RoomSweepInputBrowsePhaseLong) {
                 /* Hold Up/Down opens the lock/map card from any sub-mode. */
@@ -5930,13 +7163,28 @@ int32_t room_sweep_app(void* p) {
                 app->wifi_ui_page = (uint8_t)(1U - (app->wifi_ui_page & 1U));
             } else if(input_action == RoomSweepInputBrowseUp ||
                       input_action == RoomSweepInputBrowseDown) {
-                furi_mutex_acquire(app->mutex, FuriWaitForever);
-                app->wifi_scroll = (uint8_t)room_sweep_cursor_step(
-                    app->wifi_scroll, app->wifi_count, input_action);
-                furi_mutex_release(app->mutex);
+                /* Phase 9: Hold UP on the detail page flags the selected AP
+                 * when the watchlist is ON; every other Up/Down phase keeps
+                 * the legacy one-step browse (short tap and repeat alike). */
+                bool flag_hold = app->watchlist_on &&
+                                 input_action == RoomSweepInputBrowseUp &&
+                                 (app->wifi_ui_page % 3U) == 0 &&
+                                 classify_browse_phase(&event) ==
+                                     RoomSweepInputBrowsePhaseLong;
+                if(flag_hold) {
+                    watchlist_flag_wifi(app);
+                } else {
+                    furi_mutex_acquire(app->mutex, FuriWaitForever);
+                    app->wifi_scroll = (uint8_t)room_sweep_cursor_step(
+                        app->wifi_scroll, wifi_source_table_count(app), input_action);
+                    furi_mutex_release(app->mutex);
+                }
             } else if(input_action == RoomSweepInputPrimary && app->serial) {
-                if(app->wifi_count == 0) {
-                    /* Empty list: first press starts a scan. */
+                if(app->wifi_source != WiSourceBeacon ||
+                   wifi_source_table_count(app) == 0) {
+                    /* Empty list (any source) or a RAW/PROBE/TOOL source:
+                     * OK restarts the active source's scan — these tables
+                     * have no lock targets. */
                     marauder_start_for_mode(app);
                 } else {
                     /* Populated list: OK = lock/unlock the selected AP. */
@@ -5991,10 +7239,21 @@ int32_t room_sweep_app(void* p) {
                 app->ble_ui_page = (uint8_t)(1U - (app->ble_ui_page & 1U));
             } else if(input_action == RoomSweepInputBrowseUp ||
                       input_action == RoomSweepInputBrowseDown) {
-                furi_mutex_acquire(app->mutex, FuriWaitForever);
-                app->ble_scroll = (uint8_t)room_sweep_cursor_step(
-                    app->ble_scroll, app->ble_count, input_action);
-                furi_mutex_release(app->mutex);
+                /* Phase 9: Hold UP on the detail page flags the selected
+                 * device when the watchlist is ON (same gate as Wi). */
+                bool flag_hold = app->watchlist_on &&
+                                 input_action == RoomSweepInputBrowseUp &&
+                                 (app->ble_ui_page % 3U) == 0 &&
+                                 classify_browse_phase(&event) ==
+                                     RoomSweepInputBrowsePhaseLong;
+                if(flag_hold) {
+                    watchlist_flag_ble(app);
+                } else {
+                    furi_mutex_acquire(app->mutex, FuriWaitForever);
+                    app->ble_scroll = (uint8_t)room_sweep_cursor_step(
+                        app->ble_scroll, app->ble_count, input_action);
+                    furi_mutex_release(app->mutex);
+                }
             } else if(input_action == RoomSweepInputPrimary && app->serial) {
                 if(app->ble_count == 0) {
                     /* Empty list: first press starts a scan. */
@@ -6112,7 +7371,7 @@ int32_t room_sweep_app(void* p) {
            (input_action == RoomSweepInputBrowseUp ||
             input_action == RoomSweepInputBrowseDown)) {
             app->info_page = (uint8_t)room_sweep_cursor_step(
-                app->info_page, 5, input_action);
+                app->info_page, INFO_PAGE_COUNT, input_action);
         }
 
         app->tick_count++;

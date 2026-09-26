@@ -1,130 +1,262 @@
 [
-  {
-    "category": "functional",
-    "description": "Plain-English Room Report with findings summary and coverage checklist (RF/WiFi/BLE/GPS/nRF24)",
-    "steps": [
-      "Extend room_sweep_report findings API",
-      "Host test asserts readable sections and activity level",
-      "session_log write_report emits Room Report body"
-    ],
-    "passes": true
-  },
-  {
-    "category": "functional",
-    "description": "Full-room-sweep sequencer (RF then WiFi then BLE then nRF24 then GPS) host-tested",
-    "steps": [
-      "room_sweep_full_sweep.h phase machine",
-      "Host tests for advance/abort/skip",
-      "Settings FullSweep starts sequencer"
-    ],
-    "passes": true
-  },
-  {
-    "category": "functional",
-    "description": "SPI path policy: nRF24 selected forces internal CC1101 for Sub-GHz",
-    "steps": [
-      "room_sweep_radio_path.h decision helper",
-      "Host tests",
-      "radio_open respects path"
-    ],
-    "passes": true
-  },
-  {
-    "category": "functional",
-    "description": "nRF24 detect-only channel survey (RPD RX) with tab UI and session events",
-    "steps": [
-      "nrf24 state header + SPI survey module",
-      "Host tests for channel scoring",
-      "SweepModeNrf24 tab; no jam/block TX modes"
-    ],
-    "passes": true
-  },
-  {
-    "category": "verification",
-    "description": "./init.sh host tests + ufbt build green",
-    "steps": [
-      "Run ./init.sh",
-      "All suites PASS",
-      "FAP builds"
-    ],
-    "passes": true
-  },
-  {
-    "category": "ui",
-    "description": "UI/UX spread: fix text/UI collisions on crowded tabs (2026-08-13)",
-    "steps": [
-      "room_sweep_ui_layout.h constants + host test",
-      "RF survey header/hint/badge, S/V removal, FullSweep banner to top strip",
-      "Info tab 5 pages, WiFi/BLE list 8px pitch",
-      "Spec: specs/ui-ux-2026-08-13.md"
-    ],
-    "passes": true
-  },
-  {
-    "category": "ui",
-    "description": "Input leverage: tap/hold tactile feedback, RF hold-card, GPS hold-OK retry",
-    "steps": [
-      "room_sweep_input.h browse-phase + touch tracker (host tests)",
-      "Press tick / hold-confirm pulses respect Vibro setting",
-      "RF Hold Up/Down lock card; GPS Hold OK = NMEA retry",
-      "Uniform settings toggle confirmation"
-    ],
-    "passes": true
-  },
-  {
-    "category": "ui",
-    "description": "Meter suite: polar RSSI radar, waterfall history, big-number meter, GPS walk-to radar",
-    "steps": [
-      "room_sweep_radar.h integer trig (sin/atan2/bearing/rings) + host tests",
-      "room_sweep_waterfall.h scrolling spectrum + host tests",
-      "GPS trail ring + Radar page in room_sweep_gps_state.h",
-      "Analyzer 4 pages, RF Waterfall sub-mode, GPS Radar page",
-      "Honest labels: RSSI rings not meters; GPS radar real meters"
-    ],
-    "passes": true
-  },
-  {
-    "category": "verification",
-    "description": "init.sh host tests + ufbt build + _verify_api + device deploy (2026-08-13)",
-    "steps": [
-      "Run ./init.sh",
-      "All suites PASS",
-      "FAP builds",
-      "python3 _verify_api.py clean",
-      "ufbt launch on flip_XXXX0"
-    ],
-    "passes": true
-  },
-  {
-    "category": "functional",
-    "description": "Per-tab feedback parity: identity-aware aged WiFi/BLE Geiger, real nRF24 RPD activity peak, graded vibro ladder, stable cadence during input",
-    "steps": [
-      "room_sweep_feedback.h: pick_wireless priority (locked target > selected row > strongest) with 2s->6s aging + sound/vibro interval ladders + host tests",
-      "room_sweep_nrf24_state.h: RPD activity integrator (+8/sample, 100ms lazy decay, ~4s to silence) replaces channel-counter synthetic + host tests",
-      "feedback_tick wiring: 3-candidate gather under mutex, target_rssi sync, 40ms throttle + top-of-loop call; GPS/TX fixed cadences preserved"
-    ],
-    "passes": true
-  },
-  {
-    "category": "functional",
-    "description": "Continuous proximity feedback (dB-linear sound/vibro/GPS curves) + OK-to-lock on WiFi/BLE with hunting scan keep-alive",
-    "steps": [
-      "room_sweep_feedback.h: continuous curves sound 2000->60ms, vibro 5000->150ms, GPS 2000->200ms; host tests for endpoints, 1-dB monotonicity, smoothness, spot values, rounding",
-      "Main loop: analyzer open or WiFi/BLE target locked keeps scan windows restarting within ~250ms (meters/feedback never starve); windows still log scan_end",
-      "WiFi/BLE input: short OK locks/unlocks selected row (empty list starts scan), Hold OK rescans; footer hints + USER_GUIDE/spec updated; TX tab code unchanged"
-    ],
-    "passes": true
-  },
-  {
-    "category": "functional",
-    "description": "Identification layer: OUI vendor lookup + name-pattern hints for Wi-Fi/BLE (Phase 1)",
-    "steps": [
-      "room_sweep_oui.h: IEEE-registry-verified curated vendor table + randomized-MAC detection (host-tested)",
-      "room_sweep_classify.h: name-pattern class hints with boundary guards, '?' UI labels (host-tested)",
-      "Wired at draw time into Wi/BT list + detail pages, observation CSV details, Room Report vendors/hints lines",
-      "Docs: README, USER_GUIDE, CHANGELOG; ui_layout constants + tests extended",
-      "Gates: ./init.sh ALL PASS (20 suites), _verify_api.py CLEAN, ufbt zero warnings (Target 7, API 87.1); on-device verification deferred to main agent"
-    ],
-    "passes": true
-  }
+ {
+  "category": "functional",
+  "description": "Plain-English Room Report with findings summary and coverage checklist (RF/WiFi/BLE/GPS/nRF24)",
+  "steps": [
+   "Extend room_sweep_report findings API",
+   "Host test asserts readable sections and activity level",
+   "session_log write_report emits Room Report body"
+  ],
+  "passes": true
+ },
+ {
+  "category": "functional",
+  "description": "Full-room-sweep sequencer (RF then WiFi then BLE then Wi-raw then Wi-probe then nRF24 then GPS) host-tested",
+  "steps": [
+   "room_sweep_full_sweep.h phase machine",
+   "Host tests for advance/abort/skip",
+   "Settings FullSweep starts sequencer",
+   "Phase 4/11: Wi-raw (sniffraw transmitter radar, clients included) and Wi-probe (sniffprobe, hidden-SSID recovery) passes with their own bits and honest skips"
+  ],
+  "passes": true
+ },
+ {
+  "category": "functional",
+  "description": "SPI path policy: nRF24 selected forces internal CC1101 for Sub-GHz",
+  "steps": [
+   "room_sweep_radio_path.h decision helper",
+   "Host tests",
+   "radio_open respects path"
+  ],
+  "passes": true
+ },
+ {
+  "category": "functional",
+  "description": "nRF24 detect-only channel survey (RPD RX) with tab UI and session events",
+  "steps": [
+   "nrf24 state header + SPI survey module",
+   "Host tests for channel scoring",
+   "SweepModeNrf24 tab; no jam/block TX modes"
+  ],
+  "passes": true
+ },
+ {
+  "category": "verification",
+  "description": "./init.sh host tests + ufbt build green",
+  "steps": [
+   "Run ./init.sh",
+   "All suites PASS",
+   "FAP builds"
+  ],
+  "passes": true
+ },
+ {
+  "category": "ui",
+  "description": "UI/UX spread: fix text/UI collisions on crowded tabs (2026-08-13)",
+  "steps": [
+   "room_sweep_ui_layout.h constants + host test",
+   "RF survey header/hint/badge, S/V removal, FullSweep banner to top strip",
+   "Info tab 5 pages, WiFi/BLE list 8px pitch",
+   "Spec: specs/ui-ux-2026-08-13.md"
+  ],
+  "passes": true
+ },
+ {
+  "category": "ui",
+  "description": "Input leverage: tap/hold tactile feedback, RF hold-card, GPS hold-OK retry",
+  "steps": [
+   "room_sweep_input.h browse-phase + touch tracker (host tests)",
+   "Press tick / hold-confirm pulses respect Vibro setting",
+   "RF Hold Up/Down lock card; GPS Hold OK = NMEA retry",
+   "Uniform settings toggle confirmation"
+  ],
+  "passes": true
+ },
+ {
+  "category": "ui",
+  "description": "Meter suite: polar RSSI radar, waterfall history, big-number meter, GPS walk-to radar",
+  "steps": [
+   "room_sweep_radar.h integer trig (sin/atan2/bearing/rings) + host tests",
+   "room_sweep_waterfall.h scrolling spectrum + host tests",
+   "GPS trail ring + Radar page in room_sweep_gps_state.h",
+   "Analyzer 4 pages, RF Waterfall sub-mode, GPS Radar page",
+   "Honest labels: RSSI rings not meters; GPS radar real meters"
+  ],
+  "passes": true
+ },
+ {
+  "category": "verification",
+  "description": "init.sh host tests + ufbt build + _verify_api + device deploy (2026-08-13)",
+  "steps": [
+   "Run ./init.sh",
+   "All suites PASS",
+   "FAP builds",
+   "python3 _verify_api.py clean",
+   "ufbt launch on flip_XXXX0"
+  ],
+  "passes": true
+ },
+ {
+  "category": "functional",
+  "description": "Per-tab feedback parity: identity-aware aged WiFi/BLE Geiger, real nRF24 RPD activity peak, graded vibro ladder, stable cadence during input",
+  "steps": [
+   "room_sweep_feedback.h: pick_wireless priority (locked target > selected row > strongest) with 2s->6s aging + sound/vibro interval ladders + host tests",
+   "room_sweep_nrf24_state.h: RPD activity integrator (+8/sample, 100ms lazy decay, ~4s to silence) replaces channel-counter synthetic + host tests",
+   "feedback_tick wiring: 3-candidate gather under mutex, target_rssi sync, 40ms throttle + top-of-loop call; GPS/TX fixed cadences preserved"
+  ],
+  "passes": true
+ },
+ {
+  "category": "functional",
+  "description": "Continuous proximity feedback (dB-linear sound/vibro/GPS curves) + OK-to-lock on WiFi/BLE with hunting scan keep-alive",
+  "steps": [
+   "room_sweep_feedback.h: continuous curves sound 2000->60ms, vibro 5000->150ms, GPS 2000->200ms; host tests for endpoints, 1-dB monotonicity, smoothness, spot values, rounding",
+   "Main loop: analyzer open or WiFi/BLE target locked keeps scan windows restarting within ~250ms (meters/feedback never starve); windows still log scan_end",
+   "WiFi/BLE input: short OK locks/unlocks selected row (empty list starts scan), Hold OK rescans; footer hints + USER_GUIDE/spec updated; TX tab code unchanged"
+  ],
+  "passes": true
+ },
+ {
+  "category": "functional",
+  "description": "Identification layer: OUI vendor lookup + name-pattern hints for Wi-Fi/BLE (Phase 1)",
+  "steps": [
+   "room_sweep_oui.h: IEEE-registry-verified curated vendor table + randomized-MAC detection (host-tested)",
+   "room_sweep_classify.h: name-pattern class hints with boundary guards, '?' UI labels (host-tested)",
+   "Wired at draw time into Wi/BT list + detail pages, observation CSV details, Room Report vendors/hints lines",
+   "Docs: README, USER_GUIDE, CHANGELOG; ui_layout constants + tests extended",
+   "Gates: ./init.sh ALL PASS (20 suites), _verify_api.py CLEAN, ufbt zero warnings (Target 7, API 87.1); on-device verification deferred to main agent"
+  ],
+  "passes": true
+ },
+ {
+  "category": "fix",
+  "description": "BLE random-static detection: locally-administered OR top-bits-0xC0 addresses flagged, curated OUI still wins (Phase 1 follow-up fix)",
+  "steps": [
+   "room_sweep_oui.h: room_sweep_oui_is_randomized_ble (0x02 or 0xC0 top bits) + room_sweep_oui_evidence_ble with vendor-first precedence; Wi-Fi path unchanged",
+   "tests/test_oui.c: random-static, resolvable-private-not-flagged, real-OUI precedence, malformed inputs",
+   "BLE detail Vendor: line and BLE CSV detail token use the _ble functions"
+  ],
+  "passes": true
+ },
+ {
+  "category": "functional",
+  "description": "Duplicate-SSID / possible-rogue correlation (Phase 6)",
+  "steps": [
+   "room_sweep_rogue.h: exact case-sensitive SSID grouping, hidden/no-BSSID exclusion, host-tested",
+   "Wi list '!' marker (left of hint-tag column) + detail badge SAME NAME ON n BSSIDS",
+   "CSV observation detail gains rogue=n token; Room Report gains 'Possible cloned SSIDs' line with mesh caveat"
+  ],
+  "passes": true
+ },
+ {
+  "category": "functional",
+  "description": "Per-device RSSI evidence stats: min/max/avg per Wi-Fi/BLE row (Phase 7)",
+  "steps": [
+   "room_sweep_stats.h: integer-only absorb/avg (sum stores rssi+120 offsets, uint32 overflow-safe at obs=65535), detail-page stats line + whole-token CSV composer (host-tested)",
+   "WifiAp/BleDev gain rssi_min/rssi_max/rssi_sum, maintained in wifi_upsert/ble_upsert; Wi/BT detail pages show '-38dBm -72..-38 n14'",
+   "CSV WIFI/BLE observation details carry min=/max=/avg= tokens; Room Report strongest-device lines gain (range a..b)"
+  ],
+  "passes": true
+ },
+ {
+  "category": "functional",
+  "description": "Wi capture sources: sniffraw transmitter radar (Phase 4), sniffprobe + hidden-SSID recovery contract (Phase 5), sniffesp/sniffpwn hostile-tooling with alternating windows (Phase 10)",
+  "steps": [
+   "room_sweep_settings.h: WiSource enum (default BEACON, never persisted) + Wi Src settings item + labels/tags (host-tested)",
+   "room_sweep_sta.h: live-verified sniffraw parse + MAC-first upsert with RSSI stats fold (host-tested)",
+   "room_sweep_probe.h: sniffprobe parse (upstream-pinned format), probe_names_hidden repair decision, bounded table (host-tested); repair cannot fire until a build prints a target BSSID — documented",
+   "room_sweep_tool.h: sniffpwn name parse (v1.9.1+master shapes), sniffesp historical-shape parse (mode unrouted upstream — stays empty honestly), alternating-window planner (host-tested)",
+   "room_sweep.c: per-source scan start/stop + stopscan-before-switch, UART routing, CSV STA-/PR-/TL- ordinals + hidden_resolved event, source-aware Wi list/detail/help, feedback candidates, full-sweep 6s Wi-raw pass with honest skip",
+   "Docs: BFFB_MOMENTUM.md format pins with 'not yet observed live' annotations, AGENTS/CLAUDE command lists, USER_GUIDE, CHANGELOG",
+   "Gates: ./init.sh ALL PASS (26 suites), _verify_api.py CLEAN, ufbt zero warnings (Target 7, API 87.1); on-device verification deferred to main agent"
+  ],
+  "passes": true
+ },
+ {
+  "category": "functional",
+  "description": "RF burst watch: lock-and-log duty-cycle timing on one frequency (Phase 8)",
+  "steps": [
+   "room_sweep_watch.h: burst edge/gap state machine (open on rising edge above the shared -75 dBm gate, close after 600 ms silence), integer duty percent, LAST age, label/detail formatters (Flipper-free, host-tested)",
+   "RfSubWatch sub-mode: locks ONE frequency (fresh candidate else nearest ExtBand-legal preset), existing RF thread feeds it at the survey 5 ms cadence - no hopping, no new thread",
+   "Watch page: BURSTS n / LAST s / DUTY n% with live RSSI - honest units, no distance/direction claims; closed burst gets the existing press-pulse",
+   "CSV: one observation row per closed burst (id WATCH, submode watch) with active-span duration, burst max RSSI, duty=N% bursts=M detail",
+   "Host suite tests/test_watch.c registered in init.sh; UI layout hint added"
+  ],
+  "passes": true
+ },
+ {
+  "category": "functional",
+  "description": "Opt-in cross-session watchlist: flag addresses you have seen before (Phase 9)",
+  "steps": [
+   "Settings Watchlist OFF/ON - the app's only persistent-identity feature and strictly opt-in: never persisted, so OFF is the factory state on every launch and OFF means zero file reads, zero writes, zero RAM use",
+   "watchlist.txt (/ext/apps_data/room_sweep/): read once per enable, appended one 'aa:bb:cc:dd:ee:ff,label' line per flag, 16-entry RAM ceiling with a WATCH FULL notice; tolerates CR, spaces, blank lines and # comments so it stays hand-editable; malformed/overlong lines are refused whole",
+   "Flagging is manual: Hold UP on a Wi-Fi or BLE detail page labels the row with its SSID/name (23 chars) or 'flagged'",
+   "Matching on Wi/BLE upserts: right-edge WATCH badge on list and detail rows (coexisting with ? hints and the ! rogue mark via a tested ui_layout chain), ON WATCHLIST / flagged: session N on the detail page, and an all-or-nothing watch=1 token in the 48-byte CSV observation detail",
+   "Room Report: 'Watchlist matches: N' plus the honesty line naming it the only persistent-identity feature and stating a matching address is not proof of the same physical device",
+   "room_sweep_watchlist.h (Flipper-free parse/match/list, integer math) + tests/test_watchlist.c; raw MACs live only in watchlist.txt, session CSVs keep per-session ordinals",
+   "Gates: ./init.sh ALL PASS, _verify_api.py CLEAN, ufbt zero warnings. NOT device-verified (rig unresponsive this session) - the receipt walk is owed"
+  ],
+  "passes": true
+ },
+ {
+  "category": "functional",
+  "description": "Capstone 11a: 20-preset RF survey strip with derived layout (was 16 hand-tuned)",
+  "steps": [
+   "room_sweep_rf_presets.h: four new presets (850/880 cellular uplink edge, 902/927.5 US ISM edges) in a Flipper-free header so the table invariants are host-testable",
+   "tests/test_rf_presets.c (new, registered in init.sh): parallel-array counts, every frequency inside a CC1101 band, rf_channel_band matching the frequency (it is indexed directly - silent drift meant tuning an arbitrary frequency), no duplicates, label width, strip label/bar budget",
+   "room_sweep_ui_layout.h: rf_bar_stride/rf_bar_width/rf_bar_x/rf_label_step derived from the preset count; tests/test_ui_layout.c pins both 16 (historical 8px stride) and 20 (6px, five labels inside the text margin)",
+   "room_sweep_waterfall.h + room_sweep.c: waterfall channel count follows the presets, vertical channel spacing derived; latent overflow fixed (radar blips[16] -> RF_NUM_CHANNELS)",
+   "Docs: README/USER_GUIDE preset table + cellular-edge truth line, field guide and control map counts",
+   "Gates: ./init.sh ALL PASS (25 suites), ufbt zero warnings. NOT device-verified: the rig was unresponsive this session (.omo/evidence/device-unresponsive-2026-09-21.md)"
+  ],
+  "passes": true
+ },
+ {
+  "category": "functional",
+  "description": "Capstone 11b: Wi-probe pass in the full-sweep sequencer + effective-source routing",
+  "steps": [
+   "room_sweep_full_sweep.h: new Wi-probe phase (sniffprobe, 8s ceiling, longer than the raw pass because probes are bursty), own completion bit, label 'Probe', included in BIT_ALL so completed_all still means every phase produced evidence",
+   "room_sweep.c: probe phase entry/exit, honest skip when no UART scanner (bit unset, sweep continues), refcounted-table behaviour unchanged (clear=false, so hidden-SSID repair can rename a stored row in place)",
+   "Fixed a real sequencer defect: a full-sweep Wi pass now routes its UART lines through ITS OWN source instead of the Settings choice, so the raw radar and the probe pass collect data even when the operator never pre-selected that source (wifi_effective_source, used by routing, table count and the Wi header tag)",
+   "Documented that the Wi-raw pass IS the client/station view on this firmware (sniffraw reports one line per 802.11 frame, stations included); the scanap+scansta pair stays unused until its station-line format is pinned live",
+   "tests/test_full_sweep_state.c: transition chain, probe bit, honest-skip, limit constant, label, and the longer-than-raw window assertion (6 -> 7 phases to completed_all)",
+   "Docs: USER_GUIDE FullSweep step list + pass semantics, README FullSweep line",
+   "Gates: ./init.sh ALL PASS (25 suites), _verify_api.py CLEAN, ufbt zero warnings. NOT device-verified (rig unresponsive)"
+  ],
+  "passes": true
+ },
+ {
+  "category": "fix",
+  "description": "Two device-found recorder defects: identity-map saturation and the baseline burst (session-17/18)",
+  "steps": [
+   "Found on device, invisible to the host suite: a baseline snapshot enqueued 20 events in one tick into an 8-slot queue and lost 9 rows (record_queue_full); the 32-slot per-session identity map saturated (20 RF labels + 10 APs + 13 BLE + system ids) so later rows came out id=REDACTED, including phase 8's WATCH rows",
+   "Fixes: the baseline handler drains in small groups as it enqueues; the map is 64 entries; the burst watch writes a LITERAL WATCH id that spends no map slot and refuses any mismatch rather than coercing (a MAC can never reach the id column that way)",
+   "Re-verified on device (session-18.csv): 20/20 baseline rows, 32/32 WATCH rows with id=WATCH, zero REDACTED rows, 174 watch=1 rows",
+   "tests/test_record_state.c +9 cases pin the literal-vs-identity split, the refusal path and the map sizing"
+  ],
+  "passes": true
+ },
+ {
+  "category": "functional",
+  "description": "sniffprobe parser un-gated with a redacted fixture (phase 5 format gate satisfied)",
+  "steps": [
+   "A redacted six-record fixture preserves the observed shape RSSI: -NN Ch: N Client: <mac> Requesting: <ssid>, v1.9.1 variant with the RSSI prefix",
+   "All six synthetic records parse with the shipped grammar and the scan scaffolding never false-positives; empty requests map to Hidden/unknown; no target BSSID is printed on this build so the repair contract stays fireable-only-on-a-build-that-prints-one",
+   "Redacted fixture evidence: 10 observation submode=probe rows, ordinals PR-01..PR-06, with room-specific identifiers omitted",
+   "tests/test_probe.c carries six synthetic records plus five scaffolding lines that must not parse; docs/BFFB_MOMENTUM.md redacted fixture replaces the upstream-only annotation; AGENTS.md/CLAUDE.md updated",
+   "Still gated: sniffesp/sniffpwn (no emitter in the room) and scansta's station-line format"
+  ],
+  "passes": true
+ },
+ {
+  "category": "verification",
+  "description": "Capstone 11 final verification: host gates green, 11a/11b device-verified, Caps-page pixels unconfirmed",
+  "steps": [
+   "Host gate: ./init.sh ALL PASS (25 suites), _verify_api.py CLEAN, ufbt zero warnings (Target 7, API 87.1)",
+   "DEVICE-VERIFIED 2026-09-21: 11a- 20/20 baseline rows including the four new presets (850/880/902/927.5 at channels 14-19) in session-18.csv; 11b- a complete FullSweep session (session-22.csv) whose every pass hit its documented ceiling (RF 10.1s, Wi-Fi 15.1s, BLE 15.0s, Wi-raw 6.0s, Wi-probe 8.1s, nRF24 honest skip, GPS 2.0s early exit) ending in full_sweep_done partial; report-22.txt says the sweep finished",
+   "Still open: 11c's Caps page has no visual confirmation (screenshots unavailable on this build - the RPC screen stream reboots the device, reproduced three times)",
+   "Receipts: .omo/evidence/phase-receipts-2026-09-21.md"
+  ],
+  "passes": false
+ }
 ]

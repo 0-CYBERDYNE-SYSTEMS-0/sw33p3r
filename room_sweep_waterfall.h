@@ -11,7 +11,12 @@
  */
 
 #define ROOM_SWEEP_WATERFALL_COLS 24
-#define ROOM_SWEEP_WATERFALL_CHANNELS 16
+
+/* Must match RF_NUM_CHANNELS: the RF thread snapshots all preset channels and
+ * the waterfall copies this many per push (a smaller count silently drops the
+ * tail presets; tests/test_waterfall.c pins the value). Kept as its own macro
+ * so this header stays Flipper-free — it cannot include room_sweep.h. */
+#define ROOM_SWEEP_WATERFALL_CHANNELS 20
 
 typedef struct {
     int8_t col[ROOM_SWEEP_WATERFALL_COLS][ROOM_SWEEP_WATERFALL_CHANNELS];
@@ -34,14 +39,14 @@ static inline void room_sweep_waterfall_init(RoomSweepWaterfallState* s) {
 
 static inline void room_sweep_waterfall_push(
     RoomSweepWaterfallState* s,
-    const int8_t* snapshot16) {
+    const int8_t* snapshot) {
     if(!s) return;
     s->newest = (uint8_t)((s->newest + 1U) % ROOM_SWEEP_WATERFALL_COLS);
     if(s->count < ROOM_SWEEP_WATERFALL_COLS) s->count++;
     for(uint8_t ch = 0; ch < ROOM_SWEEP_WATERFALL_CHANNELS; ch++) {
         int8_t sample = -127;
-        if(snapshot16) {
-            sample = snapshot16[ch];
+        if(snapshot) {
+            sample = snapshot[ch];
             if(sample < -127) sample = -127;
             if(sample > 0) sample = 0;
         }

@@ -24,6 +24,7 @@ enum {
     RoomSweepSetVibro,
     RoomSweepSetRescan,
     RoomSweepSetScanWin,
+    RoomSweepSetWifiSrc,
     RoomSweepSetRecord,
     RoomSweepSetExtBand,
     RoomSweepSetSpiPath,
@@ -33,8 +34,64 @@ enum {
     RoomSweepSetDump,
     RoomSweepSetTxDur,
     RoomSweepSetFullSweep,
+    /* Phase 9: opt-in cross-session watchlist. OFF by construction on every
+     * launch (the app keeps no settings file), so "never persisted ON" is
+     * guaranteed the same way as the Wi capture source default. */
+    RoomSweepSetWatchlist,
     RoomSweepSetCount,
 };
+
+/*
+ * Wi capture source (Settings → Wi Src, Phase 4/5/10 of the 2026-09-20
+ * expansion). BEACON is the factory default and the only value ever
+ * persisted implicitly — the app keeps no settings file, so a default
+ * WiSourceBeacon on every launch is guaranteed by construction.
+ */
+typedef enum {
+    WiSourceBeacon = 0, /* sniffbeacon — AP beacons (existing behavior) */
+    WiSourceRaw,        /* sniffraw — every 802.11 transmitter on channel */
+    WiSourceProbe,      /* sniffprobe — client probe requests */
+    WiSourceTool,       /* sniffesp + sniffpwn, alternating windows */
+    WiSourceCount,
+} WiSource;
+
+static inline WiSource room_sweep_wi_source_step(WiSource source, bool down) {
+    if((uint8_t)source >= WiSourceCount) source = WiSourceBeacon;
+    if(down) {
+        return (WiSource)(((uint8_t)source + 1U) % WiSourceCount);
+    }
+    return (WiSource)(((uint8_t)source + WiSourceCount - 1U) % WiSourceCount);
+}
+
+/* Settings value text ("BEACON" / "RAW" / "PROBE" / "TOOL"). */
+static inline const char* room_sweep_wi_source_label(WiSource source) {
+    switch(source) {
+    case WiSourceRaw:
+        return "RAW";
+    case WiSourceProbe:
+        return "PROBE";
+    case WiSourceTool:
+        return "TOOL";
+    case WiSourceBeacon:
+    default:
+        return "BEACON";
+    }
+}
+
+/* Wi-tab header tag: BEACON keeps the historical "SCAN" wording. */
+static inline const char* room_sweep_wi_source_tag(WiSource source) {
+    switch(source) {
+    case WiSourceRaw:
+        return "RAW";
+    case WiSourceProbe:
+        return "PROBE";
+    case WiSourceTool:
+        return "TOOL";
+    case WiSourceBeacon:
+    default:
+        return "SCAN";
+    }
+}
 
 static inline RoomSweepSetGroup room_sweep_set_group_of(uint8_t setting) {
     switch(setting) {
@@ -43,6 +100,7 @@ static inline RoomSweepSetGroup room_sweep_set_group_of(uint8_t setting) {
         return RoomSweepSetGroupFeedback;
     case RoomSweepSetRescan:
     case RoomSweepSetScanWin:
+    case RoomSweepSetWifiSrc:
         return RoomSweepSetGroupWireless;
     case RoomSweepSetExtBand:
     case RoomSweepSetSpiPath:
@@ -55,6 +113,7 @@ static inline RoomSweepSetGroup room_sweep_set_group_of(uint8_t setting) {
     case RoomSweepSetBaseline:
     case RoomSweepSetDump:
     case RoomSweepSetFullSweep:
+    case RoomSweepSetWatchlist:
         return RoomSweepSetGroupSession;
     default:
         return RoomSweepSetGroupFeedback;
