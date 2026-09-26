@@ -124,6 +124,79 @@ static inline uint8_t room_sweep_ui_name_clip_px(uint8_t tag_chars) {
 }
 
 /*
+ * Duplicate-SSID "!" marker column (Wi list, Phase 6). One FontKeyboard
+ * glyph, ASCII-safe. With no hint tag it sits on the tag column itself;
+ * with a tag it moves one glyph to the tag's left so the two never share
+ * pixels (the "!" goes immediately left of the tag column).
+ */
+static inline uint8_t room_sweep_ui_mark_x(uint8_t tag_chars) {
+    if(tag_chars == 0) return room_sweep_ui_hint_x(1);
+    return (uint8_t)(room_sweep_ui_hint_x(tag_chars) - UI_FONT_KEYBOARD_PX);
+}
+
+/*
+ * Name clip width for a row drawing BOTH a tag_chars-long hint tag and the
+ * "!" marker (tag_chars may be 0 = tag absent). The mark always costs one
+ * glyph plus the existing one-glyph gap.
+ */
+static inline uint8_t room_sweep_ui_name_clip_px_marked(uint8_t tag_chars) {
+    uint8_t mark_x = room_sweep_ui_mark_x(tag_chars);
+    if(mark_x <= (uint8_t)(UI_ROW_NAME_X + UI_FONT_KEYBOARD_PX)) return 0;
+    return (uint8_t)(mark_x - UI_FONT_KEYBOARD_PX - UI_ROW_NAME_X);
+}
+
+/*
+ * Phase 9 watchlist "WATCH" badge: the widest list-row tag (5 FontKeyboard
+ * glyphs) hugging the right text edge. When it shares a row with a hint
+ * tag, the tag moves one glyph left of the badge; the Phase 6 "!" mark
+ * moves one glyph left of that (or of the badge when no hint tag). All
+ * widths come from the same chain the mark/tag pair already uses, so the
+ * clipped name can never reach the tag strip.
+ */
+#define UI_ROW_WATCH_CHARS 5
+
+/* X of the WATCH badge's first glyph (right-aligned at the text edge). */
+static inline uint8_t room_sweep_ui_watch_x(void) {
+    return room_sweep_ui_right_align_x(
+        UI_TEXT_RIGHT_EDGE,
+        (uint8_t)((uint32_t)UI_ROW_WATCH_CHARS * UI_FONT_KEYBOARD_PX));
+}
+
+/*
+ * X of a tag_chars-long hint tag when a WATCH badge shares the row (call
+ * only with tag_chars > 0): the tag ends one glyph left of the badge.
+ */
+static inline uint8_t room_sweep_ui_hint_x_watched(uint8_t tag_chars) {
+    uint8_t watch_x = room_sweep_ui_watch_x();
+    uint32_t tag_px = (uint32_t)tag_chars * UI_FONT_KEYBOARD_PX;
+    if((uint32_t)watch_x < tag_px + UI_FONT_KEYBOARD_PX) return 0;
+    return (uint8_t)(watch_x - tag_px - UI_FONT_KEYBOARD_PX);
+}
+
+/* "!" mark x on a row that also carries the WATCH badge (tag may be 0). */
+static inline uint8_t room_sweep_ui_mark_x_watched(uint8_t tag_chars) {
+    uint8_t tag_x = tag_chars ? room_sweep_ui_hint_x_watched(tag_chars) :
+                                room_sweep_ui_watch_x();
+    if(tag_x < UI_FONT_KEYBOARD_PX) return 0;
+    return (uint8_t)(tag_x - UI_FONT_KEYBOARD_PX);
+}
+
+/* Name clip on a WATCH row without a "!" mark (BLE rows: no mark). */
+static inline uint8_t room_sweep_ui_name_clip_px_watch(uint8_t tag_chars) {
+    uint8_t left_x = tag_chars ? room_sweep_ui_hint_x_watched(tag_chars) :
+                                 room_sweep_ui_watch_x();
+    if(left_x <= (uint8_t)(UI_ROW_NAME_X + UI_FONT_KEYBOARD_PX)) return 0;
+    return (uint8_t)(left_x - UI_FONT_KEYBOARD_PX - UI_ROW_NAME_X);
+}
+
+/* Name clip on a WATCH row that also draws the "!" mark (Wi BEACON rows). */
+static inline uint8_t room_sweep_ui_name_clip_px_watch_marked(uint8_t tag_chars) {
+    uint8_t mark_x = room_sweep_ui_mark_x_watched(tag_chars);
+    if(mark_x <= (uint8_t)(UI_ROW_NAME_X + UI_FONT_KEYBOARD_PX)) return 0;
+    return (uint8_t)(mark_x - UI_FONT_KEYBOARD_PX - UI_ROW_NAME_X);
+}
+
+/*
  * Footer/hint copy budget. FontKeyboard averages ~6px/char, so a hint drawn
  * at UI_MARGIN_X must stay <= UI_HINT_MAX_CHARS to clear the 128px screen
  * (anything longer clips at the right edge — QA 2026-09-04). The static
@@ -150,6 +223,19 @@ static inline uint8_t room_sweep_ui_name_clip_px(uint8_t tag_chars) {
 #define UI_HINT_TX_DISARM "B=disarm"
 #define UI_HINT_TX_CARRIER "Carrier, no replay"
 #define UI_HINT_BT_ADV "adv OK=lock HOK=scan"
+#define UI_HINT_RF_WATCH "U/D:mode H:card"
+/* Wi capture sources (Phase 4/5/10): the "listening" copy under an empty
+ * table and the TOOL truth line (one line of honest copy — like attack
+ * tooling, never proof of intent). */
+#define UI_HINT_WI_RAW_IDLE "every transmitter"
+#define UI_HINT_WI_PROBE_IDLE "probe requests"
+#define UI_HINT_WI_TOOL_IDLE "esp/pwn adverts"
+#define UI_HINT_WI_TOOL_TRUTH "not proof of intent"
+/* Phase 9 watchlist: the flag affordance on Wi/BT detail pages while the
+ * opt-in watchlist is ON, plus the on-watch and list-full lines. */
+#define UI_HINT_DETAIL_WATCH "OK=lock HoldUp=watch"
+#define UI_HINT_WATCH_ON "ON WATCHLIST"
+#define UI_HINT_WATCH_FULL "WATCH FULL"
 
 #define UI_ASSERT_HINT(s) \
     _Static_assert( \
@@ -172,3 +258,51 @@ UI_ASSERT_HINT(UI_HINT_TX_ARMED);
 UI_ASSERT_HINT(UI_HINT_TX_DISARM);
 UI_ASSERT_HINT(UI_HINT_TX_CARRIER);
 UI_ASSERT_HINT(UI_HINT_BT_ADV);
+UI_ASSERT_HINT(UI_HINT_RF_WATCH);
+UI_ASSERT_HINT(UI_HINT_WI_RAW_IDLE);
+UI_ASSERT_HINT(UI_HINT_WI_PROBE_IDLE);
+UI_ASSERT_HINT(UI_HINT_WI_TOOL_IDLE);
+UI_ASSERT_HINT(UI_HINT_WI_TOOL_TRUTH);
+UI_ASSERT_HINT(UI_HINT_DETAIL_WATCH);
+UI_ASSERT_HINT(UI_HINT_WATCH_ON);
+UI_ASSERT_HINT(UI_HINT_WATCH_FULL);
+
+/*
+ * RF survey bar strip. Every preset needs a bar on the 128px panel, so the
+ * stride is derived from the preset count rather than hand-tuned: 16 presets
+ * keep the historical 8px stride (bars flush to both edges), 20 presets get
+ * 6px (5px bar + 1px gap). A bar is one pixel narrower than its stride so
+ * neighbouring bars never share an edge pixel.
+ */
+static inline uint8_t room_sweep_ui_rf_bar_stride(uint8_t channels) {
+    if(channels == 0) return 0;
+    return (uint8_t)(UI_W / channels);
+}
+
+static inline uint8_t room_sweep_ui_rf_bar_width(uint8_t channels) {
+    uint8_t stride = room_sweep_ui_rf_bar_stride(channels);
+    return stride > 0 ? (uint8_t)(stride - 1U) : 0;
+}
+
+static inline uint8_t room_sweep_ui_rf_bar_x(uint8_t channel, uint8_t channels) {
+    return (uint8_t)((uint32_t)channel * room_sweep_ui_rf_bar_stride(channels));
+}
+
+/*
+ * Label stride on the strip: every nth preset gets a 3-4 char label under its
+ * bar. Five labels is the budget (5 chars/glyph, 4-char labels), so the step
+ * is ceil(channels / 5) — 4 for both 16 and 20 presets. Every fifth label
+ * position (0, step, 2*step, ...) must still land inside the text margin;
+ * tests/test_ui_layout.c pins that for the preset count in use.
+ */
+static inline uint8_t room_sweep_ui_rf_label_step(uint8_t channels) {
+    if(channels == 0) return 1;
+    return (uint8_t)((channels + 4U) / 5U);
+}
+
+/* Label count drawn on the strip (indices 0, step, 2*step, ...). */
+static inline uint8_t room_sweep_ui_rf_label_count(uint8_t channels) {
+    uint8_t step = room_sweep_ui_rf_label_step(channels);
+    if(step == 0) return 0;
+    return (uint8_t)((channels + step - 1U) / step);
+}

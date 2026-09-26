@@ -60,9 +60,16 @@ typedef struct {
     uint32_t wifi_observations;
     uint32_t wifi_windows;
     int wifi_strongest_rssi;
+    /* Phase 7: the strongest Wi-Fi/BLE device's own observed range, lifted
+     * from the min=/max= tokens of its strongest observation. 0 = not seen;
+     * the range prints only when a real spread exists (min < max). */
+    int wifi_strongest_min;
+    int wifi_strongest_max;
     uint32_t ble_observations;
     uint32_t ble_windows;
     int ble_strongest_rssi;
+    int ble_strongest_min;
+    int ble_strongest_max;
     uint32_t nrf_observations; /* completed energy-scan passes */
     uint32_t nrf_active_channels;
     uint8_t nrf_top_channel;
@@ -76,6 +83,15 @@ typedef struct {
     uint32_t hint_observations;
     char vendors[ROOM_SWEEP_REPORT_VENDORS_MAX][ROOM_SWEEP_REPORT_VENDOR_LEN];
     uint8_t vendor_count;
+    /* Phase 6: duplicate-SSID correlation. Groups found in the AP table
+     * during the session (>= 2 BSSIDs sharing one exact SSID). A LEAD —
+     * mesh/roaming shares names legitimately — never an attack claim. */
+    uint8_t rogue_groups;
+    /* Phase 9: opt-in cross-session watchlist. The section prints only when
+     * the feature was enabled during the session; the count is DISTINCT
+     * watched identities heard, not observation counts. */
+    bool watchlist_enabled;
+    uint32_t watchlist_matches;
 } RoomSweepReportFindings;
 
 static inline void room_sweep_report_init(RoomSweepReportState* state) {
@@ -389,14 +405,28 @@ static inline size_t room_sweep_report_append_findings(
     }
 
     if(f->wifi_observations > 0) {
-        room_sweep_report_append(
-            output,
-            capacity,
-            &used,
-            "Wi-Fi: %lu AP beacons heard across %lu scan windows; strongest about %ddBm.\n",
-            (unsigned long)f->wifi_observations,
-            (unsigned long)f->wifi_windows,
-            f->wifi_strongest_rssi);
+        if(f->wifi_strongest_min < f->wifi_strongest_max) {
+            room_sweep_report_append(
+                output,
+                capacity,
+                &used,
+                "Wi-Fi: %lu AP beacons heard across %lu scan windows; strongest about "
+                "%ddBm (range %d..%d).\n",
+                (unsigned long)f->wifi_observations,
+                (unsigned long)f->wifi_windows,
+                f->wifi_strongest_rssi,
+                f->wifi_strongest_min,
+                f->wifi_strongest_max);
+        } else {
+            room_sweep_report_append(
+                output,
+                capacity,
+                &used,
+                "Wi-Fi: %lu AP beacons heard across %lu scan windows; strongest about %ddBm.\n",
+                (unsigned long)f->wifi_observations,
+                (unsigned long)f->wifi_windows,
+                f->wifi_strongest_rssi);
+        }
     } else {
         room_sweep_report_append(
             output,
@@ -407,14 +437,28 @@ static inline size_t room_sweep_report_append_findings(
     }
 
     if(f->ble_observations > 0) {
-        room_sweep_report_append(
-            output,
-            capacity,
-            &used,
-            "BLE: %lu advertisements heard across %lu scan windows; strongest about %ddBm.\n",
-            (unsigned long)f->ble_observations,
-            (unsigned long)f->ble_windows,
-            f->ble_strongest_rssi);
+        if(f->ble_strongest_min < f->ble_strongest_max) {
+            room_sweep_report_append(
+                output,
+                capacity,
+                &used,
+                "BLE: %lu advertisements heard across %lu scan windows; strongest about "
+                "%ddBm (range %d..%d).\n",
+                (unsigned long)f->ble_observations,
+                (unsigned long)f->ble_windows,
+                f->ble_strongest_rssi,
+                f->ble_strongest_min,
+                f->ble_strongest_max);
+        } else {
+            room_sweep_report_append(
+                output,
+                capacity,
+                &used,
+                "BLE: %lu advertisements heard across %lu scan windows; strongest about %ddBm.\n",
+                (unsigned long)f->ble_observations,
+                (unsigned long)f->ble_windows,
+                f->ble_strongest_rssi);
+        }
     } else {
         room_sweep_report_append(
             output,
@@ -443,6 +487,33 @@ static inline size_t room_sweep_report_append_findings(
             &used,
             "Hints (name-pattern guesses only): %lu observation(s).\n",
             (unsigned long)f->hint_observations);
+    }
+    if(f->rogue_groups > 0) {
+        room_sweep_report_append(
+            output,
+            capacity,
+            &used,
+            "Possible cloned SSIDs (same name, different BSSID): %u group(s).\n",
+            (unsigned)f->rogue_groups);
+        room_sweep_report_append(
+            output,
+            capacity,
+            &used,
+            "Mesh/roaming systems legitimately share one name across addresses - this flag is a lead, not a verdict.\n");
+    }
+
+    if(f->watchlist_enabled) {
+        room_sweep_report_append(
+            output,
+            capacity,
+            &used,
+            "Watchlist matches: %lu\n",
+            (unsigned long)f->watchlist_matches);
+        room_sweep_report_append(
+            output,
+            capacity,
+            &used,
+            "The watchlist is this app's only persistent-identity feature: it is opt-in and holds only the addresses you flagged by hand. A matching address is not proof it is the same physical device.\n");
     }
 
     if(f->nrf_observations > 0 || f->nrf_active_channels > 0) {

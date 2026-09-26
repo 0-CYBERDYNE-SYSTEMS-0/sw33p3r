@@ -1,6 +1,6 @@
 # Room Sweep CI.
 #
-# Runs the repo's single quality gate, ./init.sh: all 18 host test suites
+# Runs the repo's single quality gate, ./init.sh: all 27 host test suites
 # compiled with cc -std=c11 -Wall -Wextra -Werror (some also -pedantic),
 # then the ufbt firmware build of the FAP.
 #

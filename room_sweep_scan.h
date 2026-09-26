@@ -30,8 +30,8 @@ static inline bool marauder_scan_should_error(
 }
 
 /*
- * Captured BFFB Marauder BLE (headless Dev Board Pro) looks like:
- *   ">  RSSI: -37 Device: 02:5a:9c:11:22:33 RSSI: -50 Device: 12:34:…"
+ * A redacted BFFB Marauder BLE fixture (headless Dev Board Pro) looks like:
+ *   ">  RSSI: -37 Device: 02:44:55:66:77:01 RSSI: -50 Device: 12:34:…"
  * Wiki form "-60 Device: name" may also appear. No reliable '\n' between
  * records; '#stopscan' can abut the last MAC. Room Sweep frames and splits.
  */
