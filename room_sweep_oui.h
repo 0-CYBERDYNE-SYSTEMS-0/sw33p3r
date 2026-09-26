@@ -150,19 +150,49 @@ static inline bool room_sweep_oui_mac_valid(const char* mac) {
     return true;
 }
 
+/* First octet of a VALID canonical MAC string (any case). Only call after
+ * room_sweep_oui_mac_valid — no shape checking here. */
+static inline uint8_t room_sweep_oui_mac_first_octet(const char* mac) {
+    char hi = mac[0];
+    char lo = mac[1];
+    return (uint8_t)
+        ((((hi <= '9') ? hi - '0' : ((hi | 0x20) - 'a' + 10)) << 4) |
+         ((lo <= '9') ? lo - '0' : ((lo | 0x20) - 'a' + 10)));
+}
+
 /*
- * True when the MAC is locally administered (first octet & 0x02) — the app
- * displays these as "randomized". Malformed MAC strings are never
- * randomized: they return false.
+ * Wi-Fi randomized test, unchanged: true when the MAC is locally
+ * administered (first octet & 0x02) — the app displays these as
+ * "randomized". Registered OUIs never set that bit, so this is safe to
+ * apply to Wi-Fi BSSIDs. Malformed MAC strings are never randomized: they
+ * return false. Do NOT use this on BLE addresses — see the _ble variant.
  */
 static inline bool room_sweep_oui_is_randomized(const char* mac) {
     if(!room_sweep_oui_mac_valid(mac)) return false;
-    char hi = mac[0];
-    char lo = mac[1];
-    uint8_t octet = (uint8_t)
-        ((((hi <= '9') ? hi - '0' : ((hi | 0x20) - 'a' + 10)) << 4) |
-         ((lo <= '9') ? lo - '0' : ((lo | 0x20) - 'a' + 10)));
-    return (octet & 0x02) != 0;
+    return (room_sweep_oui_mac_first_octet(mac) & 0x02) != 0;
+}
+
+/*
+ * BLE randomized test: a BLE random address carries its subtype in the two
+ * TOP bits of the first octet, and the random-STATIC subtype (11) never
+ * sets the 0x02 locally-administered bit — so a Wi-Fi-only test under-
+ * reports BLE randomization. True when the address is locally administered
+ * (first octet & 0x02) OR random-static ((first_octet & 0xC0) == 0xC0).
+ * Malformed MAC strings are never randomized: they return false.
+ *
+ * Truth note: the 01/00 top-bit subtypes (resolvable / non-resolvable
+ * private) cannot be detected from the MAC alone — testing bit 6 would flag
+ * every public OUI in 0x40-0x7F (Apple's 4C:57:CA among them) as randomized.
+ * The discriminator is the address TYPE in the advertising PDU header, and
+ * the `sniffbt` text stream does not carry it, so this stays a documented
+ * under-report rather than a wrong label. A few real registered OUIs also
+ * share the 11 pattern — room_sweep_oui_evidence_ble gives a curated table
+ * hit precedence over this test for exactly that reason.
+ */
+static inline bool room_sweep_oui_is_randomized_ble(const char* mac) {
+    if(!room_sweep_oui_mac_valid(mac)) return false;
+    uint8_t octet = room_sweep_oui_mac_first_octet(mac);
+    return (octet & 0x02) != 0 || (octet & 0xC0) == 0xC0;
 }
 
 /*
@@ -203,4 +233,22 @@ static inline const char* room_sweep_oui_evidence(const char* mac) {
     if(room_sweep_oui_is_randomized(mac)) return ROOM_SWEEP_OUI_RANDOMIZED;
     const char* label = room_sweep_oui_lookup(mac);
     return label ? label : ROOM_SWEEP_OUI_UNLISTED;
+}
+
+/*
+ * BLE evidence token, same contract as room_sweep_oui_evidence with BLE
+ * randomization semantics. Precedence: (1) a curated OUI hit ALWAYS wins —
+ * the table holds real registered prefixes whose first octet has both top
+ * bits set (f4:f5:e8 Google, c8-range switches), and a vendor name must
+ * never be swallowed by the random-static test; (2) "randomized" for
+ * locally administered / random-static addresses; (3) "unlisted".
+ * NULL when there is no usable MAC (caller omits the token) — identical to
+ * the Wi-Fi evidence function's degenerate path.
+ */
+static inline const char* room_sweep_oui_evidence_ble(const char* mac) {
+    if(!room_sweep_oui_mac_valid(mac)) return NULL;
+    const char* label = room_sweep_oui_lookup(mac);
+    if(label) return label;
+    if(room_sweep_oui_is_randomized_ble(mac)) return ROOM_SWEEP_OUI_RANDOMIZED;
+    return ROOM_SWEEP_OUI_UNLISTED;
 }

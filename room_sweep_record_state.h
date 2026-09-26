@@ -16,7 +16,13 @@
 
 #define ROOM_SWEEP_RECORD_DEFAULT_MAX_RECORDS 2048U
 #define ROOM_SWEEP_RECORD_DEFAULT_MAX_BYTES (256U * 1024U)
-#define ROOM_SWEEP_RECORD_MAX_IDENTIFIER_MAP 32U
+/* Fingerprint-map slots. One slot per distinct identity in a session, and a
+ * normal room already needs: 20 RF preset labels (a baseline snapshot alone
+ * is 20 rows) + up to 12 Wi-Fi APs + 12 BLE devices + the system/GPS kinds.
+ * At 32 the map saturated on device (2026-09-21) and later rows came out
+ * with a REDACTED id - safe, but the evidence lost its correlation. 64
+ * leaves headroom; saturation is still handled honestly (refused, counted). */
+#define ROOM_SWEEP_RECORD_MAX_IDENTIFIER_MAP 64U
 #define ROOM_SWEEP_RECORD_NAME_MAX 48U
 
 typedef enum {
@@ -63,9 +69,31 @@ typedef enum {
     RoomSweepRecordIdBle,
     RoomSweepRecordIdRf,
     RoomSweepRecordIdGps,
+    /* Phase 4/5/10 Wi capture sources — same fingerprint map, distinct
+     * per-session ordinal prefixes so a raw station / probe client / tool
+     * row never shares an ordinal with an AP row. */
+    RoomSweepRecordIdSta,
+    RoomSweepRecordIdProbe,
+    RoomSweepRecordIdTool,
     RoomSweepRecordIdOther,
+    /* Phase 8 RF burst watch: its id is a FIXED label, not an identity to
+     * redact. Literal kinds are emitted verbatim and never consume a
+     * fingerprint-map slot — otherwise a burst row would spend a slot that a
+     * real device identity needs. */
+    RoomSweepRecordIdWatch,
     RoomSweepRecordIdKindCount,
 } RoomSweepRecordIdKind;
+
+/*
+ * The fixed label a literal kind emits, or NULL when the kind is an identity
+ * kind. A literal row whose raw id does not match is REFUSED whole (never
+ * truncated into validity), so a MAC can never reach the id column through a
+ * row that was mistagged as literal.
+ */
+static inline const char* room_sweep_record_identifier_literal(
+    RoomSweepRecordIdKind kind) {
+    return kind == RoomSweepRecordIdWatch ? "WATCH" : NULL;
+}
 
 typedef struct {
     uint64_t fingerprint;
@@ -107,8 +135,18 @@ static inline const char* room_sweep_record_identifier_prefix(RoomSweepRecordIdK
         return "RF";
     case RoomSweepRecordIdGps:
         return "GPS";
+    case RoomSweepRecordIdSta:
+        return "STA";
+    case RoomSweepRecordIdProbe:
+        return "PR";
+    case RoomSweepRecordIdTool:
+        return "TL";
     case RoomSweepRecordIdOther:
         return "ID";
+    case RoomSweepRecordIdWatch:
+        /* Literal kind: it never reaches the ordinal path, so it has no
+         * prefix. Returning NULL keeps that explicit. */
+        return NULL;
     case RoomSweepRecordIdKindCount:
     default:
         return NULL;
@@ -130,6 +168,16 @@ static inline bool room_sweep_record_identifier_ref(
         out[1] = '\0';
         return true;
     }
+    /* Literal kinds: emit the fixed label, spend no map slot. A mismatch is
+     * refused rather than coerced. */
+    const char* literal = room_sweep_record_identifier_literal(kind);
+    if(literal) {
+        if(strcmp(raw, literal) != 0) return false;
+        if(strlen(literal) + 1 > out_size) return false;
+        memcpy(out, literal, strlen(literal) + 1);
+        return true;
+    }
+
     if(!map) return false;
 
     uint64_t fingerprint = room_sweep_record_identifier_fingerprint(kind, raw);

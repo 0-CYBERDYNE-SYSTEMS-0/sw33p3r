@@ -54,6 +54,17 @@ void session_log_note_drop(uint32_t count);
 void session_log_note_storage_failure(void);
 void session_log_note_sensor_unavailable(uint8_t sensor_mask);
 
+/* Phase 6: report the current duplicate-SSID group count found in the AP
+ * table. The session keeps the MAXIMUM seen, so a cloned-SSID pattern that
+ * existed at any point in the session reaches the Room Report. Main-loop-only. */
+void session_log_note_rogue_groups(uint8_t groups);
+
+/* Phase 9: opt-in cross-session watchlist. `enabled` latches the report
+ * section for the session (a feature flipped ON mid-session is reported);
+ * `distinct_matches` keeps the MAXIMUM distinct watched identities heard.
+ * Main-loop-only. */
+void session_log_note_watchlist(bool enabled, uint32_t distinct_matches);
+
 /* Explicit raw UART snapshot; never overwrites an earlier dump. */
 bool session_log_write_dump(
     Storage* storage,

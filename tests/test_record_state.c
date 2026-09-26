@@ -70,6 +70,68 @@ static void test_identifier_redaction(void) {
         "missing identifier is represented without raw data");
 }
 
+/*
+ * Phase 8 burst watch: its id is a fixed label, not an identity. It must come
+ * out verbatim, must NOT consume a fingerprint-map slot (a burst row would
+ * otherwise spend the slot a real device identity needs), and a mismatch must
+ * be refused rather than coerced — that is what keeps a MAC from reaching the
+ * id column through a mistagged row.
+ */
+static void test_literal_watch_id(void) {
+    RoomSweepRecordIdentifierMap map;
+    room_sweep_record_identifier_map_init(&map);
+    char out[16];
+
+    check(
+        room_sweep_record_identifier_ref(
+            &map, RoomSweepRecordIdWatch, "WATCH", out, sizeof(out)) &&
+            strcmp(out, "WATCH") == 0,
+        "literal WATCH id is emitted verbatim, not as an ordinal");
+    check(
+        room_sweep_record_identifier_ref(
+            &map, RoomSweepRecordIdWatch, "WATCH", out, sizeof(out)) &&
+            strcmp(out, "WATCH") == 0,
+        "literal WATCH stays stable across rows");
+    check(
+        !room_sweep_record_identifier_ref(
+            &map, RoomSweepRecordIdWatch, "aa:bb:cc:dd:ee:ff", out, sizeof(out)),
+        "a MAC mistagged as the literal kind is refused, not emitted");
+    check(
+        !room_sweep_record_identifier_ref(
+            &map, RoomSweepRecordIdWatch, "watch", out, sizeof(out)),
+        "literal match is exact-case: near misses are refused");
+    check(
+        !room_sweep_record_identifier_ref(
+            &map, RoomSweepRecordIdWatch, "WATCH", out, 4),
+        "literal id shorter than its label is refused, never truncated");
+
+    /* No slot spent: a full identity run still fits exactly the map size. */
+    RoomSweepRecordIdentifierMap map2;
+    room_sweep_record_identifier_map_init(&map2);
+    char ref[16];
+    bool all_ok = true;
+    for(uint32_t i = 0; i < ROOM_SWEEP_RECORD_MAX_IDENTIFIER_MAP; i++) {
+        char raw[32];
+        snprintf(raw, sizeof(raw), "mac-%lu", (unsigned long)i);
+        if(!room_sweep_record_identifier_ref(
+               &map2, RoomSweepRecordIdAccessPoint, raw, ref, sizeof(ref)))
+            all_ok = false;
+    }
+    check(all_ok, "the map holds one entry per real identity slot");
+    check(
+        room_sweep_record_identifier_ref(
+            &map2, RoomSweepRecordIdWatch, "WATCH", ref, sizeof(ref)) &&
+            strcmp(ref, "WATCH") == 0,
+        "a literal id still works after the identity map is full");
+    check(
+        !room_sweep_record_identifier_ref(
+            &map2, RoomSweepRecordIdAccessPoint, "one-mac-too-many", ref, sizeof(ref)),
+        "a saturated map still refuses a new identity honestly");
+    check(
+        ROOM_SWEEP_RECORD_MAX_IDENTIFIER_MAP >= 20U + 12U + 12U,
+        "map is sized for a full baseline plus both wireless tables");
+}
+
 static void test_bounded_lifecycle(void) {
     RoomSweepRecordState state;
     room_sweep_record_state_init(&state, 2, 10);
@@ -102,6 +164,7 @@ static void test_storage_failure(void) {
 int main(void) {
     test_filenames();
     test_identifier_redaction();
+    test_literal_watch_id();
     test_bounded_lifecycle();
     test_storage_failure();
     printf("RESULT: %s (%d failure%s)\n", failures ? "FAIL" : "ALL PASS", failures, failures == 1 ? "" : "s");

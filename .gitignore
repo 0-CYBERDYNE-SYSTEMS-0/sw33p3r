@@ -14,6 +14,10 @@ __pycache__/
 .vscode/
 .DS_Store
 
+# Local agent settings and macOS resource-fork metadata
+.claude/
+._*
+
 # Diagnostic scratch scripts (kept in history, not tracked going forward)
 diag_*.py
 bisect_ladder.py

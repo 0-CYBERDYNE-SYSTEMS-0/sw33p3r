@@ -106,6 +106,56 @@ int main(void) {
     check("evidence: malformed MAC is NULL", room_sweep_oui_evidence("junk") == NULL);
 
     /* ---------------------------------------------------------- */
+    /* BLE randomized detection (0x02 OR top bits 0xC0) — found   */
+    /* missing during on-device verification: BLE random-STATIC   */
+    /* addresses set the two top bits, not the 0x02 bit.          */
+    /* ---------------------------------------------------------- */
+    check("ble: c3 random-static", room_sweep_oui_is_randomized_ble("c3:11:22:33:44:55"));
+    check("ble: f0 random-static when unlisted",
+          room_sweep_oui_is_randomized_ble("f0:11:22:33:44:55"));
+    check("ble: fe random-static", room_sweep_oui_is_randomized_ble("FE:DC:BA:98:76:54"));
+    check("ble: 02 bit still randomized on BLE",
+          room_sweep_oui_is_randomized_ble("02:00:00:00:00:00"));
+    check("ble: de randomized both ways", room_sweep_oui_is_randomized_ble("de:ad:be:ef:00:01"));
+    /* 5x top-bit patterns 01/00 are resolvable/non-resolvable private —
+     * NOT detectable from the MAC alone (documented limit, see guide). */
+    check("ble: 59 resolvable-private not flagged",
+          !room_sweep_oui_is_randomized_ble("59:81:ec:aa:bb:cc"));
+    check("ble: 40 nonresolvable-private not flagged",
+          !room_sweep_oui_is_randomized_ble("40:11:22:33:44:55"));
+    /* Why the 01 pattern cannot be flagged: a PUBLIC OUI can start there too
+     * (Apple 4C:57:CA is 0b01001100). Flagging it would mislabel real
+     * vendors, so the app under-reports instead. */
+    check("ble: public 01-pattern OUI (Apple 4C) not flagged",
+          !room_sweep_oui_is_randomized_ble("4c:57:ca:aa:bb:cc"));
+    /* Wi-Fi semantics unchanged: registered 0xC0-pattern OUIs are NOT
+     * randomized for Wi-Fi (0x02 test only). */
+    check("wifi: c8:4f:86 not randomized", !room_sweep_oui_is_randomized("c8:4f:86:12:34:56"));
+    check("wifi: f4:f5:e8 not randomized", !room_sweep_oui_is_randomized("f4:f5:e8:00:00:01"));
+    check("wifi: f0:18:98 not randomized", !room_sweep_oui_is_randomized("f0:18:98:00:00:01"));
+    /* Malformed inputs match the Wi-Fi function's degenerate path. */
+    check("ble: NULL not randomized", !room_sweep_oui_is_randomized_ble(NULL));
+    check("ble: empty not randomized", !room_sweep_oui_is_randomized_ble(""));
+    check("ble: malformed not randomized", !room_sweep_oui_is_randomized_ble("c3-11-22-33-44-55"));
+
+    /* ---------------------------------------------------------- */
+    /* BLE evidence token: curated OUI wins over random-static    */
+    /* ---------------------------------------------------------- */
+    check_str("ble evidence: random-static unlisted", room_sweep_oui_evidence_ble("c3:11:22:33:44:55"), "randomized");
+    check_str("ble evidence: f0 unlisted -> randomized", room_sweep_oui_evidence_ble("f0:11:22:33:44:55"), "randomized");
+    /* f4:f5:e8 is a REAL registered Google OUI whose first octet has both
+     * top bits set — the vendor label must win, never "randomized". */
+    check_str("ble evidence: real OUI beats random-static", room_sweep_oui_evidence_ble("f4:f5:e8:12:34:56"), "Google");
+    check_str("ble evidence: apple f0 prefix wins", room_sweep_oui_evidence_ble("f0:18:98:00:00:01"), "Apple");
+    check_str("ble evidence: espressif wins", room_sweep_oui_evidence_ble("24:0a:c4:12:34:56"), "Espressif");
+    check_str("ble evidence: well-formed no hit no flags -> unlisted",
+              room_sweep_oui_evidence_ble("59:81:ec:aa:bb:cc"), "unlisted");
+    /* Degenerate path identical to the Wi-Fi evidence function. */
+    check("ble evidence: no MAC is NULL", room_sweep_oui_evidence_ble(NULL) == NULL);
+    check("ble evidence: malformed MAC is NULL", room_sweep_oui_evidence_ble("junk") == NULL);
+    check("ble evidence: empty MAC is NULL", room_sweep_oui_evidence_ble("") == NULL);
+
+    /* ---------------------------------------------------------- */
     /* Table hygiene: curated means verified                      */
     /* ---------------------------------------------------------- */
     check("oui: table has entries", ROOM_SWEEP_OUI_COUNT >= 50);

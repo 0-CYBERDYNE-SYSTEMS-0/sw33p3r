@@ -24,10 +24,11 @@ typedef enum {
  * RF sub-modes (cycled with Up/Down on RF tab)
  * --------------------------------------------------------------------------- */
 typedef enum {
-    RfSubSurvey,     // 16-point preset sweep (fast room check)
+    RfSubSurvey,     // 20-point preset sweep (fast room check)
     RfSubSweep,      // Coarse band sweep with progress + peak hold
     RfSubPeak,       // Fine refinement around a detected peak
-    RfSubWaterfall,  // Scrolling spectrum history of the 16 presets (passive)
+    RfSubWaterfall,  // Scrolling spectrum history of the 20 presets (passive)
+    RfSubWatch,      // Burst watch: locked on ONE frequency, logs bursts (passive)
     RfSubCount
 } RfSubMode;
 
@@ -42,30 +43,11 @@ typedef enum {
 } TxState;
 
 /* ---------------------------------------------------------------------------
- * RF (sub-GHz) survey configuration — 16 preset channels
+ * RF (sub-GHz) survey configuration — 20 preset channels.
+ * The preset tables live in room_sweep_rf_presets.h (Flipper-free) so the
+ * host suite can pin count/label-width/band-sync invariants.
  * --------------------------------------------------------------------------- */
-#define RF_NUM_CHANNELS   16
-#define RF_SAMPLES_PER_CH 8
-
-/* ISM / common surveillance frequencies (Hz), within CC1101 bands */
-static const uint32_t rf_channels[RF_NUM_CHANNELS] = {
-    303875000, 315000000, 330000000, 345000000,
-    390000000, 418000000, 433075000, 433420000,
-    433920000, 434420000, 434775000, 420000000,
-    450000000, 868350000, 915000000, 925000000,
-};
-
-static const char* rf_labels[RF_NUM_CHANNELS] = {
-    "304", "315", "330", "345",
-    "390", "418", "433", "433b",
-    "434", "434b", "435", "420",
-    "450", "868", "915", "925",
-};
-
-/* 0=low300, 1=mid400, 2=high900 — for EXT dual-CC1101 band filter */
-static const uint8_t rf_channel_band[RF_NUM_CHANNELS] = {
-    0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2,
-};
+#include "room_sweep_rf_presets.h"
 
 typedef enum {
     ExtBandAuto = 0,
@@ -126,10 +108,18 @@ static const RfBand rf_bands[RF_BAND_COUNT] = {
 #define MARAUDER_MAX_LINES   24 /* deeper ring — AP/BLE bursts drop less */
 
 /* JCMK CLI: sniffbeacon prints "-RSSI Ch: n MAC ESSID:" (WIFI_SCAN_AP).
- * sniffbt = BT_SNIFF_CMD. */
+ * sniffbt = BT_SNIFF_CMD. Phase 4/5/10 sources (2026-09-20 expansion):
+ * sniffraw (per-frame transmitter radar), sniffprobe (client probe
+ * requests), sniffesp/sniffpwn (hostile-tooling beacons; alternating
+ * windows). All receive-side scans — formats pinned in
+ * docs/BFFB_MOMENTUM.md. */
 #define MARAUDER_CMD_WIFI    "sniffbeacon"
 #define MARAUDER_CMD_BLE     "sniffbt"
 #define MARAUDER_CMD_STOP    "stopscan"
+#define MARAUDER_CMD_RAW     "sniffraw"
+#define MARAUDER_CMD_PROBE   "sniffprobe"
+#define MARAUDER_CMD_ESP     "sniffesp"
+#define MARAUDER_CMD_PWN     "sniffpwn"
 
 /* GPIO GPS (LPUART). Stock modules default 9600; some boards use 115200. */
 #define GPS_GPIO_BAUD_PRIMARY   9600UL
@@ -153,7 +143,10 @@ typedef enum {
 #define MAX_WIFI_APS  12
 #define MAX_BLE_DEVS  12
 
-typedef struct {
+/* Tagged struct: room_sweep_rogue.h forward-declares this tag so its pure
+ * analysis stays Flipper-header-free (host tests re-declare the same
+ * layout; room_sweep_rogue.h only touches ssid/bssid/valid). */
+typedef struct RoomSweepWifiAp {
     char ssid[33];       // SSID (max 32 chars + null)
     int8_t rssi;         // signal strength dBm
     uint8_t channel;     // WiFi channel
@@ -161,6 +154,14 @@ typedef struct {
     uint32_t first_seen; // tick when first observed
     uint32_t last_seen;  // tick when last updated
     uint16_t observations;
+    /* Per-device RSSI evidence (phase 7, room_sweep_stats.h): true min/max
+     * dBm plus SIGMA(rssi + 120) for the rounded average. */
+    int8_t rssi_min;
+    int8_t rssi_max;
+    uint32_t rssi_sum;
+    /* Phase 5: SSID recovered from a client probe request while this row
+     * still read "Hidden/unknown". One-shot; the row keeps its history. */
+    bool hidden_resolved;
     bool valid;
 } WifiAp;
 
@@ -171,5 +172,9 @@ typedef struct {
     uint32_t first_seen; // tick when first observed
     uint32_t last_seen;  // tick when last updated
     uint16_t observations;
+    /* Per-device RSSI evidence (phase 7, room_sweep_stats.h). */
+    int8_t rssi_min;
+    int8_t rssi_max;
+    uint32_t rssi_sum;
     bool valid;
 } BleDev;
