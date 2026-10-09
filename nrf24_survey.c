@@ -31,6 +31,7 @@
 static bool s_bus_held;
 static bool s_otg_on;
 static bool s_ce_ready;
+static bool s_spi_ready;
 
 static void ce_low(void) {
     furi_hal_gpio_write(&gpio_ext_pc3, false);
@@ -112,6 +113,10 @@ bool nrf24_survey_probe(RoomSweepNrf24State* state) {
     ensure_power();
     ce_init();
     ce_low();
+    if(!s_spi_ready) {
+        furi_hal_spi_bus_handle_init(&furi_hal_spi_bus_handle_external);
+        s_spi_ready = true;
+    }
 
     uint8_t status = 0xFF;
     if(!read_status(&status)) {
@@ -145,11 +150,13 @@ bool nrf24_survey_begin(RoomSweepNrf24State* state) {
     ce_init();
     if(!nrf24_survey_probe(state) || !state->module_present) {
         state->phase = RoomSweepNrf24Error;
+        nrf24_survey_end();
         return false;
     }
     if(!configure_rx()) {
         room_sweep_nrf24_set_present(state, false);
         state->phase = RoomSweepNrf24Error;
+        nrf24_survey_end();
         return false;
     }
     room_sweep_nrf24_start(state);
@@ -158,9 +165,17 @@ bool nrf24_survey_begin(RoomSweepNrf24State* state) {
 }
 
 void nrf24_survey_end(void) {
-    ce_low();
+    if(s_ce_ready) ce_low();
     /* Power down. */
-    write_reg(NRF24_REG_CONFIG, (uint8_t)(NRF24_CONFIG_EN_CRC | NRF24_CONFIG_CRCO));
+    if(s_spi_ready) {
+        write_reg(NRF24_REG_CONFIG, (uint8_t)(NRF24_CONFIG_EN_CRC | NRF24_CONFIG_CRCO));
+        furi_hal_spi_bus_handle_deinit(&furi_hal_spi_bus_handle_external);
+        s_spi_ready = false;
+    }
+    if(s_ce_ready) {
+        furi_hal_gpio_init(&gpio_ext_pc3, GpioModeAnalog, GpioPullNo, GpioSpeedLow);
+        s_ce_ready = false;
+    }
     s_bus_held = false;
     if(s_otg_on) {
         /* Leave OTG on if external radio stack may need it; only drop if we enabled. */
