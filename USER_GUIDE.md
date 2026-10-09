@@ -210,6 +210,9 @@ addresses, no device IDs**, and no dBm readings (analyzer numbers here are
 | **Results** | Active channels + top hit channels |
 
 - Settings **SPI Path = nRF24** and BFFB bottom switch **down**  
+- At startup, a verified nRF24 register response selects this SPI path
+  automatically. The supported AIO wiring is **CE pin 6 / PB2**, **CS pin
+  4 / PA4**; other pin layouts are not selected automatically.
 - Sub-GHz then uses **internal** CC1101  
 - **OK:** start/stop an energy pass · **Hold Left** or **Hold OK:** analyzer
 

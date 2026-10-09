@@ -28,6 +28,11 @@
 #define ROOM_SWEEP_NRF24_CHANNELS 126U
 #define ROOM_SWEEP_NRF24_TOP_N 5U
 
+/* A status byte alone can also come from a different SPI peripheral. */
+static inline bool room_sweep_nrf24_probe_matches(uint8_t status, uint8_t first, uint8_t second) {
+    return status != 0xFFU && (status & 0x80U) == 0 && first == 0x2AU && second == 0x55U;
+}
+
 /*
  * Recent-activity integrator for live feedback (Geiger/vibro/LED on the nR
  * tab). Sustained RPD traffic at the ~500 samples/s cadence saturates the

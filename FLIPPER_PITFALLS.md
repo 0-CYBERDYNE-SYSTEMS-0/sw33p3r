@@ -270,6 +270,12 @@ s.write(b'input send back long\r')
 
 ### External SPI handle lifecycle (2026-10-09)
 
+On the tested 3-in-1 AIO, nRF24 CE is PB2 / pin 6, CS is PA4 / pin 4.
+PC3 / pin 7 is not CE on this board. Momentum's `cc1101_ext_is_connect()`
+accepts a nonzero/non-0xff response as a part number, which also accepts
+the nRF24 STATUS 0x0e. Confirm nRF24 register write/read addressing first;
+when confirmed, select nRF24 SPI and use internal CC1101 before RF startup.
+
 Momentum mntm-012 does not initialize the external SPI handle at boot.
 Call `furi_hal_spi_bus_handle_init()` before the first external SPI acquire:
 the init callback configures CS as an output; acquire only writes its level.

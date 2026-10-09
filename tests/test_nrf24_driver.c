@@ -8,6 +8,7 @@ const GpioPin gpio_ext_pb2 = {6};
 const FuriHalSpiBusHandle furi_hal_spi_bus_handle_external = {1};
 static bool initialized, acquired, powered, attached = true, ce;
 static uint8_t registers[32];
+static bool other_peripheral;
 static int failures, init_count, deinit_count;
 #define CHECK(cond, msg) do { if(!(cond)) { printf("FAIL: %s\n", msg); failures++; } } while(0)
 
@@ -34,6 +35,7 @@ bool furi_hal_spi_bus_trx(const FuriHalSpiBusHandle* handle, const uint8_t* tx,
     /* An uninitialized CS pin cannot select the attached chip. */
     if(!initialized || !attached) return true;
     rx[0] = 0x0E;
+    if(other_peripheral) return true;
     if(len == 2) {
         uint8_t reg = tx[0] & 0x1F;
         if((tx[0] & 0xE0) == 0x20) registers[reg] = tx[1];
@@ -48,7 +50,9 @@ void furi_hal_power_disable_otg(void) { powered = false; }
 int main(void) {
     RoomSweepNrf24State state;
     room_sweep_nrf24_init(&state);
+    registers[5] = 39;
     CHECK(nrf24_survey_begin(&state), "attached radio detected from cold GPIO state");
+    CHECK(registers[5] == 39, "probe restores original RF channel");
     CHECK(initialized && init_count == 1, "external handle initialized once");
     CHECK(nrf24_survey_probe(&state), "repeated probe succeeds");
     CHECK(init_count == 1, "repeated probe does not reinitialize handle");
@@ -65,6 +69,9 @@ int main(void) {
     CHECK(state.phase == RoomSweepNrf24Error, "missing radio reports error");
     CHECK(!initialized && !powered, "failed begin releases pins and power");
     attached = true;
+    other_peripheral = true;
+    CHECK(!nrf24_survey_begin(&state), "another SPI peripheral with status 0x0e is rejected");
+    other_peripheral = false;
     powered = true;
     CHECK(nrf24_survey_begin(&state), "retry detects reattached radio");
     nrf24_survey_end();

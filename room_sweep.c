@@ -6280,6 +6280,11 @@ int32_t room_sweep_app(void* p) {
     app->notif = furi_record_open(RECORD_NOTIFICATION);
     app->storage = furi_record_open(RECORD_STORAGE);
 
+    /* Momentum's external CC1101 probe can mistake nRF24 STATUS for its
+     * part number. Identify the nRF24 before handing SPI to that driver. */
+    app->spi_path = room_sweep_startup_spi_path(nrf24_survey_probe(&app->nrf24));
+    nrf24_survey_end();
+
     /* SubGHz: BFFB external CC1101 if present, else internal */
     radio_open(app);
 
