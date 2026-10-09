@@ -22,6 +22,9 @@ channel ENERGY/hit counts only, labelled "2.4 GHz energy detection" in UI and
 docs; every numeric nRF24 readout uses ACTIVITY units (ACT), never dBm.
 
 ## Coexistence
+- Initialize the external SPI handle before probing, and release its GPIO
+  configuration on completion or failed start. Host driver regression:
+  `tests/test_nrf24_driver.c` (cold CS, retry, sampling, power ownership).
 - Sub-GHz uses **internal** CC1101 while SPI path preference is nRF24.
 - External dual CC1101 is unavailable on that SPI path (hardware mux).
 - ESP32 Marauder UART (Wi-Fi/BLE/GPS CLI) is unaffected.

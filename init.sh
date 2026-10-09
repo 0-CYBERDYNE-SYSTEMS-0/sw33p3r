@@ -43,6 +43,10 @@ echo "== host nRF24 survey state =="
 cc -std=c11 -Wall -Wextra -Werror -I. tests/test_nrf24_state.c -o /tmp/room_sweep_nrf24_state_test
 /tmp/room_sweep_nrf24_state_test
 
+echo "== host nRF24 SPI lifecycle =="
+cc -std=c11 -Wall -Wextra -Werror -Itests/nrf24_stubs -I. tests/test_nrf24_driver.c nrf24_survey.c -o /tmp/room_sweep_nrf24_driver_test
+/tmp/room_sweep_nrf24_driver_test
+
 echo "== host analyzer / proximity meter =="
 cc -std=c11 -Wall -Wextra -Werror -I. tests/test_analyzer_state.c -o /tmp/room_sweep_analyzer_test
 /tmp/room_sweep_analyzer_test

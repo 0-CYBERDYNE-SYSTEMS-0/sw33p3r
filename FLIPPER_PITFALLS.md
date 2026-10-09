@@ -268,6 +268,16 @@ s.write(b'input send back long\r')
 
 ## Verified API Symbols (used in this project)
 
+### External SPI handle lifecycle (2026-10-09)
+
+Momentum mntm-012 does not initialize the external SPI handle at boot.
+Call `furi_hal_spi_bus_handle_init()` before the first external SPI acquire:
+the init callback configures CS as an output; acquire only writes its level.
+Without init, cold-start probing can report an attached nRF24 as absent.
+Call `furi_hal_spi_bus_handle_deinit()` on survey completion and failed start.
+Both symbols are exported in API 87.1. Source:
+https://github.com/Next-Flip/Momentum-Firmware/blob/mntm-012/targets/f7/furi_hal/furi_hal_spi_config.c
+
 All verified present in api_symbols.csv for API 87.1:
 
 | Symbol | Purpose |

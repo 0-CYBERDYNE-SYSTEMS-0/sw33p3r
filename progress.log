@@ -337,3 +337,18 @@
   and are described that way.
 - Console flakiness: four silences now, all host-side (the app keeps logging).
   Practice: short runs, one connection, harvest first.
+
+## 2026-10-09 — nRF24 cold-start external SPI initialization
+- User reports module not seen with a GPIO 3-in-1 AIO board selected for nRF24.
+- Confirmed driver omitted external SPI handle init. Momentum mntm-012 boot
+  initializes internal handles only; external init configures CS as output.
+- Added init before probe, deinit on end, and cleanup on failed begin; retain
+  existing pin mapping pending hardware verification. CE remains PC3.
+- Host driver regression fails on original code and passes after fix; covers
+  cold GPIO detection, repeated probe/end, RX sample, missing board, retry,
+  and preservation of preexisting OTG power. Stubs model HAL, not live evidence.
+- Gates: ./init.sh PASS (29 host suites + ufbt target 7/API 87.1),
+  _verify_api.py CLEAN. Build: dist/room_sweep.fap.
+- Device deployment blocked: macOS IOUSB has no attached devices and no USB
+  serial port; ufbt launch cannot find Flipper. No live hardware fix claimed.
+- Local receipts: .omo/evidence/nrf24-{init,launch}-2026-10-09.log.
