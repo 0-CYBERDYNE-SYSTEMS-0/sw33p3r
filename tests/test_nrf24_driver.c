@@ -4,6 +4,7 @@
 #include "../nrf24_survey.h"
 
 const GpioPin gpio_ext_pc3 = {7};
+const GpioPin gpio_ext_pb2 = {6};
 const FuriHalSpiBusHandle furi_hal_spi_bus_handle_external = {1};
 static bool initialized, acquired, powered, attached = true, ce;
 static uint8_t registers[32];
@@ -11,7 +12,9 @@ static int failures, init_count, deinit_count;
 #define CHECK(cond, msg) do { if(!(cond)) { printf("FAIL: %s\n", msg); failures++; } } while(0)
 
 void furi_delay_ms(uint32_t ms) { (void)ms; }
-void furi_hal_gpio_write(const GpioPin* pin, bool value) { (void)pin; ce = value; }
+void furi_hal_gpio_write(const GpioPin* pin, bool value) {
+    if(pin == &gpio_ext_pb2) ce = value;
+}
 void furi_hal_gpio_init(const GpioPin* pin, int mode, int pull, int speed) {
     (void)pin; (void)mode; (void)pull; (void)speed;
 }

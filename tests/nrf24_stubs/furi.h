@@ -6,6 +6,7 @@ typedef struct { int pin; } GpioPin;
 typedef struct { int bus; } FuriHalSpiBusHandle;
 enum { GpioModeOutputPushPull, GpioModeAnalog, GpioPullNo, GpioSpeedVeryHigh, GpioSpeedLow };
 extern const GpioPin gpio_ext_pc3;
+extern const GpioPin gpio_ext_pb2;
 extern const FuriHalSpiBusHandle furi_hal_spi_bus_handle_external;
 void furi_delay_ms(uint32_t ms);
 void furi_hal_gpio_write(const GpioPin* pin, bool value);
