@@ -34,16 +34,16 @@ static bool s_ce_ready;
 static bool s_spi_ready;
 
 static void ce_low(void) {
-    furi_hal_gpio_write(&gpio_ext_pc3, false);
+    furi_hal_gpio_write(&gpio_ext_pb2, false);
 }
 
 static void ce_high(void) {
-    furi_hal_gpio_write(&gpio_ext_pc3, true);
+    furi_hal_gpio_write(&gpio_ext_pb2, true);
 }
 
 static void ce_init(void) {
     if(s_ce_ready) return;
-    furi_hal_gpio_init(&gpio_ext_pc3, GpioModeOutputPushPull, GpioPullNo, GpioSpeedVeryHigh);
+    furi_hal_gpio_init(&gpio_ext_pb2, GpioModeOutputPushPull, GpioPullNo, GpioSpeedVeryHigh);
     ce_low();
     s_ce_ready = true;
 }
@@ -173,7 +173,7 @@ void nrf24_survey_end(void) {
         s_spi_ready = false;
     }
     if(s_ce_ready) {
-        furi_hal_gpio_init(&gpio_ext_pc3, GpioModeAnalog, GpioPullNo, GpioSpeedLow);
+        furi_hal_gpio_init(&gpio_ext_pb2, GpioModeAnalog, GpioPullNo, GpioSpeedLow);
         s_ce_ready = false;
     }
     s_bus_held = false;

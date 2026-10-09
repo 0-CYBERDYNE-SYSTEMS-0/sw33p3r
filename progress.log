@@ -352,3 +352,15 @@
 - Device deployment blocked: macOS IOUSB has no attached devices and no USB
   serial port; ufbt launch cannot find Flipper. No live hardware fix claimed.
 - Local receipts: .omo/evidence/nrf24-{init,launch}-2026-10-09.log.
+
+## 2026-10-09 — 3-in-1 AIO nRF24 CE pin verified on hardware
+- USB device Rug1k0 re-enumerated; Momentum mntm-012/API 87.1 confirmed.
+- Receive-only diagnostic: CS PA4 STATUS=0x0e, CONFIG readback=0x0b;
+  PB2 CE produced 23 energy hits in 1008 samples, PC3 CE produced zero.
+  PC3 as chip select returned 0x00. Corrected CE PC3 -> PB2, GPIO pin 6.
+- Regression expecting PB2 failed before pin correction and passed after.
+  ./init.sh PASS (29 host suites + ufbt), API export check CLEAN.
+- Full app startup separately resets when its CC1101 default path probes
+  the attached nRF24; temporary nRF24 startup path runs stably. Startup
+  auto-detection fix follows. Temporary boot checkpoints removed.
+- Local hardware receipt: .omo/evidence/nrf24-hardware-diagnostic-2026-10-09.txt.
