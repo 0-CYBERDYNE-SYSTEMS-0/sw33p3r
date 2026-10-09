@@ -22,6 +22,9 @@ channel ENERGY/hit counts only, labelled "2.4 GHz energy detection" in UI and
 docs; every numeric nRF24 readout uses ACTIVITY units (ACT), never dBm.
 
 ## Coexistence
+- Startup verifies two RF_CH write/read values before selecting nRF24 SPI.
+  This avoids Momentum's CC1101 presence check mistaking the nRF24's status
+  for an external CC1101 part number. The original channel is restored.
 - Operator's 3-in-1 AIO board: CS = PA4 / pin 4, CE = PB2 / pin 6.
   Receive-only device diagnostic on 2026-10-09: STATUS 0x0e,
   CONFIG write/read 0x0b, PB2 produced 23/1008 RPD hits; PC3 produced

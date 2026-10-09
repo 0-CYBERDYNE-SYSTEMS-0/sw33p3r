@@ -364,3 +364,22 @@
   the attached nRF24; temporary nRF24 startup path runs stably. Startup
   auto-detection fix follows. Temporary boot checkpoints removed.
 - Local hardware receipt: .omo/evidence/nrf24-hardware-diagnostic-2026-10-09.txt.
+
+## 2026-10-09 — nRF24 startup routing fixed and full app field-verified
+- Momentum cc1101_ext presence check accepts nonzero/non-0xff part-number
+  response; attached nRF24 STATUS is 0x0e and was mistaken for that radio.
+  Full app reset under CC1101-default startup; nRF24 path ran stably.
+- Strengthened nRF24 probe: two RF_CH write/read challenges (0x2a/0x55),
+  restore original channel, CE low throughout. Different peripheral with
+  matching status alone is rejected in the host driver regression.
+- Before radio_open, select nRF24 SPI on confirmed register handshake;
+  host-tested startup path helper forces internal CC1101 in that case.
+- Removed all temporary boot checkpoints and diagnostic startup defaults.
+- Gates: ./init.sh PASS (29 suites + ufbt target 7/API 87.1), API CLEAN;
+  channel-restore assertion added and scoped driver suite also PASS.
+- Final firmware deployed to Rug1k0; CLI loader info confirms Room Sweep
+  running after scan. Session-24: scan_start -> observation -> scan_end,
+  4 active channels, 4 RPD hits, top channel 13, zero dropped events.
+  report-24 confirms nRF24 sensor. GPS coordinates omitted, TX none.
+- Local receipts: .omo/evidence/nrf24-live-session-24.csv,
+  nrf24-live-report-24.txt, hardware diagnostic and launch/gate logs.

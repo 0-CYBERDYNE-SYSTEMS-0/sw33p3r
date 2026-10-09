@@ -123,22 +123,19 @@ bool nrf24_survey_probe(RoomSweepNrf24State* state) {
         room_sweep_nrf24_set_present(state, false);
         return false;
     }
-    /* Unconnected SPI often floats 0x00/0xFF. A live nRF24 STATUS is rarely both. */
-    bool looks_alive = (status != 0x00U && status != 0xFFU);
-    if(!looks_alive) {
-        /* Try a CONFIG write/read handshake. */
-        if(!write_reg(NRF24_REG_CONFIG, (uint8_t)(NRF24_CONFIG_EN_CRC | NRF24_CONFIG_PWR_UP |
-                                                   NRF24_CONFIG_PRIM_RX))) {
-            room_sweep_nrf24_set_present(state, false);
-            return false;
+    bool looks_alive = false;
+    if(status != 0xFFU && (status & 0x80U) == 0) {
+        /* Prove register addressing, not just a non-floating MISO line.
+         * Restore the channel; CE stays low throughout (no RF output). */
+        uint8_t saved = 0, first = 0, second = 0;
+        if(read_reg(NRF24_REG_RF_CH, &saved)) {
+            bool ok = write_reg(NRF24_REG_RF_CH, 0x2A) &&
+                      read_reg(NRF24_REG_RF_CH, &first) &&
+                      write_reg(NRF24_REG_RF_CH, 0x55) &&
+                      read_reg(NRF24_REG_RF_CH, &second);
+            bool restored = write_reg(NRF24_REG_RF_CH, saved);
+            looks_alive = ok && restored && room_sweep_nrf24_probe_matches(status, first, second);
         }
-        furi_delay_ms(2);
-        uint8_t cfg = 0;
-        if(!read_reg(NRF24_REG_CONFIG, &cfg) || (cfg & NRF24_CONFIG_PWR_UP) == 0) {
-            room_sweep_nrf24_set_present(state, false);
-            return false;
-        }
-        looks_alive = true;
     }
     room_sweep_nrf24_set_present(state, looks_alive);
     return looks_alive;
