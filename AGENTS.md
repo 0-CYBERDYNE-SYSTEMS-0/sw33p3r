@@ -14,6 +14,7 @@ requirement enforced by `MISSION.md`.
   radio code. Maintained log of verified API symbols and breakages.
 - `docs/BFFB_MOMENTUM.md` — source of truth for BFFB/Marauder/Momentum facts;
   check before changing any UART command or baud.
+- `CONTRIBUTING.md` — mission constraint (non-negotiable) + the gate contract.
 - `DESIGN.md`, `USER_GUIDE.md`, `progress.log`, `specs/` (one spec per
   feature), `features.json` (QA feature checklist).
 - `docs/` — GitHub Pages landing: control map (`index.html` /
@@ -39,12 +40,23 @@ cc -std=c11 -Wall -Wextra -Werror -I. tests/test_nmea.c nmea.c -o /tmp/t_nmea &&
 **`./init.sh` must pass before any device deploy.** `*.fap` and `dist/` are
 gitignored.
 
+- CI (`.github/workflows/ci.yml`) runs `./init.sh` on push/PR to `main`.
+  `python3 _verify_api.py` is deliberately NOT in CI: it needs a locally
+  initialized ufbt SDK (`~/.ufbt/.../api_symbols.csv`, override via
+  `UFBT_API_SYMBOLS`) and stays a local pre-deploy step.
+- `scripts/verify.sh` — generic success bar (git fsck + clean-tree warn; no C
+  tests). `./init.sh` is still the gate.
+- On-device helpers (need a connected Flipper; `FLIPPER_PORT` env):
+  `_smoke_test.py` / `_dev_check.py` (serial CLI checks) and
+  `tools/marauder_probe.py` (BFFB UART probe battery, receive-only).
+
 ## Architecture
 
 Single ViewPort app, one draw function, **7 tabs** (`SweepMode` in
-`room_sweep.h`): RF / Wi / BT / nR / GP / TX / i.
+`room_sweep.h`): RF / Wi / BT / nR / GP / TX / i. The RF tab cycles **5
+sub-modes** (`RfSubMode`): Survey / Sweep / Peak / Waterfall / Watch.
 
-- `room_sweep.c` (~5790 lines) is an intentional monolith: input
+- `room_sweep.c` (~7.4k lines) is an intentional monolith: input
   routing, drawing, RF engine, TX thread, UART parsing, feedback.
 - **All logic that can be host-tested lives in header-only, Flipper-header-free
   state files** so suites compile with plain `cc`. When changing behavior, put
@@ -59,9 +71,18 @@ Single ViewPort app, one draw function, **7 tabs** (`SweepMode` in
   `room_sweep_analyzer.h`, `room_sweep_radar.h`, `room_sweep_waterfall.h`,
   `room_sweep_ui_layout.h`, `room_sweep_rf_presets.h` (20-preset survey table;
   host-tested invariants — all three parallel arrays in sync, every frequency
-  inside a real CC1101 band).
+  inside a real CC1101 band), plus the identity/watch layer, each with its own
+  `tests/test_*.c` suite: `room_sweep_probe.h` (sniffprobe parse + hidden-SSID
+  repair), `room_sweep_sta.h` (sniffraw transmitter table),
+  `room_sweep_tool.h` (hostile-tooling source), `room_sweep_oui.h` (OUI vendor
+  lookup), `room_sweep_classify.h` (name-pattern class hints),
+  `room_sweep_rogue.h` (duplicate-SSID rogue correlation),
+  `room_sweep_stats.h` (per-device RSSI evidence stats),
+  `room_sweep_watch.h` (RF burst watch), `room_sweep_watchlist.h`
+  (cross-session watchlist), `room_sweep_feedback.h` (feedback cadence curves).
 - Other modules: `nmea.c/h` (host-tested NMEA parser),
   `session_log.c/h` (session writer, main-loop-only), `nrf24_survey.c/h`.
+  The nRF24 driver test builds against stub headers in `tests/nrf24_stubs/`.
 - `application.fam` — ufbt manifest: stack 6 KiB, `sources=["*.c","!tests"]`.
 
 ### Threads & locking
@@ -86,6 +107,11 @@ Single ViewPort app, one draw function, **7 tabs** (`SweepMode` in
   never replay/blocking.
 - Bottom SPI switch: **up = CC1101, down = nRF24**; setting **SPI Path** forces
   internal CC1101 when nRF24 is selected.
+- nRF24 wiring (verified on the 3-in-1 AIO board): CE = `gpio_ext_pb2`
+  (pin 6), CS = PA4 (pin 4) — PC3 is NOT CE on this board. nRF24 is
+  register-verified before external CC1101 startup because Momentum's
+  `cc1101_ext_is_connect()` also accepts the nRF24 STATUS 0x0e as a part
+  number.
 
 ### BFFB / Marauder UART & GPS
 
@@ -122,6 +148,10 @@ attempt recorded as an event.
 - `-Werror` enables `-Wdouble-promotion` — use integer math or explicit casts.
 - Every API call must be in the export table — `python3 _verify_api.py`; an
   unlisted symbol hard-faults at `loader open`, not link.
+- Momentum does NOT init the external SPI handle at boot: call
+  `furi_hal_spi_bus_handle_init()` before the first external SPI acquire
+  (`furi_hal_spi_bus_handle_deinit()` on completion/failed start), or
+  cold-start probing reports an attached nRF24 as absent.
 - Display is 128×64; FontKeyboard is the smallest font (~25 chars/line).
 
 ## Repo conventions
@@ -132,6 +162,7 @@ attempt recorded as an event.
   `.debug-journal.md` are gitignored and must never be committed.
 - Branches: `main` trunk; `feat/*` feature work; `restore/*` are pre-overhaul
   snapshots for recovery (`git log --oneline` → checkout sha).
-- Commits: **no Anthropic/Claude co-author trailers, ever.**
+- Commits: short `fix:` / `feat:` / `docs:` / `chore:`-prefixed subjects;
+  **no Anthropic/Claude co-author trailers, ever.**
 - `CLAUDE.md` mirrors these instructions for Claude Code sessions; keep the
   two in sync when changing scope, workflow, or hard rules.
