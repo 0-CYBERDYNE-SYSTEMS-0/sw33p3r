@@ -81,6 +81,9 @@ typedef enum {
      * fingerprint-map slot — otherwise a burst row would spend a slot that a
      * real device identity needs. */
     RoomSweepRecordIdWatch,
+    /* AV tab Remote ID (specs/drone-rid.md): drone identities redacted to
+     * per-session DR-nn ordinals exactly like Wi/BLE identifiers. */
+    RoomSweepRecordIdDrone,
     RoomSweepRecordIdKindCount,
 } RoomSweepRecordIdKind;
 
@@ -141,6 +144,8 @@ static inline const char* room_sweep_record_identifier_prefix(RoomSweepRecordIdK
         return "PR";
     case RoomSweepRecordIdTool:
         return "TL";
+    case RoomSweepRecordIdDrone:
+        return "DR";
     case RoomSweepRecordIdOther:
         return "ID";
     case RoomSweepRecordIdWatch:

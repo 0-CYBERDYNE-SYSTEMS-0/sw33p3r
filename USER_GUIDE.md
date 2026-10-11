@@ -3,7 +3,7 @@
 Receive-side room survey on Flipper Zero + optional BFFB (Marauder / dual
 CC1101 / nRF24). Firmware target: **Momentum mntm-012**, API **87.1**.
 
-This guide matches the **current** app behavior (7 tabs, Hold-▶ pages,
+This guide matches the **current** app behavior (8 tabs, Hold-▶ pages,
 analyzer age-out, FullSweep auto-save, tactile tap/hold feedback).
 
 One-page map: [`docs/room_sweep_control_map.html`](docs/room_sweep_control_map.html).
@@ -22,6 +22,7 @@ activity and whatever a device advertises about itself.
 | GP | Position, speed, course, mark distance | Anything about RF sources |
 | TX | Bounded 1–10 s carrier test state | Any receive-side finding |
 | i | Radio path, session state, limits | — |
+| AV | Remote ID broadcasts a drone makes about itself (ordinal, type, last-known position/speed/heading, operator position); 2.4 GHz RC energy | Who is flying; operator identity (FAA-only lookup); anything the drone does not broadcast |
 
 ## Remember these controls
 
@@ -277,6 +278,44 @@ name hints (both carrying `?`), hidden-SSID repair from client probes, clients
 via the Wi-raw transmitter radar, and the rogue/watch flags. It is a map of the
 app's own features, not a claim about any device in the room.
 
+### Air vehicles (AV tab)
+
+**Receive-only Remote ID** (ASTM F3411-22a / OpenDroneID). Remote ID is a
+public broadcast (FAA 14 CFR §89) — a compliant drone announces its identity,
+position and operator position; this tab listens. **No RID transmission, no
+spoofing, no injection, ever.** Drone identity is shown as per-session
+ordinals **DR-nn**; raw serials never reach the session CSV (same privacy
+rule as Wi/BLE identifiers).
+
+| Page (Hold ▶) | Content |
+|---------------|---------|
+| **RID LIST** | Ordinal, type/ID class, RSSI, age (`!` = STALE) |
+| **TRACK** | Selected drone's last-known alt/speed/heading + age — labelled **"last broadcast"**, never "current position" |
+| **2.4G ENERGY** | The nR ACT-unit presentation (RPD energy; never dBm, never a distance claim) |
+
+- **Up/Down** selects a drone · **OK** opens/closes the decoded-fields
+  **detail page** (all fields + operator-position indicator) · **Hold OK** =
+  clear + rescan (see the gate below).
+- Alert edges ride the existing vibro/LED/sound feedback, wherever you are:
+  **NEW DRONE** (first sighting), **RETURNING DRONE** (back after going
+  quiet, or first sighting of a watchlist identity), **OPERATOR MOVED** (the
+  broadcast operator position shifted — an *edge*, never a distance), and
+  **STALE** (no message for 15 s). Watchlist matching is by exact identity
+  string; the watchlist file stores MAC-shaped addresses, so only a MAC-form
+  UAS ID can match one.
+- Session rows are rate-limited: one row per drone per 5 s plus always-on
+  state-change rows, so the recorder queue cannot burst-drop.
+- 2.4 GHz RC/drone links (toy/camera drones) appear only as **energy hits**
+  in the nR survey / this energy page — no packet decoding exists here.
+
+**Honest gates:** the `remoteid` send path (`scan`/`clear`) is **disabled**
+until a `tools/marauder_probe.py` phase-0 receipt pins the live output
+format ("not yet observed live" — see `docs/BFFB_MOMENTUM.md`). Until then
+nothing is sent and the parser consumes only lines that arrive on their own;
+the host fixtures are synthetic. A watchlist match is **not proof** of the
+same physical drone session-over-session without a sighting gap model.
+Operator identity lookup is FAA-only — the app never attempts it.
+
 ## Analyzer (Hold Left on RF / Wi / BT / nR)
 
 | Page (Hold Right) | Role |
@@ -409,6 +448,8 @@ Settings → FullSweep → OK:
 - `SAME NAME ON n BSSIDS` / `rogue=` is a cloned-SSID *lead*; mesh/roaming shares names legitimately
 - `TOOL` is a class match on the advertisement (Marauder/ESP32, Pwnagotchi) — never proof of intent; a Pwnagotchi is also a toy, an ESP32 also a dev board. `sniffesp` streams nothing on current Marauder builds (pinned from upstream source)
 - `WATCH` means you flagged that address earlier — a "here before" reminder; addresses can be spoofed or re-randomized, so a match is not an identification
+- `RETURNING DRONE` on a watchlist match is the same class of reminder — a matching serial is not proof of the same physical drone session-over-session without a sighting gap model
+- Remote ID repeats what the drone broadcasts about itself (and its operator position); `OPERATOR MOVED` is an alert edge, not a distance, and operator identity lookup is FAA-only
 - Coverage: 16 RF presets, 3 CC1101 bands (348–387 and 464–779 MHz invisible), no 5 GHz
 - Misses: non-transmitting recorders, burst TX between samples, out-of-band, wired
 - No hit ≠ proof of absence  

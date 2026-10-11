@@ -17,8 +17,21 @@ typedef enum {
     SweepModeGps,   // Passive GPS NMEA listener
     SweepModeTx,    // Dedicated TX tab (safety-gated)
     SweepModeInfo,  // Live capability / status card
+    SweepModeAv,    // Air vehicles: Remote ID receive + 2.4G energy (detect-only)
     SweepModeCount
 } SweepMode;
+
+/* ---------------------------------------------------------------------------
+ * AV tab pages (Hold Right) — specs/drone-rid.md UI section
+ * --------------------------------------------------------------------------- */
+typedef enum {
+    AvSubList,    // RID LIST: ordinal, type/ID class, RSSI, age
+    AvSubTrack,   // TRACK: selected drone's last-known alt/speed/heading + age
+    AvSubEnergy,  // 2.4G energy: the nR ACT-unit presentation (never dBm)
+    AvSubCount
+} AvSubMode;
+
+#define AV_PAGE_COUNT ((uint8_t)AvSubCount)
 
 /* ---------------------------------------------------------------------------
  * RF sub-modes (cycled with Up/Down on RF tab)
@@ -120,6 +133,16 @@ static const RfBand rf_bands[RF_BAND_COUNT] = {
 #define MARAUDER_CMD_PROBE   "sniffprobe"
 #define MARAUDER_CMD_ESP     "sniffesp"
 #define MARAUDER_CMD_PWN     "sniffpwn"
+/* Remote ID (ASTM F3411-22a / OpenDroneID) — RECEIVE SIDE ONLY (MISSION.md:
+ * no RID transmission, no spoofing, no injection, ever). The `remoteid`
+ * command family (scan/list/track/clear) is upstream "development" status and
+ * its serial output format is NOT pinned on this BFFB build. */
+#define MARAUDER_CMD_RID_SCAN  "remoteid scan"
+#define MARAUDER_CMD_RID_CLEAR "remoteid clear"
+/* not yet observed live — enable after tools/marauder_probe.py phase-0 receipt
+ * (single-line flip: 0 -> 1). Until then NOTHING is sent and the RID parser
+ * consumes only lines that arrive on their own. */
+#define ROOM_SWEEP_RID_SEND_ENABLED 0
 
 /* GPIO GPS (LPUART). Stock modules default 9600; some boards use 115200. */
 #define GPS_GPIO_BAUD_PRIMARY   9600UL

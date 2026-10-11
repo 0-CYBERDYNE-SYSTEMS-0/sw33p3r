@@ -196,6 +196,7 @@ static RoomSweepRecordIdKind id_kind_for_event(
         return RoomSweepRecordIdAccessPoint;
     }
     if(source && strcmp(source, "BLE") == 0) return RoomSweepRecordIdBle;
+    if(source && strcmp(source, "RID") == 0) return RoomSweepRecordIdDrone;
     if(source && strcmp(source, "RF") == 0) {
         /* Phase 8 burst watch: the id is the fixed label WATCH, not an
          * identity (it must not spend a fingerprint-map slot). */
