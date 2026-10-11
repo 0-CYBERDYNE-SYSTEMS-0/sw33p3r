@@ -337,6 +337,38 @@ on this build — and unreachable on current upstream builds. The Room Sweep
 parser accepts this documented shape; on this firmware the ESP half of a
 TOOL window will honestly stay empty.
 
+### `remoteid` (ASTM F3411-22a / OpenDroneID) — not yet observed live on this build
+
+**Status 2026-10-11:** the Marauder `remoteid` command family (`scan`, `list`,
+`track`, `clear`; `ESP32Marauder` `CommandLine.h`) is upstream **development**
+status. The upstream wiki states Marauder "can passively receive
+ASTM/OpenDroneID broadcasts… does not transmit" — receive-side fits the Room
+Sweep mission (FAA 14 CFR §89 makes Remote ID a public broadcast), and RID
+**transmission / spoofing / injection is banned outright** (MISSION.md).
+
+**format from upstream source; not yet observed live on this build** — the
+exact serial output shape of `remoteid scan` / `remoteid list` has NOT been
+pinned on the tested BFFB, so the AV-tab parser (`room_sweep_rid.h`) is
+TOLERANT BY CONTRACT: key/value fields ("Key: value" or "Key=value", any
+case, longest-key-wins), explicit message-type markers for Basic ID /
+Location-Vector / System, unknown message types skipped whole, malformed
+numbers never fabricate a field. Host fixtures (`tests/test_rid.c`) are
+**synthetic** — no live shape is claimed.
+
+**Send path is GATED:** `ROOM_SWEEP_RID_SEND_ENABLED` in `room_sweep.h` is 0
+— not yet observed live — enable after tools/marauder_probe.py phase-0
+receipt. The probe battery now includes `remoteid scan` / `remoteid list` /
+`remoteid clear` steps; until a receipt pins the format, NOTHING is sent and
+the parser consumes only lines that arrive on their own. Same honesty
+discipline as `sniffesp`/`sniffpwn` above.
+
+RID arrives on the SAME Marauder UART as every other scan (115200, `\n` line
+endings, `expansion_disable()` path — unchanged). `remoteid` is mutually
+exclusive with Wi/BT sniffing (Marauder is linear), so the AV tab follows the
+existing stopscan-before-switch pattern. The nRF24 layer stays RPD energy
+only (specs/nrf24-survey.md): drone RC links appear as 2.4 GHz energy hits,
+never as decoded packets.
+
 ## Momentum firmware (this project)
 
 - Target: **Momentum mntm-012**, **API 87.1**, **target 7**

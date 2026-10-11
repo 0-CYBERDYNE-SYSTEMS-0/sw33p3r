@@ -4,6 +4,43 @@ Keep-a-Changelog-inspired, condensed per release series. The full per-fix
 history lives in `fix_plan.md` (session-by-session) and `progress.log`
 (dated session log).
 
+## Unreleased — AV tab: ASTM F3411 Remote ID receive path (2026-10-11)
+
+- **New 8th tab `AV` (Air Vehicles)** — receive-only Remote ID
+  (ASTM F3411-22a / OpenDroneID) per `specs/drone-rid.md`: RID LIST rows
+  (ordinal, type/ID class, RSSI, age), TRACK page with honest "last
+  broadcast" labels, decoded-fields detail page with operator-position
+  indicator, and a 2.4G ENERGY page reusing the nR ACT-unit presentation
+  (never dBm, never a distance claim). Alert edges NEW DRONE / RETURNING
+  DRONE / OPERATOR MOVED / STALE ride the existing vibro/LED/sound feedback.
+- **Tolerant RID parser** (`room_sweep_rid.h`): key/value lines any case,
+  longest-key-wins at word boundaries ("Op lat" is never read as "Lat"),
+  explicit Basic ID / Location-Vector / System markers, unknown message
+  types (Authentication/Self-ID/Operator ID/Message Pack) skipped whole,
+  malformed numbers never fabricate a field. The live `remoteid` output
+  format is NOT pinned, so fixtures are synthetic (`tests/test_rid.c`,
+  `tests/test_rid_state.c`) and the parser claims no live shape.
+- **Session evidence with privacy intact**: `source=RID` rows through the
+  existing record path; raw serials never reach a CSV — they redact through
+  the fingerprint map. This change adds the `RoomSweepRecordIdDrone` kind
+  with the **DR** prefix (host-tested); the one-line `RID` dispatch in
+  `session_log.c`'s `id_kind_for_event` routes rows to it and is left to the
+  owning commit (session_log.* is outside this change) — until it lands, RID
+  rows come out `ID-NN` (still redacted, never raw). Events are
+  rate-limited to one row per drone per 5 s plus always-on state-change
+  rows, and the staleness sweep emits one transition per pass — the 8-slot
+  record queue cannot burst-drop.
+- **Send path GATED**: `remoteid scan`/`remoteid clear` are wired but dark —
+  `ROOM_SWEEP_RID_SEND_ENABLED 0` ("not yet observed live — enable after
+  tools/marauder_probe.py phase-0 receipt", single-line flip).
+  `tools/marauder_probe.py` now probes `remoteid scan`/`list`/`clear`, and
+  `docs/BFFB_MOMENTUM.md` carries the same honesty annotation as
+  `sniffesp`/`sniffpwn`. Cross-session RETURNING uses the opt-in watchlist
+  and never claims a match is proof of the same physical drone.
+- Tab strip reflows to 8 cells (16px stride). `./init.sh` gains the two
+  host suites (`test_rid`, `test_rid_state`), both green under
+  `-Werror -pedantic`.
+
 ## Unreleased — device walk results: phases 7/8/9/11a/11b verified (2026-09-21)
 
 - **The device walk landed the remaining receipts** (artifact-level; screenshots

@@ -1,7 +1,8 @@
 /* Room Sweep v3.3 — multi-tab wireless assessment tool
- * Tabs: RF | WiFi | BLE | nRF24 | GPS | TX | Info
+ * Tabs: RF | WiFi | BLE | nRF24 | GPS | TX | Info | AV
  * RF: BFFB external CC1101 when SPI path is CC1101; internal when nRF24 path.
  * nRF24: RPD detect-only on external SPI. WiFi/BLE/GPS via Marauder UART.
+ * AV: ASTM F3411 Remote ID receive (send path gated, see room_sweep.h).
  * Momentum mntm-012, API 87.1. No jam/block modes.
  */
 #include <furi.h>
@@ -48,6 +49,8 @@
 #include "room_sweep_full_sweep.h"
 #include "room_sweep_radio_path.h"
 #include "room_sweep_nrf24_state.h"
+#include "room_sweep_rid.h"
+#include "room_sweep_rid_state.h"
 #include "room_sweep_analyzer.h"
 #include "room_sweep_feedback.h"
 #include "nrf24_survey.h"
@@ -440,6 +443,16 @@ typedef struct {
     RoomSweepGpsTrail gps_trail;
     uint32_t gps_trail_last_push_tick;
 
+    /* AV tab (specs/drone-rid.md): Remote ID track state + pages. RID rows
+     * carry per-session DR-nn ordinals — the raw serial never reaches a CSV
+     * (it goes through the record fingerprint map like Wi/BLE identifiers).
+     * Main-loop-only state (process_uart_lines / feedback_tick own it). */
+    RoomSweepRidState rid;
+    uint8_t av_ui_page;  /* AvSubMode: 0=RID LIST 1=TRACK 2=2.4G energy */
+    bool av_detail;      /* decoded-fields detail page open over list/track */
+    RoomSweepRidEdge rid_edge_pending; /* alert edge awaiting feedback */
+    uint32_t rid_tick_ms; /* staleness sweep cadence stamp */
+
     /* Per-mode content pages (Hold Right). TX has no pages. */
     uint8_t wifi_ui_page; /* 0=detail 1=list 2=help */
     uint8_t ble_ui_page; /* 0=detail 1=list 2=help */
@@ -733,6 +746,7 @@ static const char* mode_record_text(SweepMode mode) {
     case SweepModeGps: return "GPS";
     case SweepModeTx: return "TX";
     case SweepModeInfo: return "INFO";
+    case SweepModeAv: return "AV";
     default: return "?";
     }
 }
@@ -744,6 +758,7 @@ static const char* record_mode_for_source(const char* source, SweepMode current)
     if(source && strcmp(source, "NRF24") == 0) return "NRF24";
     if(source && strcmp(source, "GPS") == 0) return "GPS";
     if(source && strcmp(source, "TX") == 0) return "TX";
+    if(source && strcmp(source, "RID") == 0) return "AV";
     return mode_record_text(current);
 }
 
@@ -763,6 +778,10 @@ static const char* record_submode_for_source(App* app, const char* source) {
     if(source && strcmp(source, "GPS") == 0)
         return app->gps_profile == GPS_PROFILE_EXTERNAL ? "external" : "bffb";
     if(source && strcmp(source, "TX") == 0) return "bounded_carrier";
+    if(source && strcmp(source, "RID") == 0) {
+        return app->av_ui_page == AvSubTrack ? "track" :
+               app->av_ui_page == AvSubEnergy ? "energy" : "list";
+    }
     return "";
 }
 
@@ -1399,7 +1418,9 @@ static void marauder_start_scan(App* app, const char* command, bool clear_result
     record_enqueue(
         app,
         "scan_start",
-        app->mode == SweepModeWifi ? "WIFI" : app->mode == SweepModeBle ? "BLE" : "GPS",
+        app->mode == SweepModeWifi ? "WIFI" :
+        app->mode == SweepModeBle  ? "BLE"  :
+        app->mode == SweepModeAv   ? "RID"  : "GPS",
         command,
         0,
         0,
@@ -1416,6 +1437,13 @@ static void marauder_start_for_mode(App* app) {
         marauder_start_scan(app, wifi_source_command(app), true);
     } else if(app->mode == SweepModeBle) {
         marauder_start_scan(app, MARAUDER_CMD_BLE, true);
+    } else if(app->mode == SweepModeAv) {
+        /* Remote ID receive — GATED (room_sweep.h): the send path stays dark
+         * until a phase-0 probe receipt pins the live output format. The
+         * parser still consumes any RID lines that arrive on their own. */
+        if(ROOM_SWEEP_RID_SEND_ENABLED != 0) {
+            marauder_start_scan(app, MARAUDER_CMD_RID_SCAN, true);
+        }
     }
 }
 
@@ -1849,6 +1877,111 @@ static uint8_t parse_ble_line(App* app, const char* line) {
     return n;
 }
 
+/* ---- AV tab: Remote ID session rows (specs/drone-rid.md) ----
+ * One row per drone per ROOM_SWEEP_RID_EVENT_MIN_MS plus always-on
+ * state-change rows, so the 8-slot record queue cannot burst-drop. The id
+ * argument is the raw UAS serial: the record fingerprint map redacts it to a
+ * per-session DR-nn ordinal before it reaches the CSV — raw serials never
+ * appear in session files (same privacy rule as Wi/BLE identifiers). */
+static void rid_record_row(App* app, uint8_t idx, RoomSweepRidEdge edge) {
+    if(idx >= ROOM_SWEEP_RID_MAX_TRACKS) return;
+    const RoomSweepRidTrack* row = &app->rid.tracks[idx];
+    if(!row->valid) return;
+    const char* event = "rid_obs";
+    const char* state = "observed";
+    char detail[48];
+    switch(edge) {
+    case RoomSweepRidEdgeNew:
+        event = "rid_new";
+        state = "new";
+        strncpy(detail, "NEW DRONE; first sighting this session", sizeof(detail) - 1U);
+        break;
+    case RoomSweepRidEdgeReturning:
+        event = "rid_returning";
+        state = "returning";
+        strncpy(
+            detail,
+            row->watchlisted ? "RETURNING DRONE; watchlist match unproven" :
+                               "RETURNING DRONE; seen again after a gap",
+            sizeof(detail) - 1U);
+        break;
+    case RoomSweepRidEdgeOperatorMoved:
+        event = "rid_op_moved";
+        state = "op_moved";
+        strncpy(detail, "OPERATOR MOVED; edge not a distance", sizeof(detail) - 1U);
+        break;
+    case RoomSweepRidEdgeStale:
+        event = "rid_stale";
+        state = "stale";
+        snprintf(
+            detail,
+            sizeof(detail),
+            "STALE; no RID message for %lus",
+            (unsigned long)(ROOM_SWEEP_RID_STALE_MS / 1000U));
+        break;
+    default: {
+        /* Observation rows carry last-known broadcast values only — never a
+         * "current position" claim (the values may already be seconds old). */
+        int used = snprintf(detail, sizeof(detail), "obs");
+        if(row->has_alt && used >= 0 && (size_t)used < sizeof(detail)) {
+            used += snprintf(
+                detail + used,
+                sizeof(detail) - (size_t)used,
+                " alt=%ldm",
+                (long)(row->alt_cm / 100));
+        }
+        if(row->has_speed && used >= 0 && (size_t)used < sizeof(detail)) {
+            used += snprintf(
+                detail + used,
+                sizeof(detail) - (size_t)used,
+                " spd=%ld.%02ldm/s",
+                (long)(row->speed_cms / 100),
+                (long)(row->speed_cms % 100));
+        }
+        if(row->has_heading && used >= 0 && (size_t)used < sizeof(detail)) {
+            used += snprintf(
+                detail + used, sizeof(detail) - (size_t)used, " hdg=%d", row->heading_deg);
+        }
+        if(row->has_op_pos && used >= 0 && (size_t)used < sizeof(detail)) {
+            used += snprintf(detail + used, sizeof(detail) - (size_t)used, " oppos=1");
+        }
+        break;
+    }
+    }
+    detail[sizeof(detail) - 1U] = '\0';
+    record_enqueue_ex(
+        app,
+        event,
+        "RID",
+        row->id,
+        row->has_rssi ? row->rssi : 0,
+        0,
+        0,
+        row->messages,
+        state,
+        "",
+        detail);
+    /* Never let a fleet burst outrun the 8-slot queue: drain right after a
+     * RID row (record_drain writes at most 8 rows per call). */
+    record_drain(app);
+}
+
+/* Staleness sweep: at most one STALE transition per main-loop pass (the
+ * state helper enforces it), each one a session row + feedback edge. Runs
+ * regardless of tab — "STALE" means no message for N seconds, wherever the
+ * operator is looking. */
+static void rid_stale_tick(App* app) {
+    uint32_t now = furi_get_tick();
+    if((uint32_t)(now - app->rid_tick_ms) < 250U) return;
+    app->rid_tick_ms = now;
+    uint8_t idx = 0;
+    RoomSweepRidEdge edge = RoomSweepRidEdgeNone;
+    if(room_sweep_rid_state_tick(&app->rid, now, &idx, &edge)) {
+        rid_record_row(app, idx, edge);
+        app->rid_edge_pending = edge;
+    }
+}
+
 /* Process new UART lines — route to appropriate parser.
  * Marauder streams results continuously until stopscan — no "done" marker.
  * BFFB prefixes result lines with "> " — strip, do not drop (that hid all BLE/WiFi). */
@@ -2241,6 +2374,33 @@ static void process_uart_lines(App* app) {
                 }
             }
             furi_mutex_release(app->mutex);
+        } else if(app->mode == SweepModeAv) {
+            /* Remote ID text lines (ASTM F3411-22a / OpenDroneID). The
+             * tolerant parser skips unknown message types whole. The RID
+             * track state is main-loop-only (this function + feedback_tick),
+             * so no app->mutex round-trip is needed here. */
+            RoomSweepRidRecord rid_rec;
+            if(room_sweep_rid_parse_line(body, &rid_rec) != RoomSweepRidKindNone) {
+                uint32_t rid_now = furi_get_tick();
+                /* Opt-in watchlist match = cross-session RETURNING semantics
+                 * (never proof of the same physical drone — the row says so). */
+                bool watchlisted = app->watchlist_on && rid_rec.id_present &&
+                                   room_sweep_watchlist_find(&app->watchlist, rid_rec.id) >= 0;
+                RoomSweepRidEdge edge = RoomSweepRidEdgeNone;
+                bool log_row = false;
+                int rid_idx = room_sweep_rid_state_observe(
+                    &app->rid, &rid_rec, rid_now, watchlisted, &edge, &log_row);
+                if(rid_idx >= 0) {
+                    app->marauder_confirmed = true;
+                    app->marauder_confirmed_tick = rid_now;
+                    if(app->marauder_state == MarauderIdle ||
+                       app->marauder_state == MarauderError) {
+                        app->marauder_state = MarauderScanning;
+                    }
+                    if(log_row) rid_record_row(app, (uint8_t)rid_idx, edge);
+                    if(edge != RoomSweepRidEdgeNone) app->rid_edge_pending = edge;
+                }
+            }
         }
     }
 }
@@ -2882,6 +3042,24 @@ static void feedback_tick(App* app) {
     if((now / 250) % 2 == 0) blink_phase = true;
     else blink_phase = false;
 
+    /* AV alert edges (NEW DRONE / RETURNING DRONE / OPERATOR MOVED / STALE):
+     * one pulse per edge through the existing feedback ladder, on whatever
+     * tab the operator is (an alert that only fires on its own tab is no
+     * alert). Sound/Vibro settings are respected, never forced. */
+    RoomSweepRidEdge rid_edge = app->rid_edge_pending;
+    if(rid_edge != RoomSweepRidEdgeNone) {
+        app->rid_edge_pending = RoomSweepRidEdgeNone;
+        if(rid_edge == RoomSweepRidEdgeStale) {
+            if(app->vibro_on) notification_message(app->notif, &seq_ui_tick);
+        } else if(rid_edge == RoomSweepRidEdgeNew) {
+            if(app->sound_on) notification_message(app->notif, &seq_lock_tone);
+            if(app->vibro_on) notification_message(app->notif, &seq_vibro_pulse);
+        } else {
+            if(app->sound_on) notification_message(app->notif, &seq_ui_confirm_beep);
+            if(app->vibro_on) notification_message(app->notif, &seq_vibro_pulse);
+        }
+    }
+
     float peak = -120.0f;
     bool alerting = false;
     bool use_rssi_geiger = false;
@@ -3157,6 +3335,60 @@ static void feedback_tick(App* app) {
             notification_message(app->notif, &sequence_reset_rgb);
         }
         break;
+    case SweepModeAv: {
+        if(app->av_ui_page == AvSubEnergy) {
+            /* 2.4G energy page reuses the nR ACT-unit presentation: the peak
+             * is a synthetic meter position for pacing feedback, never dBm. */
+            room_sweep_nrf24_activity_tick(&app->nrf24, now);
+            bool av_nrf_live = (app->nrf24.phase == RoomSweepNrf24Scanning ||
+                                app->nrf24.phase == RoomSweepNrf24Done) &&
+                               app->nrf24.module_present;
+            peak = av_nrf_live ? (float)room_sweep_nrf24_activity_to_rssi(&app->nrf24) :
+                                 -120.0f;
+            alerting = av_nrf_live && (peak > RF_ALERT_THRESHOLD);
+        } else {
+            /* RID list/track: aged strongest tracked drone (broadcast RSSI),
+             * selection first so the row under the cursor leads. Ages fade
+             * the same way as Wi/BT so silence decays instead of freezing. */
+            bool av_sel = false, av_strong = false;
+            int8_t av_sel_rssi = -127, av_strong_rssi = -127;
+            uint32_t av_sel_age = ROOM_SWEEP_ANALYZER_DEAD_MS;
+            uint32_t av_strong_age = ROOM_SWEEP_ANALYZER_DEAD_MS;
+            for(uint8_t i = 0; i < app->rid.count && i < ROOM_SWEEP_RID_MAX_TRACKS; i++) {
+                const RoomSweepRidTrack* row = &app->rid.tracks[i];
+                if(!row->valid || !row->has_rssi) continue;
+                uint32_t age = row->last_seen_ms > 0 ? now - row->last_seen_ms :
+                                                       ROOM_SWEEP_ANALYZER_DEAD_MS;
+                if(i == app->rid.selected) {
+                    av_sel = true;
+                    av_sel_rssi = (int8_t)row->rssi;
+                    av_sel_age = age;
+                }
+                if(!av_strong || row->rssi > av_strong_rssi) {
+                    av_strong = true;
+                    av_strong_rssi = (int8_t)row->rssi;
+                    av_strong_age = age;
+                }
+            }
+            bool av_valid = false;
+            peak = room_sweep_feedback_pick_wireless(
+                false,
+                -127,
+                0,
+                av_sel,
+                av_sel_rssi,
+                av_sel_age,
+                av_strong,
+                av_strong_rssi,
+                av_strong_age,
+                &av_valid);
+            if(!av_valid) peak = -120.0f;
+            alerting = (peak > RF_ALERT_THRESHOLD);
+        }
+        use_rssi_geiger = true;
+        led_from_rssi(app->notif, peak, blink_phase);
+        break;
+    }
     case SweepModeInfo:
     default:
         notification_message(app->notif, &sequence_reset_rgb);
@@ -5394,6 +5626,235 @@ static void draw_nrf24_tab(Canvas* canvas, App* app) {
 }
 
 /* ================================================================== */
+/* Drawing: AV tab (air vehicles — RID list / track / 2.4G energy)     */
+/* Title "AIR VEHICLES" on detail/track, "RID LIST" on the list page.  */
+/* ================================================================== */
+#define UI_HINT_AV_LIST    "U/D=sel OK=det R=sub"
+#define UI_HINT_AV_DETAIL  "OK=back R=sub"
+#define UI_HINT_AV_TRACK   "OK=det R=sub"
+#define UI_HINT_AV_ENERGY  "OK=pass R=sub"
+
+/* One list row: ordinal, type/ID class, RSSI, age — 19-20 chars max. */
+static void draw_av_row(Canvas* canvas, uint8_t y, const RoomSweepRidTrack* row, bool selected) {
+    char buf[32];
+    char ord[8];
+    char rssi_text[8];
+    char age[8];
+    room_sweep_rid_ordinal_text(row->ordinal, ord, sizeof(ord));
+    if(row->has_rssi) {
+        snprintf(rssi_text, sizeof(rssi_text), "%d", row->rssi);
+    } else {
+        strncpy(rssi_text, "--", sizeof(rssi_text) - 1U);
+        rssi_text[sizeof(rssi_text) - 1U] = '\0';
+    }
+    if(row->last_seen_ms > 999000U) {
+        strncpy(age, "old", sizeof(age) - 1U);
+        age[sizeof(age) - 1U] = '\0';
+    } else {
+        snprintf(age, sizeof(age), "%lus", (unsigned long)(row->last_seen_ms / 1000U));
+    }
+    snprintf(
+        buf,
+        sizeof(buf),
+        "%c%s %s %s %s",
+        selected ? '>' : ' ',
+        ord,
+        room_sweep_rid_ua_type_label(row->ua_type),
+        rssi_text,
+        age);
+    /* Row age carries the staleness marker: "3s" fresh, "20s!" stale. */
+    if(row->stale) {
+        size_t len = strlen(buf);
+        if(len + 1 < sizeof(buf)) {
+            buf[len] = '!';
+            buf[len + 1] = '\0';
+        }
+    }
+    canvas_draw_str(canvas, UI_MARGIN_X, y, buf);
+}
+
+/* Integer speed formatting for panel lines: "5.25" / "-0.15" from cm/s
+ * (fraction sign handled so -15 cm/s never prints as "0.15"). */
+static void av_fmt_speed(char* out, size_t cap, int32_t cms) {
+    if(!out || cap == 0) return;
+    long whole = (long)(cms / 100);
+    long frac = (long)(cms % 100);
+    if(frac < 0) frac = -frac;
+    if(cms < 0 && whole == 0) {
+        snprintf(out, cap, "-0.%02ld", frac);
+    } else {
+        snprintf(out, cap, "%ld.%02ld", whole, frac);
+    }
+}
+
+static void draw_av_tab(Canvas* canvas, App* app) {
+    char buf[40];
+    canvas_set_font(canvas, FontKeyboard);
+    uint32_t now = furi_get_tick();
+
+    if(app->av_ui_page == AvSubEnergy) {
+        /* 2.4G energy page — the nR ACT-unit presentation. Never dBm,
+         * never a distance claim (RPD is a 1-bit energy detector). */
+        canvas_draw_str(canvas, 2, 14, "2.4G ENERGY");
+        snprintf(
+            buf,
+            sizeof(buf),
+            "act %u %s",
+            (unsigned)app->nrf24.activity_score,
+            room_sweep_nrf24_activity_units_label());
+        canvas_draw_str(canvas, 2, 26, buf);
+        snprintf(
+            buf,
+            sizeof(buf),
+            "phase %s",
+            room_sweep_nrf24_phase_label(app->nrf24.phase));
+        canvas_draw_str(canvas, 2, 36, buf);
+        if(!room_sweep_nrf24_spi_selected(app->spi_path)) {
+            canvas_draw_str(canvas, 2, 46, "need SPI=nRF24");
+        } else if(app->nrf24.present_checked && !app->nrf24.module_present) {
+            canvas_draw_str(canvas, 2, 46, "module not seen");
+        } else if(app->nrf24.active_channels == 0) {
+            canvas_draw_str(canvas, 2, 46, "no RPD energy yet");
+        } else {
+            snprintf(
+                buf,
+                sizeof(buf),
+                "act ch %u hits %lu",
+                (unsigned)app->nrf24.active_channels,
+                (unsigned long)app->nrf24.total_hits);
+            canvas_draw_str(canvas, 2, 46, buf);
+        }
+        canvas_draw_str(canvas, 2, 54, "energy only, no IDs");
+        canvas_draw_str(canvas, 2, 63, UI_HINT_AV_ENERGY);
+        return;
+    }
+
+    uint8_t sel = app->rid.selected;
+    if(app->av_detail) {
+        /* Detail page: every decoded field + operator-position indicator.
+         * Values are LAST BROADCAST, never a live position claim. */
+        canvas_draw_str(canvas, 2, 14, "AIR VEHICLES");
+        if(app->rid.count == 0 || sel >= app->rid.count) {
+            canvas_draw_str(canvas, 2, 30, "no drone selected");
+            canvas_draw_str(canvas, 2, 63, UI_HINT_AV_DETAIL);
+            return;
+        }
+        const RoomSweepRidTrack* row = &app->rid.tracks[sel];
+        char ord[8];
+        room_sweep_rid_ordinal_text(row->ordinal, ord, sizeof(ord));
+        snprintf(
+            buf,
+            sizeof(buf),
+            "%s %s %s",
+            ord,
+            room_sweep_rid_id_class_label(row->id_type),
+            room_sweep_rid_ua_type_label(row->ua_type));
+        canvas_draw_str(canvas, 2, 24, buf);
+        char spd[16];
+        av_fmt_speed(spd, sizeof(spd), row->speed_cms);
+        if(row->has_alt && row->has_speed) {
+            snprintf(buf, sizeof(buf), "alt %ldm spd %sm/s", (long)(row->alt_cm / 100), spd);
+        } else if(row->has_alt) {
+            snprintf(buf, sizeof(buf), "alt %ldm spd --", (long)(row->alt_cm / 100));
+        } else if(row->has_speed) {
+            snprintf(buf, sizeof(buf), "alt -- spd %sm/s", spd);
+        } else {
+            snprintf(buf, sizeof(buf), "alt -- spd --");
+        }
+        canvas_draw_str(canvas, 2, 34, buf);
+        char vs[16];
+        av_fmt_speed(vs, sizeof(vs), row->vspeed_cms);
+        if(row->has_heading) {
+            snprintf(buf, sizeof(buf), "hdg %d vs %sm/s", row->heading_deg, vs);
+        } else {
+            snprintf(buf, sizeof(buf), "hdg -- vs %sm/s", vs);
+        }
+        canvas_draw_str(canvas, 2, 44, buf);
+        snprintf(
+            buf,
+            sizeof(buf),
+            "age %lus op:%s",
+            (unsigned long)((now - row->last_seen_ms) / 1000U),
+            row->has_op_pos ? (row->op_moves > 0 ? "moved" : "seen") : "none");
+        canvas_draw_str(canvas, 2, 54, buf);
+        canvas_draw_str(canvas, 2, 63, UI_HINT_AV_DETAIL);
+        return;
+    }
+
+    if(app->av_ui_page == AvSubTrack) {
+        /* Track sub-mode: selected drone's last-known alt/speed/heading + age.
+         * Honest labels: "last broadcast", never "current position". */
+        canvas_draw_str(canvas, 2, 14, "AIR VEHICLES");
+        if(app->rid.count == 0 || sel >= app->rid.count) {
+            canvas_draw_str(canvas, 2, 30, "no drone selected");
+            canvas_draw_str(canvas, 2, 42, "browse the RID list");
+            canvas_draw_str(canvas, 2, 63, UI_HINT_AV_TRACK);
+            return;
+        }
+        const RoomSweepRidTrack* row = &app->rid.tracks[sel];
+        char ord[8];
+        room_sweep_rid_ordinal_text(row->ordinal, ord, sizeof(ord));
+        snprintf(buf, sizeof(buf), "TRACK %s", ord);
+        canvas_draw_str(canvas, 2, 24, buf);
+        char spd[16];
+        av_fmt_speed(spd, sizeof(spd), row->speed_cms);
+        if(row->has_alt && row->has_speed) {
+            snprintf(buf, sizeof(buf), "alt %ldm spd %sm/s", (long)(row->alt_cm / 100), spd);
+        } else if(row->has_alt) {
+            snprintf(buf, sizeof(buf), "alt %ldm spd --", (long)(row->alt_cm / 100));
+        } else if(row->has_speed) {
+            snprintf(buf, sizeof(buf), "alt -- spd %sm/s", spd);
+        } else {
+            snprintf(buf, sizeof(buf), "alt -- spd --");
+        }
+        canvas_draw_str(canvas, 2, 34, buf);
+        char vs[16];
+        av_fmt_speed(vs, sizeof(vs), row->vspeed_cms);
+        if(row->has_heading) {
+            snprintf(buf, sizeof(buf), "hdg %d vs %sm/s", row->heading_deg, vs);
+        } else {
+            snprintf(buf, sizeof(buf), "hdg -- vs %sm/s", vs);
+        }
+        canvas_draw_str(canvas, 2, 44, buf);
+        /* Honest label: "last broadcast", never "current position" — the
+         * values may already be seconds old; "!" marks a STALE row. */
+        snprintf(
+            buf,
+            sizeof(buf),
+            "last broadcast %lus%s",
+            (unsigned long)((now - row->last_seen_ms) / 1000U),
+            row->stale ? "!" : "");
+        canvas_draw_str(canvas, 2, 54, buf);
+        canvas_draw_str(canvas, 2, 63, UI_HINT_AV_TRACK);
+        return;
+    }
+
+    /* RID LIST page: ordinal, type/ID class, RSSI, age. */
+    canvas_draw_str(canvas, 2, 14, "RID LIST");
+    snprintf(buf, sizeof(buf), "n=%u", (unsigned)app->rid.count);
+    canvas_draw_str(
+        canvas,
+        room_sweep_ui_right_align_x(UI_TEXT_RIGHT_EDGE, canvas_string_width(canvas, buf)),
+        14,
+        buf);
+    if(app->rid.count == 0) {
+        canvas_draw_str(canvas, 2, 30, "no RID messages seen");
+        canvas_draw_str(canvas, 2, 42, "parse ready; TX gated");
+        canvas_draw_str(canvas, 2, 63, UI_HINT_AV_LIST);
+        return;
+    }
+    /* 4 visible rows (y24..y54), scrolled around the selection. */
+    uint8_t first = 0;
+    if(sel >= 4U) first = (uint8_t)(sel - 3U);
+    for(uint8_t visible = 0; visible < 4U; visible++) {
+        uint8_t i = (uint8_t)(first + visible);
+        if(i >= app->rid.count || i >= ROOM_SWEEP_RID_MAX_TRACKS) break;
+        draw_av_row(canvas, (uint8_t)(24 + visible * 10), &app->rid.tracks[i], i == sel);
+    }
+    canvas_draw_str(canvas, 2, 63, UI_HINT_AV_LIST);
+}
+
+/* ================================================================== */
 /* Drawing: TX tab (safety-gated, multi-step arming)                   */
 /* ================================================================== */
 static void draw_tx_tab(Canvas* canvas, App* app) {
@@ -5827,6 +6288,9 @@ static void draw_cb(Canvas* canvas, void* ctx) {
         case SweepModeNrf24:
             draw_nrf24_tab(canvas, app);
             break;
+        case SweepModeAv:
+            draw_av_tab(canvas, app);
+            break;
         case SweepModeGps:
             draw_gps_tab(canvas, app);
             break;
@@ -5886,17 +6350,18 @@ static void draw_cb(Canvas* canvas, void* ctx) {
         canvas_draw_str(canvas, UI_MARGIN_X, UI_TAB_STRIP_H, fs);
         canvas_set_color(canvas, ColorBlack);
     } else {
-        /* Compact tab strip (y0..5) — body content starts at y≥15 to avoid collision. */
-        static const char* tab_labels[] = {"RF", "Wi", "BT", "nR", "GP", "TX", "i"};
+        /* Compact tab strip (y0..5) — body content starts at y≥15 to avoid collision.
+         * 8 tabs at a 16px stride (15px cell + 1px gap) span x=1..127. */
+        static const char* tab_labels[] = {"RF", "Wi", "BT", "nR", "GP", "TX", "i", "AV"};
         for(int t = 0; t < SweepModeCount; t++) {
-            uint8_t x = (uint8_t)(1 + t * 18);
+            uint8_t x = (uint8_t)(1 + t * 16);
             if(t == (int)app->mode) {
-                canvas_draw_box(canvas, x, 0, 17, 5);
+                canvas_draw_box(canvas, x, 0, 15, 5);
                 canvas_set_color(canvas, ColorWhite);
                 canvas_draw_str(canvas, (uint8_t)(x + 3), 5, tab_labels[t]);
                 canvas_set_color(canvas, ColorBlack);
             } else {
-                canvas_draw_frame(canvas, x, 0, 17, 5);
+                canvas_draw_frame(canvas, x, 0, 15, 5);
                 canvas_draw_str(canvas, (uint8_t)(x + 3), 5, tab_labels[t]);
             }
         }
@@ -6252,6 +6717,13 @@ int32_t room_sweep_app(void* p) {
     app->rf_ui_page = 0;
     app->nrf_ui_page = 0;
 
+    /* AV tab (Remote ID): fresh track state every launch. */
+    room_sweep_rid_state_reset(&app->rid);
+    app->av_ui_page = AvSubList;
+    app->av_detail = false;
+    app->rid_edge_pending = RoomSweepRidEdgeNone;
+    app->rid_tick_ms = 0;
+
     /* TX defaults — 433.92 MHz preset index 3 in the expanded table */
     app->tx_state = TxDisarmed;
     app->tx_freq_idx = 3;
@@ -6358,8 +6830,10 @@ int32_t room_sweep_app(void* p) {
             }
             record_drain(app);
 
-            /* nRF24 RPD sample steps (main loop — SPI not in RF thread). */
-            if(app->mode == SweepModeNrf24 &&
+            /* nRF24 RPD sample steps (main loop — SPI not in RF thread).
+             * The AV tab's 2.4G energy page runs the same detect-only pass. */
+            if((app->mode == SweepModeNrf24 ||
+                (app->mode == SweepModeAv && app->av_ui_page == AvSubEnergy)) &&
                app->nrf24.phase == RoomSweepNrf24Scanning && app->nrf24_bus_open) {
                 uint32_t nnow = furi_get_tick();
                 if(nnow - app->nrf24_last_step_tick >= 2U) {
@@ -6376,6 +6850,7 @@ int32_t room_sweep_app(void* p) {
 
             full_sweep_tick(app);
             analyzer_feed_tick(app);
+            rid_stale_tick(app);
 
             /* Meter suite: waterfall snapshot (~2.5 Hz) while its sub-mode shows. */
             if(app->mode == SweepModeRF && app->rf_sub == RfSubWaterfall) {
@@ -7049,6 +7524,12 @@ int32_t room_sweep_app(void* p) {
                     (uint8_t)((app->info_page + 1U) % INFO_PAGE_COUNT);
                 continue;
             }
+            if(app->mode == SweepModeAv) {
+                /* Hold Right cycles the AV pages (RID LIST / TRACK / 2.4G). */
+                app->av_ui_page = (uint8_t)((app->av_ui_page + 1U) % AV_PAGE_COUNT);
+                app->av_detail = false;
+                continue;
+            }
         }
 
         /* --- RF tab: short Up/Down cycles sub-modes, Hold Up/Down opens the
@@ -7158,6 +7639,41 @@ int32_t room_sweep_app(void* p) {
                 } else {
                     nrf24_start_survey(app);
                 }
+            }
+            continue;
+        }
+
+        /* --- AV tab: browse the RID list, open detail, run the energy pass --- */
+        if(app->mode == SweepModeAv) {
+            if(app->av_ui_page == AvSubEnergy) {
+                /* Energy page: OK runs/stops the same detect-only RPD pass
+                 * the nR tab uses (ACT units on screen, never dBm). */
+                if(input_action == RoomSweepInputPrimary) {
+                    if(app->nrf24.phase == RoomSweepNrf24Scanning) {
+                        nrf24_stop_survey(app);
+                        nrf24_finish_and_log(app);
+                    } else {
+                        nrf24_start_survey(app);
+                    }
+                }
+            } else {
+                if(input_action == RoomSweepInputBrowseUp ||
+                   input_action == RoomSweepInputBrowseDown) {
+                    app->rid.selected = room_sweep_rid_state_step(
+                        &app->rid, input_action == RoomSweepInputBrowseDown);
+                } else if(input_action == RoomSweepInputPrimary) {
+                    /* OK opens/closes the decoded-fields detail page. */
+                    app->av_detail = !app->av_detail;
+                }
+            }
+            /* Hold OK: remoteid clear + rescan — GATED with the whole send
+             * path (room_sweep.h). Nothing is sent while the gate is 0. */
+            if(input_action == RoomSweepInputSecondary &&
+               ROOM_SWEEP_RID_SEND_ENABLED != 0 && app->serial) {
+                marauder_send(app, MARAUDER_CMD_RID_CLEAR);
+                furi_delay_ms(80);
+                app->av_detail = false;
+                marauder_start_for_mode(app);
             }
             continue;
         }

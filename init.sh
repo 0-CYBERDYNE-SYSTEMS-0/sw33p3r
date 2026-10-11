@@ -120,6 +120,14 @@ echo "== host RF presets =="
 cc -std=c11 -Wall -Wextra -Werror -pedantic -I. tests/test_rf_presets.c -o /tmp/test_rf_presets
 /tmp/test_rf_presets
 
+echo "== host Remote ID parse =="
+cc -std=c11 -Wall -Wextra -Werror -pedantic -I. tests/test_rid.c -o /tmp/test_rid
+/tmp/test_rid
+
+echo "== host RID list/track state =="
+cc -std=c11 -Wall -Wextra -Werror -pedantic -I. tests/test_rid_state.c -o /tmp/test_rid_state
+/tmp/test_rid_state
+
 echo "== ufbt build =="
 ufbt
 
