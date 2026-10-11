@@ -219,6 +219,42 @@ sniff…` — a hostile-tooling detector (other people's offensive WiFi gear).
 **`settings`:** dumps name/type/value blocks (ForcePMKID, ForceProbe,
 SavePCAP, EnableLED — the tested fixture records these as `true`).
 **`sniffdeauth`, `scanall`:** confirmed ABSENT from this build's CLI.
+**UPDATE 2026-10-11:** `sniffdeauth` IS present on the current build (see the
+2026-10-11 receipt below) — build drift since 2026-09-20; the app still never
+sends it (mission ban). `scanall` remains absent.
+
+## Live probe receipt (2026-10-11, USB-UART bridge, operator's BFFB)
+
+Full probe battery + `help` transcript: `.omo/evidence/marauder-probe-2026-10-11-165200.txt`
+(local-only). Command set on the CURRENT build: `channel`, `settings`,
+`clearlist`, `reboot`, `update`, `ls`, `led`, `gpsdata`, `gps`, `nmea`,
+`evilportal`, `sigmon`, `scanap`, `scansta`, `sniffraw`, `sniffbeacon`,
+`sniffprobe`, `sniffpwn`, `sniffesp`, `sniffdeauth`, `sniffpmkid`, `stopscan`,
+`wardrive`, `attack`, `list -s/-a/-c`, `select`, `ssid`, `save`/`load`,
+`sniffbt`, `blespam`, `btwardrive`, `sniffskim`. (Attack-family commands are
+listed for completeness only — Room Sweep never sends them.)
+
+- **`remoteid` is NOT compiled into this build.** `help` lists no `remoteid`,
+  and unknown commands are silently ignored (bare `remoteid` returns only the
+  prompt — no error line), which is why the 2026-10-11 `remoteid scan/list/
+  clear` probe steps produced empty sections rather than errors. The AV tab
+  RID send path (`ROOM_SWEEP_RID_SEND_ENABLED` in `room_sweep.h`) therefore
+  **stays 0**: flip it only on a build whose `help` lists `remoteid`, backed
+  by a fresh probe receipt pinning the output format. Upstream Marauder
+  documents `remoteid` for newer builds/targets.
+- **`scanap` record format pinned live** (redacted): one record =
+  `RSSI: -NN Ch: N BSSID: <mac> ESSID: <ssid> ` + continuation line
+  `Beacon: 11 NN <index> <count>` (the capability-suffix family — the second
+  line must not be parsed as a fresh record).
+- **`scansta` requires `scanap` first:** replies `The AP list is empty. Scan
+  APs first with scanap` when the AP list is empty. Station-line format is
+  STILL unpinned (no station lines captured). Standing decision holds:
+  `scanap`/`scansta` stay unsent in the app.
+- `list -a`: `[<idx>][CH:N] <ssid> <cap-suffix>` rows + `N selected`;
+  `list -s`: `N selected`.
+- `sniffbeacon` / `sniffraw` output shapes re-confirmed live; they match the
+  shipped parsers. `settings` matches the 2026-09-20 fixture
+  (ForcePMKID/ForceProbe/SavePCAP/EnableLED).
 
 ## Format pins from upstream source (2026-09-20, Phase 5/10)
 
