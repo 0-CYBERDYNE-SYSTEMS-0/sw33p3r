@@ -405,11 +405,15 @@ def ordinal_stats(events):
     return groups
 
 
-def sparkline_svg(values, width=248, height=44, spark_id="s", color="#5aa9ff"):
+def sparkline_svg(values, width=248, height=44, spark_id="s", color="#5aa9ff",
+                  obs=0):
     """Inline SVG RSSI sparkline tinted with its source's palette hue:
-    gradient area + accent line + end dot."""
-    if not values:
-        return '<span class="empty">no samples</span>'
+    gradient area + accent line + end dot. A trend needs at least two
+    samples; fewer than two renders an intentional muted state (styled as
+    the existing empty-state language), never a placeholder or a stray
+    dot. obs = the device's observation count."""
+    if len(values) < 2:
+        return '<span class="empty">%d obs \u00b7 no trend</span>' % obs
     low, high = min(values), max(values)
     spread = (high - low) or 1
     pad_x, pad_y = 4.0, 6.0
@@ -423,19 +427,6 @@ def sparkline_svg(values, width=248, height=44, spark_id="s", color="#5aa9ff"):
     pts = [point(i, v) for i, v in enumerate(values)]
     line = " ".join("%.1f,%.1f" % p for p in pts)
     end_x, end_y = pts[-1]
-    if count == 1:
-        # Single sample: designed baseline + centered dot, not a stray dot.
-        mid_x, mid_y = width / 2.0, height / 2.0
-        return (
-            '<svg class="spark" width="%(w)d" height="%(h)d" '
-            'viewBox="0 0 %(w)d %(h)d" preserveAspectRatio="none" '
-            'role="img" aria-label="RSSI sparkline: single sample">'
-            '<line x1="%(pad).1f" y1="%(my).1f" x2="%(mx2).1f" y2="%(my).1f" '
-            'stroke="#2e3949" stroke-width="1" stroke-dasharray="3 4"/>'
-            '<circle cx="%(cx).1f" cy="%(cy).1f" r="3" fill="%(c)s"/>'
-            "</svg>"
-        ) % {"w": width, "h": height, "pad": pad_x, "my": mid_y,
-             "mx2": width - pad_x, "cx": mid_x, "cy": mid_y, "c": color}
     area = "%.1f,%.1f " % (pts[0][0], height - 1.0) + line + \
         " %.1f,%.1f" % (pts[-1][0], height - 1.0)
     fill_hi = hex_rgba(color, 0.28)
@@ -587,11 +578,11 @@ SOURCE_COLORS = {
     "RF": ("#6ea8fe", "rgba(110,168,254,0.12)", "rgba(110,168,254,0.30)"),
     "WATCH": ("#9dbdf7", "rgba(157,189,247,0.12)", "rgba(157,189,247,0.30)"),
     "WIFI": ("#57c785", "rgba(87,199,133,0.12)", "rgba(87,199,133,0.30)"),
-    "NRF24": ("#86d6a5", "rgba(134,214,165,0.12)", "rgba(134,214,165,0.30)"),
+    "NRF24": ("#abe3c1", "rgba(171,227,193,0.12)", "rgba(171,227,193,0.30)"),
     "BLE": ("#9d7cd8", "rgba(157,124,216,0.12)", "rgba(157,124,216,0.30)"),
     "GPS": ("#3fc9b0", "rgba(63,201,176,0.12)", "rgba(63,201,176,0.30)"),
     "TX": ("#ef6b6b", "rgba(239,107,107,0.12)", "rgba(239,107,107,0.30)"),
-    "RID": ("#f08c46", "rgba(240,140,70,0.12)", "rgba(240,140,70,0.30)"),
+    "RID": ("#f4a771", "rgba(244,167,113,0.12)", "rgba(244,167,113,0.30)"),
     "FPV": ("#f2a86b", "rgba(242,168,107,0.12)", "rgba(242,168,107,0.30)"),
     "SYSTEM": ("#8b96a6", "rgba(139,150,166,0.10)", "rgba(139,150,166,0.26)"),
 }
@@ -755,7 +746,8 @@ h3 .sub{font-family:var(--mono);font-size:12px;font-weight:400;color:var(--faint
 .device .head{display:flex;align-items:center;justify-content:space-between;gap:8px}
 .device .ident{font-family:var(--mono);font-size:14px;font-weight:600;letter-spacing:.02em}
 .device .ident .label{margin-left:8px;font-size:11px;font-weight:500;color:var(--alert)}
-.device .stats{display:flex;gap:24px;margin-top:16px}
+.device .stats{display:grid;column-gap:24px;margin-top:16px;
+  grid-template-columns:minmax(52px,1.25fr) minmax(52px,1.25fr) minmax(32px,.6fr) minmax(32px,.9fr)}
 .device .stat{min-width:52px}
 .device .stat .k{font-family:var(--mono);font-size:10px;letter-spacing:.14em;
   text-transform:uppercase;color:var(--faint)}
@@ -764,7 +756,10 @@ h3 .sub{font-family:var(--mono);font-size:12px;font-weight:400;color:var(--faint
 .device .spark-wrap{margin-top:16px;padding-top:16px;border-top:1px solid var(--border)}
 .spark{display:block;width:100%;height:44px}
 .device .foot{margin-top:12px;font-family:var(--mono);font-size:11px;
-  color:var(--faint);line-height:1.6}
+  color:var(--faint);line-height:1.6;
+  display:grid;column-gap:24px;
+  grid-template-columns:minmax(52px,1.25fr) minmax(52px,1.25fr) minmax(32px,.6fr) minmax(32px,.9fr)}
+.device .foot .ts{white-space:nowrap}
 
 /* tables */
 .tbl-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:10px;
@@ -780,7 +775,7 @@ tbody tr:last-child td{border-bottom:none}
 tbody tr{transition:background .12s ease}
 tbody tr:hover{background:rgba(90,169,255,0.05)}
 td .detail{color:var(--dim);font-family:var(--mono);font-size:11.5px;
-  word-break:break-word;max-width:520px}
+  line-height:1.7;word-break:break-word;max-width:520px}
 td.r{text-align:right}
 .t-source .chip{margin-right:8px;vertical-align:1px}
 tr.sys td{color:var(--faint)}
@@ -952,8 +947,10 @@ footer{margin-top:64px;padding-top:24px;border-top:1px solid var(--border);
             report_val = ('<span class="v"><span class="pill off">'
                           "report on file</span></span>")
         else:
+            report_label = ("no report \u00b7 coord data") if s["has_coords"] \
+                else "no report"
             report_val = ('<span class="v"><span class="pill off">'
-                          "no report</span></span>")
+                          "%s</span></span>" % report_label)
         source_order = [k for family in FAMILY_ORDER for k in KNOWN_SOURCES
                         if SOURCE_FAMILY.get(k) == family and k in sources]
         source_order += sorted(k for k in sources if k not in KNOWN_SOURCES)
@@ -1041,9 +1038,8 @@ footer{margin-top:64px;padding-top:24px;border-top:1px solid var(--border);
             ident_html += "</span>"
             channels = ("ch " + ",".join(str(c) for c in g["channels"])) \
                 if g["channels"] else ""
-            freqs = (" \u00b7 " + ", ".join("%.3f MHz" % (f / 1e6)
-                                           for f in g["freqs"])) \
-                if g["freqs"] else ""
+            freqs = ", ".join("%.3f MHz" % (f / 1e6)
+                              for f in g["freqs"]) if g["freqs"] else ""
             add('<div class="device"><div class="head">%s%s</div>'
                 '<div class="stats">'
                 '<div class="stat"><div class="k">min</div><div class="v">%s</div></div>'
@@ -1052,15 +1048,20 @@ footer{margin-top:64px;padding-top:24px;border-top:1px solid var(--border);
                 '<div class="stat"><div class="k">obs</div><div class="v">%d</div></div>'
                 "</div>"
                 '<div class="spark-wrap">%s</div>'
-                '<div class="foot">first t+%ss \u00b7 last t+%ss%s%s</div>'
+                '<div class="foot">'
+                '<span class="ts">first t+%ss</span>'
+                '<span class="ts">last t+%ss</span>'
+                '<span class="ts">%s</span>'
+                "<span>%s</span>"
+                "</div>"
                 "</div>"
                 % (ident_html, chip(g["source"]),
                    fmt_rssi(g["min"]), fmt_rssi(g["avg"]), fmt_rssi(g["max"]),
                    g["n"],
                    sparkline_svg(g["values"], spark_id="sp%d" % spark_counter[0],
-                                 color=source_solid(g["source"])),
+                                 color=source_solid(g["source"]), obs=g["n"]),
                    fmt_t(g["first"] - t0), fmt_t(g["last"] - t0),
-                   (" \u00b7 " + channels) if channels else "", freqs))
+                   channels, freqs))
         add("</div>")
 
         # map
@@ -1138,7 +1139,7 @@ window.SWEEP_SRC=__SRC__;
           style:function(){return {color:'#5aa9ff',weight:2.5,opacity:.9};},
           pointToLayer:function(feature,latlng){
             var p=feature.properties||{};
-            var color=p.kind==='rid'?(p.role==='operator'?'#e8b04b':'#f08c46')
+            var color=p.kind==='rid'?(p.role==='operator'?'#e8b04b':(window.SWEEP_SRC['RID']||'#8c96a6'))
               :(window.SWEEP_SRC[p.source]||'#8c96a6');
             return L.circleMarker(latlng,{radius:p.kind==='rid'?7:5,
               color:color,weight:1.5,fillColor:color,fillOpacity:.35});
