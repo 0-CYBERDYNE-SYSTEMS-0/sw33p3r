@@ -38,6 +38,10 @@ enum {
      * launch (the app keeps no settings file), so "never persisted ON" is
      * guaranteed the same way as the Wi capture source default. */
     RoomSweepSetWatchlist,
+    /* FieldSweep (specs/field-sweep.md): outdoor GPS-stamped survey loop.
+     * OFF by construction on every launch, same pattern as WiSource/Watchlist;
+     * enabling requires GPS Log ON (refused otherwise). */
+    RoomSweepSetFieldSweep,
     RoomSweepSetCount,
 };
 
@@ -114,6 +118,7 @@ static inline RoomSweepSetGroup room_sweep_set_group_of(uint8_t setting) {
     case RoomSweepSetDump:
     case RoomSweepSetFullSweep:
     case RoomSweepSetWatchlist:
+    case RoomSweepSetFieldSweep:
         return RoomSweepSetGroupSession;
     default:
         return RoomSweepSetGroupFeedback;

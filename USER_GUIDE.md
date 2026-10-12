@@ -364,6 +364,44 @@ Every value toggle confirms with a soft tick/beep (respects Sound/Vibro).
 | TXDur | Carrier length 1–10 s |
 | FullSweep | Auto RF→Wi→BT→raw→probe→nR→GPS, save report, **SWEEP DONE** |
 | Watchlist | Cross-session flags, **off** every launch (opt-in) |
+| FieldSweep | Outdoor GPS-stamped looping sweep (needs GPS Log), **off** every launch |
+
+## FieldSweep (outdoor loop — "room sweep, but outside")
+
+Settings → FieldSweep → OK, with **GPS Log already ON** (the toggle is **off**
+every launch, same as WiSrc/Watchlist — nothing is persisted). With GPS Log
+OFF the enable is **refused** — the row shows `NEED LOG` and the CSV records
+`FieldSweep needs GPS Log ON`. It never runs "quietly without coordinates";
+that would be a silent coordinate drop.
+
+While it runs:
+
+- The FullSweep phases (RF→Wi→BT→Wi-raw→Probe→nR→GPS) **loop continuously**;
+  each completed pass restarts at RF. **Back stops** the loop and saves the
+  session (Settings → FullSweep `OK=` or the FieldSweep toggle stop it too).
+- The top strip shows the field banner (`FIELD n2 Wi-raw 183m` = pass number ·
+  phase · distance walked so far). Pages are unchanged; the GPS tab still owns
+  the radar page — field mode only stamps and loops.
+- Every evidence row's detail gains the latest-fix coordinate token
+  `pos=<lat>/<lon>/<alt>` (e.g. `pos=37.774900/-122.419400/na`) — same values
+  as the row's lat/lon columns, only with GPS Log ON and a usable fix. The
+  token is CSV-safe (slashes, never commas). Altitude reads `na` because this
+  build's NMEA parser does not parse altitude — it is never invented. Drop
+  rows and TX rows are never stamped (drop rows are written at drain time, and
+  field mode never touches TX at all).
+- **Movement-aware sampling:** a device seen for the first time always gets a
+  row; already-seen rows thin out (one per 1.5 s at walking pace, one per 8 s
+  above walking pace) so a long walk cannot flood the 8-slot record queue.
+  Sampling drops are not counted as lost evidence; identity overflow past the
+  64-entry map still comes out `REDACTED` — honest, never leaking identifiers.
+- Turning **GPS Log OFF while the loop runs stops it loudly** (logged as
+  `field_sweep_stop; gps_log_off`) rather than continuing without coordinates.
+
+The Room Report gains a **Field sweep** section: total active time, passes,
+distance walked (GPS haversine over your fix path), fixes used, per-source
+hit counts (RF / Wi-Fi / BLE / GPS / nRF24 / RID), and the **area bounding
+box of YOUR path — not of the emitters** (omitted with a clear label if
+coordinates were not allowed). No TX interaction of any kind.
 
 ## Watchlist (opt-in — the app's only persistent-identity feature)
 
@@ -403,8 +441,8 @@ Path: `/ext/apps_data/room_sweep/`
 
 | File | Contents |
 |------|----------|
-| `session-N.csv` | Events; Wi/BT IDs as session ordinals; identified Wi/BT observation details carry `oui=<label\|unlisted\|randomized>`, `min=<a> max=<b> avg=<c>` signal stats, `rogue=<n>` when the SSID is shared across BSSIDs, `watch=1` on rows whose address is on the opt-in watchlist, and, when the name matched a pattern, `hints=<tag>` (details are bounded; when space is tight the trailing evidence phrase yields first and a value is never cut) |
-| `report-N.txt` | Plain Room Report; adds a `Vendors seen` list (when curated labels matched), a `Hints (name-pattern guesses only)` count, a `Possible cloned SSIDs` line with the mesh caveat (when duplicate-SSID groups existed), a `Watchlist matches: N` section with the persistent-identity honesty line (only when the watchlist was ON), and the strongest device's observed range |
+| `session-N.csv` | Events; Wi/BT IDs as session ordinals; identified Wi/BT observation details carry `oui=<label\|unlisted\|randomized>`, `min=<a> max=<b> avg=<c>` signal stats, `rogue=<n>` when the SSID is shared across BSSIDs, `watch=1` on rows whose address is on the opt-in watchlist, `pos=<lat>/<lon>/<alt>` coordinate tokens from FieldSweep (GPS Log ON only), and, when the name matched a pattern, `hints=<tag>` (details are bounded; when space is tight the trailing evidence phrase yields first and a value is never cut) |
+| `report-N.txt` | Plain Room Report; adds a `Vendors seen` list (when curated labels matched), a `Hints (name-pattern guesses only)` count, a `Possible cloned SSIDs` line with the mesh caveat (when duplicate-SSID groups existed), a `Watchlist matches: N` section with the persistent-identity honesty line (only when the watchlist was ON), a `Field sweep` section (duration, walked distance, fixes used, per-source hits, your-path bounding box — only when FieldSweep ran), and the strongest device's observed range |
 | `uart-N.txt` | Only from Raw Dump (may include raw IDs/GPS) |
 | `watchlist.txt` | Only from the opt-in watchlist: one `mac,label` line per address you flagged by hand — the only file where raw identifiers persist |
 
@@ -450,6 +488,7 @@ Settings → FullSweep → OK:
 - `WATCH` means you flagged that address earlier — a "here before" reminder; addresses can be spoofed or re-randomized, so a match is not an identification
 - `RETURNING DRONE` on a watchlist match is the same class of reminder — a matching serial is not proof of the same physical drone session-over-session without a sighting gap model
 - Remote ID repeats what the drone broadcasts about itself (and its operator position); `OPERATOR MOVED` is an alert edge, not a distance, and operator identity lookup is FAA-only
+- The Field sweep area box is the bounding box of **your path**, not of the emitters — it says where you walked, never where a signal source is
 - Coverage: 16 RF presets, 3 CC1101 bands (348–387 and 464–779 MHz invisible), no 5 GHz
 - Misses: non-transmitting recorders, burst TX between samples, out-of-band, wired
 - No hit ≠ proof of absence  

@@ -39,6 +39,10 @@ echo "== host full-sweep + radio path =="
 cc -std=c11 -Wall -Wextra -Werror -I. tests/test_full_sweep_state.c -o /tmp/room_sweep_full_sweep_test
 /tmp/room_sweep_full_sweep_test
 
+echo "== host field sweep policy =="
+cc -std=c11 -Wall -Wextra -Werror -pedantic -I. tests/test_field.c -lm -o /tmp/room_sweep_field_test
+/tmp/room_sweep_field_test
+
 echo "== host nRF24 survey state =="
 cc -std=c11 -Wall -Wextra -Werror -I. tests/test_nrf24_state.c -o /tmp/room_sweep_nrf24_state_test
 /tmp/room_sweep_nrf24_state_test

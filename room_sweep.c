@@ -47,6 +47,7 @@
 #include "room_sweep_probe.h"
 #include "room_sweep_tool.h"
 #include "room_sweep_full_sweep.h"
+#include "room_sweep_field.h"
 #include "room_sweep_radio_path.h"
 #include "room_sweep_nrf24_state.h"
 #include "room_sweep_rid.h"
@@ -399,6 +400,13 @@ typedef struct {
     uint32_t full_sweep_done_until_tick; /* inverted DONE banner until this tick */
     uint32_t full_sweep_report_ordinal; /* session number written on auto-save */
 
+    /* FieldSweep (specs/field-sweep.md): outdoor GPS-stamped survey loop.
+     * OFF by construction every launch (never persisted). Rate-limit stamps
+     * are per source (RF/WIFI/BLE/NRF24/RID) x row class (new/seen) — the
+     * policy itself lives in room_sweep_field.h (host-tested). */
+    RoomSweepFieldState field;
+    uint32_t field_accept_tick[5][2];
+
     /* Per-scanner visual analyzer (proximity / spectrum) — Long Left toggles */
     bool analyzer_view; /* true while current scanner shows analyzer UI */
     uint8_t analyzer_ui_page; /* 0=hunt, 1=field, 2=radar, 3=big meter */
@@ -508,6 +516,7 @@ static const uint32_t tx_freq_presets[TX_FREQ_PRESET_COUNT] = {
 #define SET_TXDUR     RoomSweepSetTxDur
 #define SET_FULLSWEEP RoomSweepSetFullSweep
 #define SET_WATCHLIST RoomSweepSetWatchlist
+#define SET_FIELDSWEEP RoomSweepSetFieldSweep
 #define SET_COUNT     RoomSweepSetCount
 
 #define RESCAN_INTERVAL_MS 5000
@@ -1023,7 +1032,60 @@ static void record_drain(App* app) {
     }
 }
 
+/* ---- FieldSweep (specs/field-sweep.md) record-path helpers ---- */
+
+/*
+ * Snapshot the FieldSweep run stats into the session so the Room Report gets
+ * its "Field sweep" section (duration, walked distance, fixes used, the
+ * honest operator-path bbox). Idempotent: stopping freezes the accumulated
+ * values, and a second note is a no-op change. Main-loop-only.
+ */
+static void field_note_report_stats(App* app) {
+    if(!app || !app->field.ran) return;
+    room_sweep_field_stop(&app->field, furi_get_tick());
+    RoomSweepReportField field;
+    memset(&field, 0, sizeof(field));
+    field.ran = true;
+    field.coordinates_allowed = app->field.coords_recorded;
+    field.duration_ms = room_sweep_field_duration_ms(&app->field, furi_get_tick());
+    field.distance_m = app->field.distance_m;
+    field.fixes_used = app->field.fixes_used;
+    field.loops = app->field.loops;
+    field.have_bbox = app->field.have_bbox;
+    field.min_lat_e6 = app->field.min_lat_e6;
+    field.max_lat_e6 = app->field.max_lat_e6;
+    field.min_lon_e6 = app->field.min_lon_e6;
+    field.max_lon_e6 = app->field.max_lon_e6;
+    session_log_note_field_active(false);
+    session_log_note_field(&field);
+}
+
+/*
+ * Movement-aware sampling gate (specs/field-sweep.md): active only while the
+ * FieldSweep loop runs — outside it every row logs as before. New identities
+ * pass first; already-seen rows are rate-limited harder as speed rises so a
+ * long walk cannot flood the 8-slot record queue. The stamps are per source
+ * x row class; only the RF slot is touched from the RF thread (its own slot,
+ * same pattern as last_rf_record_tick), the rest are main-loop-only.
+ */
+static bool field_row_allowed(App* app, uint8_t source_idx, RoomSweepFieldRowClass cls) {
+    if(!room_sweep_field_is_running(&app->field)) return true;
+    if(source_idx >= 5U || (unsigned)cls >= (unsigned)RoomSweepFieldRowClassCount) return true;
+    uint32_t now = furi_get_tick();
+    uint32_t last = app->field_accept_tick[source_idx][cls];
+    uint32_t elapsed = (last == 0) ? UINT32_MAX : (uint32_t)(now - last);
+    furi_mutex_acquire(app->gps_mutex, FuriWaitForever);
+    uint32_t speed_dkh = (uint32_t)(app->gps.speed_kts * 18.52f + 0.5f);
+    furi_mutex_release(app->gps_mutex);
+    if(!room_sweep_field_row_allowed(room_sweep_field_pace(speed_dkh), cls, elapsed)) return false;
+    app->field_accept_tick[source_idx][cls] = now;
+    return true;
+}
+
 static void record_finish_session(App* app) {
+    /* Field sweep stats must reach the session BEFORE the report is written
+     * (specs/field-sweep.md "Field sweep" section). */
+    field_note_report_stats(app);
     furi_mutex_acquire(app->record_mutex, FuriWaitForever);
     app->session_log_on = false;
     furi_mutex_release(app->record_mutex);
@@ -1101,6 +1163,9 @@ static void publish_signal_candidate(
        (uint32_t)(now - app->last_rf_record_tick) < LOG_HIT_MIN_MS) {
         return;
     }
+    /* FieldSweep movement gate: RF survey rows repeat fixed preset labels
+     * (already-seen class), so above walking pace they thin out harder. */
+    if(!field_row_allowed(app, 0, RoomSweepFieldRowSeen)) return;
     app->last_rf_record_tick = now;
     char detail[48];
     snprintf(
@@ -2071,34 +2136,42 @@ static void process_uart_lines(App* app) {
                     }
                     if(idx >= 0) {
                         RawDev* row = &app->raw_devs[idx];
-                        /* Raw stations are client-class radios: the BLE
-                         * evidence (random-static test) names their MACs. */
-                        char detail[48];
-                        room_sweep_stats_detail(
-                            detail,
-                            sizeof(detail),
-                            row->mac[0] != '\0',
-                            row->mac[0] ? room_sweep_oui_evidence_ble(row->mac) : NULL,
-                            NULL,
-                            0,
-                            false, /* raw stations match no watchlist upsert */
-                            row->rssi_min,
-                            row->rssi_max,
-                            row->rssi_sum,
-                            row->observations,
-                            "raw frame");
-                        record_enqueue_ex(
-                            app,
-                            "observation",
-                            "WIFI",
-                            row->mac,
-                            row->rssi,
-                            0,
-                            row->channel,
-                            row->observations,
-                            "observed",
-                            "",
-                            detail);
+                        /* FieldSweep movement gate: new stations always log;
+                         * repeats thin out above walking pace. */
+                        if(field_row_allowed(
+                               app,
+                               1,
+                               row->observations <= 1U ? RoomSweepFieldRowNew :
+                                                        RoomSweepFieldRowSeen)) {
+                            /* Raw stations are client-class radios: the BLE
+                             * evidence (random-static test) names their MACs. */
+                            char detail[48];
+                            room_sweep_stats_detail(
+                                detail,
+                                sizeof(detail),
+                                row->mac[0] != '\0',
+                                row->mac[0] ? room_sweep_oui_evidence_ble(row->mac) : NULL,
+                                NULL,
+                                0,
+                                false, /* raw stations match no watchlist upsert */
+                                row->rssi_min,
+                                row->rssi_max,
+                                row->rssi_sum,
+                                row->observations,
+                                "raw frame");
+                            record_enqueue_ex(
+                                app,
+                                "observation",
+                                "WIFI",
+                                row->mac,
+                                row->rssi,
+                                0,
+                                row->channel,
+                                row->observations,
+                                "observed",
+                                "",
+                                detail);
+                        }
                     }
                 }
             } else if(route_source == WiSourceProbe) {
@@ -2145,20 +2218,29 @@ static void process_uart_lines(App* app) {
                         app->marauder_state = MarauderScanning;
                     }
                     if(idx >= 0) {
-                        char detail[48];
-                        snprintf(detail, sizeof(detail), "probe %s", rec.ssid);
-                        record_enqueue_ex(
-                            app,
-                            "observation",
-                            "WIFI",
-                            rec.client_mac[0] ? rec.client_mac : rec.ssid,
-                            rec.rssi,
-                            0,
-                            0,
-                            app->probe_devs[idx].observations,
-                            "observed",
-                            "",
-                            detail);
+                        /* FieldSweep movement gate: new probe clients always
+                         * log; repeats thin out above walking pace. */
+                        if(field_row_allowed(
+                               app,
+                               1,
+                               app->probe_devs[idx].observations <= 1U ?
+                                   RoomSweepFieldRowNew :
+                                   RoomSweepFieldRowSeen)) {
+                            char detail[48];
+                            snprintf(detail, sizeof(detail), "probe %s", rec.ssid);
+                            record_enqueue_ex(
+                                app,
+                                "observation",
+                                "WIFI",
+                                rec.client_mac[0] ? rec.client_mac : rec.ssid,
+                                rec.rssi,
+                                0,
+                                0,
+                                app->probe_devs[idx].observations,
+                                "observed",
+                                "",
+                                detail);
+                        }
                     }
                 }
             } else if(app->wifi_source == WiSourceTool) {
@@ -2266,19 +2348,27 @@ static void process_uart_lines(App* app) {
                             observed->observations,
                             "AP beacon");
                     }
-                    record_enqueue_ex(
-                        app,
-                        "observation",
-                        "WIFI",
-                        unidentified ? "" :
-                        observed->bssid[0] ? observed->bssid : observed->ssid,
-                        observed->rssi,
-                        0,
-                        observed->channel,
-                        observed->observations,
-                        "observed",
-                        "",
-                        detail);
+                    /* FieldSweep movement gate: new APs always log; repeats
+                     * thin out above walking pace. */
+                    if(field_row_allowed(
+                           app,
+                           1,
+                           observed->observations <= 1U ? RoomSweepFieldRowNew :
+                                                         RoomSweepFieldRowSeen)) {
+                        record_enqueue_ex(
+                            app,
+                            "observation",
+                            "WIFI",
+                            unidentified ? "" :
+                            observed->bssid[0] ? observed->bssid : observed->ssid,
+                            observed->rssi,
+                            0,
+                            observed->channel,
+                            observed->observations,
+                            "observed",
+                            "",
+                            detail);
+                    }
                 }
                 if(app->target_kind == TargetWifi) {
                     for(uint8_t i = 0; i < MAX_WIFI_APS; i++) {
@@ -2347,19 +2437,27 @@ static void process_uart_lines(App* app) {
                             observed->observations,
                             "BLE adv");
                     }
-                    record_enqueue_ex(
-                        app,
-                        "observation",
-                        "BLE",
-                        unidentified ? "" :
-                        observed->mac[0] ? observed->mac : observed->name,
-                        observed->rssi,
-                        0,
-                        0,
-                        observed->observations,
-                        "observed",
-                        "",
-                        detail);
+                    /* FieldSweep movement gate: new BLE devices always log;
+                     * repeats thin out above walking pace. */
+                    if(field_row_allowed(
+                           app,
+                           2,
+                           observed->observations <= 1U ? RoomSweepFieldRowNew :
+                                                         RoomSweepFieldRowSeen)) {
+                        record_enqueue_ex(
+                            app,
+                            "observation",
+                            "BLE",
+                            unidentified ? "" :
+                            observed->mac[0] ? observed->mac : observed->name,
+                            observed->rssi,
+                            0,
+                            0,
+                            observed->observations,
+                            "observed",
+                            "",
+                            detail);
+                    }
                 }
                 if(app->target_kind == TargetBle) {
                     for(uint8_t i = 0; i < MAX_BLE_DEVS; i++) {
@@ -6174,17 +6272,24 @@ static void draw_settings(Canvas* canvas, App* app) {
         "TXDur",
         "FullSweep",
         "Watchlist",
+        "FieldSweep",
     };
 
-    /* Collect indices in the current group (max 4 items per group). */
+    /* Collect indices in the current group (a group may exceed the 5 visible
+     * rows — Session holds six — so the window scrolls to keep the cursor
+     * visible). */
     uint8_t items[SET_COUNT];
     uint8_t n_items = 0;
     for(uint8_t i = 0; i < SET_COUNT; i++) {
         if(room_sweep_set_group_of(i) == group) items[n_items++] = i;
     }
+    uint8_t first = 0;
+    for(uint8_t r = 0; r < n_items; r++) {
+        if(items[r] == app->settings_sel && r >= 5U) first = (uint8_t)(r - 4U);
+    }
 
-    for(uint8_t row = 0; row < n_items && row < 5; row++) {
-        uint8_t i = items[row];
+    for(uint8_t row = 0; row < 5U && (uint8_t)(first + row) < n_items; row++) {
+        uint8_t i = items[(uint8_t)(first + row)];
         uint8_t y = (uint8_t)(20 + row * 10);
         if(i == app->settings_sel) {
             canvas_draw_box(canvas, 2, y - 7, 124, 9);
@@ -6244,6 +6349,18 @@ static void draw_settings(Canvas* canvas, App* app) {
                 sizeof(val),
                 "%s",
                 app->watchlist_on ? (app->watchlist_error ? "ERR" : "ON") : "off");
+        }
+        else if(i == SET_FIELDSWEEP) {
+            /* NEED LOG = the last ON attempt was refused because GPS Log is
+             * OFF (specs/field-sweep.md): refused loudly, never a silent
+             * coordinate drop. */
+            snprintf(
+                val,
+                sizeof(val),
+                "%s",
+                room_sweep_field_is_running(&app->field) ? "ON" :
+                app->field.refused  ? "NEED LOG" :
+                                      "off");
         }
         else val[0] = '\0';
 
@@ -6333,7 +6450,20 @@ static void draw_cb(Canvas* canvas, void* ctx) {
      * runs. The banner used to paint a white box over y56..64, erasing every
      * tab's y63 footer hints and the RF survey's frequency labels. */
     canvas_set_font(canvas, FontKeyboard);
-    if(room_sweep_full_sweep_is_running(&app->full_sweep)) {
+    if(room_sweep_field_is_running(&app->field)) {
+        /* FieldSweep banner (specs/field-sweep.md): "FIELD nN · phase · dist". */
+        canvas_draw_box(canvas, 0, 0, UI_W, UI_TAB_STRIP_H);
+        canvas_set_color(canvas, ColorWhite);
+        char fs[32];
+        room_sweep_field_banner(
+            fs,
+            sizeof(fs),
+            (uint16_t)(app->field.loops + 1U),
+            room_sweep_full_sweep_phase_label(app->full_sweep.phase),
+            app->field.distance_m);
+        canvas_draw_str(canvas, UI_MARGIN_X, UI_TAB_STRIP_H, fs);
+        canvas_set_color(canvas, ColorBlack);
+    } else if(room_sweep_full_sweep_is_running(&app->full_sweep)) {
         canvas_draw_box(canvas, 0, 0, UI_W, UI_TAB_STRIP_H);
         canvas_set_color(canvas, ColorWhite);
         char fs[28];
@@ -6630,14 +6760,62 @@ static void full_sweep_tick(App* app) {
     }
 
     if(!ready) return;
+    /* FieldSweep loop transition (specs/field-sweep.md): while the field
+     * loop runs, the pass that would finish the sweep wraps back to RF
+     * instead. Back (field_sweep_stop) is what ends a field sweep. */
+    bool wrap_to_rf = room_sweep_field_loop_restart(
+        room_sweep_field_is_running(&app->field), app->full_sweep.phase);
     room_sweep_full_sweep_advance(&app->full_sweep, ok);
     if(app->full_sweep.phase == RoomSweepFullDone) {
+        if(wrap_to_rf) {
+            room_sweep_field_note_loop(&app->field);
+            room_sweep_full_sweep_start(&app->full_sweep);
+            full_sweep_enter_phase(app, RoomSweepFullRf);
+            if(session_log_is_open()) {
+                char loop_detail[48];
+                snprintf(
+                    loop_detail,
+                    sizeof(loop_detail),
+                    "phase pass done; loop n%u",
+                    (unsigned)app->field.loops);
+                record_enqueue(
+                    app, "field_loop", "SYSTEM", "field", 0, 0, 0, loop_detail);
+            }
+            return;
+        }
         full_sweep_finish_and_save(app);
         return;
     }
     if(room_sweep_full_sweep_is_running(&app->full_sweep)) {
         full_sweep_enter_phase(app, app->full_sweep.phase);
     }
+}
+
+/*
+ * Stop a running FieldSweep (Back, Settings, or GPS Log turned OFF): freeze
+ * the run stats, log the stop with its reason, and finish + save the session
+ * exactly like a completed sweep (report-N.txt gains the "Field sweep"
+ * section through record_finish_session -> field_note_report_stats).
+ */
+static void field_sweep_stop(App* app, const char* reason) {
+    if(!app) return;
+    uint32_t now = furi_get_tick();
+    room_sweep_field_stop(&app->field, now);
+    session_log_note_field_active(false);
+    if(session_log_is_open()) {
+        char detail[48];
+        snprintf(
+            detail,
+            sizeof(detail),
+            "%s; passes=%u",
+            reason ? reason : "stop",
+            (unsigned)app->field.loops);
+        record_enqueue(app, "field_sweep_stop", "SYSTEM", "field", 0, 0, 0, detail);
+    }
+    room_sweep_full_sweep_abort(&app->full_sweep);
+    app->full_sweep_raw_active = false;
+    app->full_sweep_probe_active = false;
+    full_sweep_finish_and_save(app);
 }
 
 /* ================================================================== */
@@ -6702,6 +6880,8 @@ int32_t room_sweep_app(void* p) {
     app->full_sweep_phase_started_tick = 0;
     app->full_sweep_done_until_tick = 0;
     app->full_sweep_report_ordinal = 0;
+    /* FieldSweep: factory OFF every launch (never persisted). */
+    room_sweep_field_init(&app->field);
     app->analyzer_view = false;
     app->analyzer_ui_page = 0;
     room_sweep_analyzer_init(&app->analyzer_rf);
@@ -6893,6 +7073,20 @@ int32_t room_sweep_app(void* p) {
                             (int32_t)(t_lat * 1e6f),
                             (int32_t)(t_lon * 1e6f),
                             tnow);
+                        /* FieldSweep: the same fresh fix feeds the walked
+                         * path (distance + operator-path bbox). The GPS Log
+                         * flag is re-checked per fix — coordinates are
+                         * recorded only while the operator allows them. */
+                        if(room_sweep_field_is_running(&app->field)) {
+                            furi_mutex_acquire(app->record_mutex, FuriWaitForever);
+                            bool field_gps_log = app->gps_log_coordinates;
+                            furi_mutex_release(app->record_mutex);
+                            room_sweep_field_note_fix(
+                                &app->field,
+                                (int32_t)(t_lat * 1e6f),
+                                (int32_t)(t_lon * 1e6f),
+                                field_gps_log);
+                        }
                     }
                 }
             }
@@ -7011,6 +7205,14 @@ int32_t room_sweep_app(void* p) {
 
         if(input_action == RoomSweepInputBackShort ||
            input_action == RoomSweepInputBackLong) {
+            /* FieldSweep (specs/field-sweep.md): Back stops the loop and
+             * saves the session (the report keeps its Field sweep section).
+             * Long Back still exits below via the normal routing. */
+            if(input_action == RoomSweepInputBackShort &&
+               room_sweep_field_is_running(&app->field)) {
+                field_sweep_stop(app, "back");
+                continue;
+            }
             RoomSweepBackAction back_action = room_sweep_back_action(
                 app->settings_active,
                 app->mode == SweepModeTx && app->tx_state != TxDisarmed,
@@ -7115,6 +7317,8 @@ int32_t room_sweep_app(void* p) {
                             if(!app->serial) {
                                 unavailable |= (uint8_t)RoomSweepReportSensorWifi;
                                 unavailable |= (uint8_t)RoomSweepReportSensorBle;
+                                /* RID text arrives on the same UART. */
+                                unavailable |= (uint8_t)RoomSweepReportSensorRid;
                             }
                             if(app->gps_profile == GPS_PROFILE_EXTERNAL ?
                                    !app->gps_gpio_open : !app->serial)
@@ -7124,6 +7328,9 @@ int32_t room_sweep_app(void* p) {
                              * the section appears only while ON. */
                             app->watch_hit_mask = 0;
                             session_log_note_watchlist(app->watchlist_on, 0);
+                            /* Field sweep hit counting follows the loop. */
+                            session_log_note_field_active(
+                                room_sweep_field_is_running(&app->field));
                             record_enqueue(
                                 app,
                                 "config",
@@ -7173,10 +7380,16 @@ int32_t room_sweep_app(void* p) {
                     notification_message(app->notif, &seq_test_beep);
                 } else if(app->settings_sel == SET_FULLSWEEP) {
                     if(room_sweep_full_sweep_is_running(&app->full_sweep)) {
-                        room_sweep_full_sweep_abort(&app->full_sweep);
-                        app->full_sweep_raw_active = false;
-                        nrf24_stop_survey(app);
-                        if(app->serial) marauder_stop_scan(app);
+                        if(room_sweep_field_is_running(&app->field)) {
+                            /* FieldSweep runs the same machine: stopping it
+                             * here is the Back-stop path with a reason. */
+                            field_sweep_stop(app, "settings stop");
+                        } else {
+                            room_sweep_full_sweep_abort(&app->full_sweep);
+                            app->full_sweep_raw_active = false;
+                            nrf24_stop_survey(app);
+                            if(app->serial) marauder_stop_scan(app);
+                        }
                         ui_confirm_toggle(app);
                     } else {
                         if(!app->session_log_on) {
@@ -7238,6 +7451,16 @@ int32_t room_sweep_app(void* p) {
                         0,
                         gps_coordinates_enabled ?
                             "coordinates enabled by user" : "coordinates omitted");
+                    if(gps_coordinates_enabled) {
+                        /* Enabling GPS Log clears a stale FieldSweep refusal. */
+                        room_sweep_field_clear_refusal(&app->field);
+                    } else if(room_sweep_field_is_running(&app->field)) {
+                        /* Privacy: the field loop exists to GPS-stamp rows.
+                         * With GPS Log OFF it must stop loudly rather than
+                         * keep sampling without coordinates. The stop is
+                         * logged BEFORE the session closes. */
+                        field_sweep_stop(app, "gps_log_off");
+                    }
                     ui_confirm_toggle(app);
                 } else if(app->settings_sel == SET_BASELINE) {
                     furi_mutex_acquire(app->mutex, FuriWaitForever);
@@ -7345,6 +7568,56 @@ int32_t room_sweep_app(void* p) {
                             "watchlist OFF: nothing read or written");
                     }
                     ui_confirm_toggle(app);
+                } else if(app->settings_sel == SET_FIELDSWEEP) {
+                    /* FieldSweep (specs/field-sweep.md): factory OFF every
+                     * launch (never persisted). ON requires GPS Log ON —
+                     * refused with a clear message otherwise, never a silent
+                     * coordinate drop. Back stops the loop. */
+                    RoomSweepFieldToggleResult field_result = room_sweep_field_toggle(
+                        &app->field, app->gps_log_coordinates, furi_get_tick());
+                    if(field_result == RoomSweepFieldToggleRefused) {
+                        record_enqueue(
+                            app,
+                            "config",
+                            "SYSTEM",
+                            "field_sweep",
+                            0,
+                            0,
+                            0,
+                            room_sweep_field_refusal_text(field_result));
+                        notification_message(app->notif, &seq_vibro_pulse);
+                    } else if(field_result == RoomSweepFieldToggleStarted) {
+                        if(!app->session_log_on) {
+                            /* Start a session so the Room Report has data. */
+                            if(!app->storage)
+                                app->storage = furi_record_open(RECORD_STORAGE);
+                            if(session_log_begin(app->storage)) {
+                                app->session_log_on = true;
+                                app->record_ordinal = session_log_ordinal();
+                                app->watch_hit_mask = 0;
+                                session_log_note_watchlist(app->watchlist_on, 0);
+                            }
+                        }
+                        session_log_note_field_active(true);
+                        room_sweep_full_sweep_start(&app->full_sweep);
+                        app->settings_active = false;
+                        full_sweep_enter_phase(app, RoomSweepFullRf);
+                        if(session_log_is_open()) {
+                            record_enqueue(
+                                app,
+                                "field_sweep_start",
+                                "SYSTEM",
+                                "field",
+                                0,
+                                0,
+                                0,
+                                "GPS-stamped looping survey; detect-only, no TX");
+                        }
+                        notification_message(app->notif, &seq_test_beep);
+                    } else {
+                        field_sweep_stop(app, "settings toggle");
+                        ui_confirm_toggle(app);
+                    }
                 }
             }
             continue;

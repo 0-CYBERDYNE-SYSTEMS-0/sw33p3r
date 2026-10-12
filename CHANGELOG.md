@@ -4,6 +4,40 @@ Keep-a-Changelog-inspired, condensed per release series. The full per-fix
 history lives in `fix_plan.md` (session-by-session) and `progress.log`
 (dated session log).
 
+## Unreleased — FieldSweep: outdoor GPS-stamped survey loop (2026-10-11)
+
+- **FieldSweep** (`specs/field-sweep.md`) — "room sweep, but outside": a
+  continuous walking/driving survey where the FullSweep phases loop
+  (RF→Wi→BT→Wi-raw→Probe→nR→GPS → RF …) until **Back stops** them, every
+  detection is GPS-stamped, and coverage is honest about where the OPERATOR
+  was. Settings → **FieldSweep** (Session group) is factory-OFF every launch
+  (never persisted, same pattern as WiSource/Watchlist) and **requires GPS
+  Log ON** — enabling otherwise is refused loudly (`NEED LOG` + a CSV row
+  `FieldSweep needs GPS Log ON`), never a silent coordinate drop. Turning
+  GPS Log OFF mid-run stops the loop the same way.
+- **Host-tested policy header** `room_sweep_field.h` (+ `tests/test_field.c`):
+  loop-transition policy, movement-aware rate-limit policy (new-device-first —
+  already-seen rows thin out at 1.5 s walking / 8 s above walking pace so a
+  long walk cannot flood the 8-slot record queue; the 64-entry identity map's
+  honest REDACTED overflow is untouched), the coordinate-token eligibility
+  matrix, the GPS-Log-OFF refusal state, and the run stats (haversine walked
+  distance in integer meters, operator-path bbox in integer e6).
+- **Session evidence**: eligible rows gain the latest-fix coordinate token
+  `pos=<lat>/<lon>/<alt>` in the observation detail (GPS Log ON + usable fix
+  only; CSV-safe slashes; the alt slot reads `na` because this build's NMEA
+  parser does not parse altitude — never invented). Drop rows and TX rows are
+  never stamped. The **Room Report gains a "Field sweep" section**: active
+  time, passes, distance walked (GPS haversine), fixes used, per-source hit
+  counts (RF/Wi-Fi/BLE/GPS/nRF24/RID) and the honest area line — the
+  **bounding box of YOUR path, not of the emitters**.
+- **RID joins Room Report sensor coverage** (integration follow-up for the AV
+  tab): `RoomSweepReportSensorRid` bit, `RID` in the coverage checklist, and
+  the `source=RID` branch in `session_log.c`'s `report_sensor_for_source` —
+  RID rows now confirm coverage like every other sensor (host-tested).
+- Field banner strip (`FIELD n2 Wi-raw 183m`), no TX interaction of any kind
+  (same as FullSweep), and `./init.sh` gains the `host field sweep policy`
+  suite.
+
 ## Unreleased — AV tab: ASTM F3411 Remote ID receive path (2026-10-11)
 
 - **New 8th tab `AV` (Air Vehicles)** — receive-only Remote ID
