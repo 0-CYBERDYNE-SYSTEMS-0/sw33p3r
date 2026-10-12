@@ -13,12 +13,14 @@ typedef enum {
     RoomSweepReportSensorBle = 1U << 2,
     RoomSweepReportSensorGps = 1U << 3,
     RoomSweepReportSensorNrf24 = 1U << 4,
+    /* AV tab Remote ID (specs/drone-rid.md) — receive-side sensor. */
+    RoomSweepReportSensorRid = 1U << 5,
 } RoomSweepReportSensor;
 
-#define ROOM_SWEEP_REPORT_ALL_SENSORS \
-    ((uint8_t)(RoomSweepReportSensorRf | RoomSweepReportSensorWifi | \
-               RoomSweepReportSensorBle | RoomSweepReportSensorGps | \
-               RoomSweepReportSensorNrf24))
+#define ROOM_SWEEP_REPORT_ALL_SENSORS                                       \
+    ((uint8_t)(RoomSweepReportSensorRf | RoomSweepReportSensorWifi |         \
+               RoomSweepReportSensorBle | RoomSweepReportSensorGps |         \
+               RoomSweepReportSensorNrf24 | RoomSweepReportSensorRid))
 
 typedef enum {
     RoomSweepReportTxNone = 0,
@@ -249,6 +251,7 @@ static inline void room_sweep_report_append_sensor_names(
         {(uint8_t)RoomSweepReportSensorBle, "BLE"},
         {(uint8_t)RoomSweepReportSensorGps, "GPS"},
         {(uint8_t)RoomSweepReportSensorNrf24, "nRF24"},
+        {(uint8_t)RoomSweepReportSensorRid, "RID"},
     };
     bool first = true;
     for(size_t i = 0; i < sizeof(names) / sizeof(names[0]); i++) {
@@ -549,5 +552,124 @@ static inline size_t room_sweep_report_append_findings(
         &used,
         "GPS: %lu snapshots. Exact coordinates only if GPS Log was enabled.\n",
         (unsigned long)f->gps_snapshots);
+    return used;
+}
+
+/* ------------------------------------------------------------------ */
+/* Field sweep section (specs/field-sweep.md)                          */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Stats for the "Field sweep" report section. The bbox is the bounding box of
+ * the OPERATOR'S PATH (integer e6) — never of the emitters — and it prints
+ * only when coordinates were recorded under GPS Log ON. Hit counts are rows
+ * logged per source while the field loop ran (RF, Wi-Fi, BLE, GPS, nRF24,
+ * RID). Distance is whole meters from the GPS haversine over the fix path.
+ */
+typedef struct {
+    bool ran;
+    bool coordinates_allowed;
+    uint32_t duration_ms;
+    uint32_t distance_m;
+    uint32_t fixes_used;
+    uint16_t loops;
+    uint32_t hits[6]; /* RF, WIFI, BLE, GPS, NRF24, RID */
+    bool have_bbox;
+    int32_t min_lat_e6;
+    int32_t max_lat_e6;
+    int32_t min_lon_e6;
+    int32_t max_lon_e6;
+} RoomSweepReportField;
+
+/* Integer e6 degrees -> "-122.419400" (no float math in the report path). */
+static inline void room_sweep_report_format_e6(int32_t e6, char* out, size_t out_size) {
+    if(!out || out_size == 0) return;
+    const char* sign = e6 < 0 ? "-" : "";
+    uint64_t magnitude = (uint64_t)(e6 < 0 ? -(int64_t)e6 : (int64_t)e6);
+    snprintf(
+        out,
+        out_size,
+        "%s%lu.%06lu",
+        sign,
+        (unsigned long)(magnitude / 1000000U),
+        (unsigned long)(magnitude % 1000000U));
+}
+
+/* Append the plain-English "Field sweep" section. Prints nothing when no
+ * field sweep ran. */
+static inline size_t room_sweep_report_append_field(
+    const RoomSweepReportField* f,
+    char* output,
+    size_t capacity,
+    size_t used) {
+    if(!output || capacity == 0 || !f || !f->ran) return used;
+
+    uint32_t total_seconds = f->duration_ms / 1000U;
+    uint32_t minutes = total_seconds / 60U;
+    if(minutes > 0) {
+        room_sweep_report_append(
+            output,
+            capacity,
+            &used,
+            "Field sweep: %u full pass(es); active %lu min %lu s; walked %lu m (GPS haversine path); fixes used %lu.\n",
+            (unsigned)f->loops,
+            (unsigned long)minutes,
+            (unsigned long)(total_seconds % 60U),
+            (unsigned long)f->distance_m,
+            (unsigned long)f->fixes_used);
+    } else {
+        room_sweep_report_append(
+            output,
+            capacity,
+            &used,
+            "Field sweep: %u full pass(es); active %lu s; walked %lu m (GPS haversine path); fixes used %lu.\n",
+            (unsigned)f->loops,
+            (unsigned long)total_seconds,
+            (unsigned long)f->distance_m,
+            (unsigned long)f->fixes_used);
+    }
+
+    static const char* hit_names[6] = {"RF", "Wi-Fi", "BLE", "GPS", "nRF24", "RID"};
+    room_sweep_report_append(output, capacity, &used, "Field hits: ");
+    for(size_t i = 0; i < 6U; i++) {
+        room_sweep_report_append(
+            output,
+            capacity,
+            &used,
+            "%s%s %lu",
+            i > 0 ? ", " : "",
+            hit_names[i],
+            (unsigned long)f->hits[i]);
+    }
+    room_sweep_report_append(output, capacity, &used, ".\n");
+
+    room_sweep_report_append(
+        output,
+        capacity,
+        &used,
+        "Area covered: bounding box of YOUR path, not of the emitters - ");
+    if(!f->coordinates_allowed) {
+        room_sweep_report_append(output, capacity, &used, "omitted (GPS Log off).\n");
+    } else if(!f->have_bbox) {
+        room_sweep_report_append(output, capacity, &used, "no fixes recorded.\n");
+    } else {
+        char min_lat[24];
+        char max_lat[24];
+        char min_lon[24];
+        char max_lon[24];
+        room_sweep_report_format_e6(f->min_lat_e6, min_lat, sizeof(min_lat));
+        room_sweep_report_format_e6(f->max_lat_e6, max_lat, sizeof(max_lat));
+        room_sweep_report_format_e6(f->min_lon_e6, min_lon, sizeof(min_lon));
+        room_sweep_report_format_e6(f->max_lon_e6, max_lon, sizeof(max_lon));
+        room_sweep_report_append(
+            output,
+            capacity,
+            &used,
+            "lat %s..%s, lon %s..%s.\n",
+            min_lat,
+            max_lat,
+            min_lon,
+            max_lon);
+    }
     return used;
 }

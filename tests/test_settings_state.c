@@ -16,7 +16,7 @@ static void check(int condition, const char* message) {
 }
 
 int main(void) {
-    check(RoomSweepSetCount == 15, "fifteen settings items");
+    check(RoomSweepSetCount == 16, "sixteen settings items");
     check(RoomSweepSetGroupCount == 5, "five settings groups");
 
     check(
@@ -44,8 +44,22 @@ int main(void) {
         room_sweep_set_group_of(RoomSweepSetWatchlist) == RoomSweepSetGroupSession,
         "Watchlist is Session (privacy-relevant, not persisted)");
     check(
+        room_sweep_set_group_of(RoomSweepSetFieldSweep) == RoomSweepSetGroupSession,
+        "FieldSweep is Session (not persisted, GPS-Log-gated)");
+    check(
         room_sweep_set_group_first(RoomSweepSetGroupSession) == RoomSweepSetRecord,
         "Session group starts at Record");
+    /* Session now holds six items; the settings window must scroll to keep
+     * the cursor visible (the draw code windows at five rows). */
+    check(
+        room_sweep_set_cursor_step(RoomSweepSetWatchlist, true) == RoomSweepSetFieldSweep,
+        "Down from Watchlist reaches FieldSweep");
+    check(
+        room_sweep_set_cursor_step(RoomSweepSetFieldSweep, true) == RoomSweepSetRecord,
+        "Down from FieldSweep wraps within Session");
+    check(
+        room_sweep_set_cursor_step(RoomSweepSetFieldSweep, false) == RoomSweepSetWatchlist,
+        "Up from FieldSweep returns to Watchlist");
 
     check(
         room_sweep_set_group_first(RoomSweepSetGroupWireless) == RoomSweepSetRescan,

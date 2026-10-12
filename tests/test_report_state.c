@@ -28,6 +28,7 @@ int main(void) {
     room_sweep_report_sensor_confirmed(&state, RoomSweepReportSensorBle);
     room_sweep_report_sensor_confirmed(&state, RoomSweepReportSensorGps);
     room_sweep_report_sensor_confirmed(&state, RoomSweepReportSensorNrf24);
+    room_sweep_report_sensor_confirmed(&state, RoomSweepReportSensorRid);
     room_sweep_report_set_gps_included(&state);
     room_sweep_report_set_tx(&state, RoomSweepReportTxStarted);
     size_t length = room_sweep_report_format(&state, report, sizeof(report));
@@ -38,8 +39,8 @@ int main(void) {
     check_contains(report, "Coverage: FULL", "full sensor coverage is explicit");
     check_contains(
         report,
-        "Sensors confirmed: RF, Wi-Fi, BLE, GPS, nRF24",
-        "confirmed sensors include nRF24");
+        "Sensors confirmed: RF, Wi-Fi, BLE, GPS, nRF24, RID",
+        "confirmed sensors include RID in the coverage checklist");
     check_contains(report, "unavailable: none", "no unavailable sensors are explicit");
     check_contains(report, "not confirmed: none", "no unconfirmed sensors are explicit");
     check_contains(report, "TX: started", "started TX is explicit");
@@ -116,7 +117,7 @@ int main(void) {
     check_contains(report, "Status: COMPLETE", "an unused sensor does not invalidate the file");
     check_contains(report, "Coverage: PARTIAL", "unconfirmed sensor coverage is not called full");
 
-    /* Mark nRF unavailable; confirm the rest → FULL. */
+    /* Mark nRF + RID unavailable; confirm the rest → FULL. */
     RoomSweepReportState core;
     room_sweep_report_init(&core);
     room_sweep_report_sensor_confirmed(&core, RoomSweepReportSensorRf);
@@ -124,7 +125,30 @@ int main(void) {
     room_sweep_report_sensor_confirmed(&core, RoomSweepReportSensorBle);
     room_sweep_report_sensor_confirmed(&core, RoomSweepReportSensorGps);
     room_sweep_report_sensor_unavailable(&core, RoomSweepReportSensorNrf24);
+    room_sweep_report_sensor_unavailable(&core, RoomSweepReportSensorRid);
     check(room_sweep_report_coverage_full(&core), "FULL when only unavailable sensors are missing");
+
+    /* RID is part of coverage: leaving it unconfirmed keeps coverage PARTIAL,
+     * and an unconfirmed RID must never read as FULL. */
+    RoomSweepReportState rid_gap;
+    room_sweep_report_init(&rid_gap);
+    room_sweep_report_sensor_confirmed(&rid_gap, RoomSweepReportSensorRf);
+    room_sweep_report_sensor_confirmed(&rid_gap, RoomSweepReportSensorWifi);
+    room_sweep_report_sensor_confirmed(&rid_gap, RoomSweepReportSensorBle);
+    room_sweep_report_sensor_confirmed(&rid_gap, RoomSweepReportSensorGps);
+    room_sweep_report_sensor_unavailable(&rid_gap, RoomSweepReportSensorNrf24);
+    check(
+        !room_sweep_report_coverage_full(&rid_gap),
+        "coverage is PARTIAL while RID is neither confirmed nor unavailable");
+    check(
+        (ROOM_SWEEP_REPORT_ALL_SENSORS & (uint8_t)RoomSweepReportSensorRid) != 0,
+        "RID sits in the all-sensors mask");
+    room_sweep_report_sensor_unavailable(&rid_gap, RoomSweepReportSensorRid);
+    check(
+        room_sweep_report_coverage_full(&rid_gap),
+        "marking RID unavailable restores FULL");
+    room_sweep_report_format(&rid_gap, report, sizeof(report));
+    check_contains(report, "unavailable: nRF24, RID", "RID label appears in the checklist");
 
     RoomSweepReportState tx_state;
     room_sweep_report_init(&tx_state);
@@ -372,6 +396,122 @@ int main(void) {
     check(
         strstr(single_report, "(range") == NULL,
         "range omitted when the strongest device was heard once");
+
+    /* ---------------------------------------------------------- */
+    /* Field sweep report section (specs/field-sweep.md)          */
+    /* ---------------------------------------------------------- */
+    RoomSweepReportField field;
+    memset(&field, 0, sizeof(field));
+    char field_report[1024];
+    room_sweep_report_format(&state, field_report, sizeof(field_report));
+    size_t field_used = room_sweep_report_append_field(
+        &field, field_report, sizeof(field_report), strlen(field_report));
+    check(
+        strstr(field_report, "Field sweep:") == NULL && field_used == strlen(field_report),
+        "no Field sweep section when no field sweep ran");
+
+    field.ran = true;
+    field.coordinates_allowed = true;
+    field.duration_ms = (42U * 60U + 10U) * 1000U;
+    field.distance_m = 1834;
+    field.fixes_used = 213;
+    field.loops = 3;
+    field.hits[0] = 12;
+    field.hits[1] = 34;
+    field.hits[2] = 21;
+    field.hits[3] = 8;
+    field.hits[4] = 3;
+    field.hits[5] = 2;
+    field.have_bbox = true;
+    field.min_lat_e6 = 37770000;
+    field.max_lat_e6 = 37780000;
+    field.min_lon_e6 = -122420000;
+    field.max_lon_e6 = -122410000;
+    room_sweep_report_format(&state, field_report, sizeof(field_report));
+    room_sweep_report_append_field(
+        &field, field_report, sizeof(field_report), strlen(field_report));
+    check_contains(
+        field_report,
+        "Field sweep: 3 full pass(es); active 42 min 10 s; walked 1834 m (GPS haversine path); fixes used 213.",
+        "field line carries duration, walked distance, and fixes used");
+    check_contains(
+        field_report,
+        "Field hits: RF 12, Wi-Fi 34, BLE 21, GPS 8, nRF24 3, RID 2.",
+        "per-source hit counts name every source");
+    check_contains(
+        field_report,
+        "Area covered: bounding box of YOUR path, not of the emitters",
+        "area line carries the honest path-bbox label");
+    check_contains(
+        field_report,
+        "lat 37.770000..37.780000, lon -122.420000..-122.410000.",
+        "bbox prints operator-path corners from integer e6");
+
+    /* Sub-minute runs print seconds only. */
+    RoomSweepReportField short_run;
+    memset(&short_run, 0, sizeof(short_run));
+    short_run.ran = true;
+    short_run.coordinates_allowed = true;
+    short_run.duration_ms = 45000U;
+    char short_report[1024];
+    room_sweep_report_format(&state, short_report, sizeof(short_report));
+    room_sweep_report_append_field(
+        &short_run, short_report, sizeof(short_report), strlen(short_report));
+    check_contains(
+        short_report,
+        "Field sweep: 0 full pass(es); active 45 s;",
+        "sub-minute duration prints seconds");
+
+    /* GPS Log OFF: the bbox is omitted loudly, never printed. */
+    RoomSweepReportField private_run;
+    memset(&private_run, 0, sizeof(private_run));
+    private_run.ran = true;
+    private_run.coordinates_allowed = false;
+    private_run.duration_ms = 60000U;
+    private_run.have_bbox = true;
+    private_run.min_lat_e6 = 37770000;
+    private_run.max_lat_e6 = 37780000;
+    private_run.min_lon_e6 = -122420000;
+    private_run.max_lon_e6 = -122410000;
+    char private_report[1024];
+    room_sweep_report_format(&state, private_report, sizeof(private_report));
+    room_sweep_report_append_field(
+        &private_run, private_report, sizeof(private_report), strlen(private_report));
+    check_contains(
+        private_report,
+        "not of the emitters - omitted (GPS Log off).",
+        "bbox is omitted with a clear GPS-Log-off label");
+    check(
+        strstr(private_report, "37.770000") == NULL &&
+            strstr(private_report, "122.420000") == NULL,
+        "no coordinate digits leak when coordinates were not allowed");
+
+    /* Ran with GPS Log ON but zero fixes: honest empty bbox. */
+    RoomSweepReportField no_fixes;
+    memset(&no_fixes, 0, sizeof(no_fixes));
+    no_fixes.ran = true;
+    no_fixes.coordinates_allowed = true;
+    char no_fixes_report[1024];
+    room_sweep_report_format(&state, no_fixes_report, sizeof(no_fixes_report));
+    room_sweep_report_append_field(
+        &no_fixes, no_fixes_report, sizeof(no_fixes_report), strlen(no_fixes_report));
+    check_contains(
+        no_fixes_report,
+        "not of the emitters - no fixes recorded.",
+        "zero fixes reads as no fixes, not as (0,0)");
+
+    /* e6 formatter: sign + six decimals, integer math only. */
+    char e6[24];
+    room_sweep_report_format_e6(-122419400, e6, sizeof(e6));
+    check(strcmp(e6, "-122.419400") == 0, "negative e6 formats with sign and 6 decimals");
+    room_sweep_report_format_e6(37774900, e6, sizeof(e6));
+    check(strcmp(e6, "37.774900") == 0, "positive e6 formats with 6 decimals");
+    room_sweep_report_format_e6(0, e6, sizeof(e6));
+    check(strcmp(e6, "0.000000") == 0, "zero e6 formats");
+    room_sweep_report_format_e6(-1, e6, sizeof(e6));
+    check(strcmp(e6, "-0.000001") == 0, "sub-degree negative e6 formats");
+    room_sweep_report_format_e6(INT32_MIN, e6, sizeof(e6));
+    check(strcmp(e6, "-2147.483648") == 0, "INT32_MIN e6 formats without overflow");
 
     printf("RESULT: %s (%d failure(s))\n", failures ? "FAIL" : "ALL PASS", failures);
     return failures ? 1 : 0;

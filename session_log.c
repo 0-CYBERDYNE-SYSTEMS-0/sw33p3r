@@ -2,6 +2,7 @@
 
 #include "room_sweep_record_state.h"
 #include "room_sweep_report.h"
+#include "room_sweep_field.h"
 
 #include <furi.h>
 #include <stdio.h>
@@ -10,7 +11,7 @@
 
 #define LOG_DIR APP_DATA_PATH("")
 #define SESSION_PATH_MAX 96U
-#define REPORT_BUFFER_SIZE 2048U
+#define REPORT_BUFFER_SIZE 3072U
 #define MIN_FREE_SPACE (1024U * 1024U)
 #define SYNC_INTERVAL_MS 5000U
 #define SYNC_INTERVAL_BYTES 4096U
@@ -27,7 +28,7 @@ typedef struct {
     RoomSweepRecordState record;
     RoomSweepRecordIdentifierMap identifiers;
     RoomSweepReportState report;
-    uint32_t observation_count[5]; /* RF, WIFI, BLE, GPS, NRF24 */
+    uint32_t observation_count[6]; /* RF, WIFI, BLE, GPS, NRF24, RID */
     uint32_t scan_windows[3]; /* WIFI, BLE, NRF24 */
     int strongest_rssi[4]; /* RF, WIFI, BLE, NRF24 */
     /* Phase 7: min/max of the strongest WIFI/BLE device, lifted from the
@@ -51,6 +52,11 @@ typedef struct {
     /* Phase 9: opt-in watchlist — latched enable + max distinct matches. */
     bool watchlist_enabled;
     uint32_t watchlist_matches;
+    /* Field sweep (specs/field-sweep.md): hit counting while the loop runs +
+     * the stats snapshot for the report's "Field sweep" section. */
+    bool field_active;
+    RoomSweepReportField field;
+    uint32_t field_hits[6]; /* RF, WIFI, BLE, GPS, NRF24, RID */
     char session_path[SESSION_PATH_MAX];
     char uart_path[SESSION_PATH_MAX];
     char report_path[SESSION_PATH_MAX];
@@ -221,6 +227,8 @@ static void report_sensor_for_source(const char* source) {
         room_sweep_report_sensor_confirmed(&s_log.report, RoomSweepReportSensorGps);
     else if(strcmp(source, "NRF24") == 0)
         room_sweep_report_sensor_confirmed(&s_log.report, RoomSweepReportSensorNrf24);
+    else if(strcmp(source, "RID") == 0)
+        room_sweep_report_sensor_confirmed(&s_log.report, RoomSweepReportSensorRid);
 }
 
 static int sensor_index(const char* source) {
@@ -230,7 +238,24 @@ static int sensor_index(const char* source) {
     if(strcmp(source, "BLE") == 0) return 2;
     if(strcmp(source, "GPS") == 0) return 3;
     if(strcmp(source, "NRF24") == 0) return 4;
+    if(strcmp(source, "RID") == 0) return 5;
     return -1;
+}
+
+/*
+ * Row kind for the coordinate-token eligibility matrix
+ * (room_sweep_field.h). Keep in sync with the event names session_log_write_
+ * event sees; unknown kinds land on Config rows (stamped normally).
+ */
+static RoomSweepFieldRowKind row_kind_for_event(const char* event, const char* source) {
+    if(source && strcmp(source, "TX") == 0) return RoomSweepFieldRowTx;
+    if(event && strcmp(event, "drop") == 0) return RoomSweepFieldRowDrop;
+    if(event && (strcmp(event, "observation") == 0 || strcmp(event, "snapshot") == 0 ||
+                 strcmp(event, "hidden_resolved") == 0))
+        return RoomSweepFieldRowEvidence;
+    if(event && (strcmp(event, "scan_start") == 0 || strcmp(event, "scan_end") == 0))
+        return RoomSweepFieldRowScan;
+    return RoomSweepFieldRowConfig;
 }
 
 bool session_log_is_open(void) {
@@ -349,6 +374,36 @@ bool session_log_write_event(const SessionLogEvent* event) {
     clean_csv(event->detail, detail_clean, sizeof(detail_clean));
     clean_csv(event->state, state_clean, sizeof(state_clean));
     clean_csv(event->error_code, error_clean, sizeof(error_clean));
+
+    /*
+     * Coordinate token (specs/field-sweep.md): the LATEST FIX rides in the
+     * observation detail ("pos=<lat>/<lon>/<alt>"). Eligibility is the
+     * host-tested matrix in room_sweep_field.h. The row's has_position flag
+     * is exactly the record path's (GPS Log ON && fresh fix) gate, so the
+     * matrix's privacy inputs are already enforced upstream — passing the
+     * flag twice can never stamp a row the CSV columns would not stamp.
+     * Altitude is not parsed by this build's NMEA parser (nmea.c), so the
+     * token's alt slot honestly reads "na" — never invented.
+     */
+    char detail_out[112];
+    size_t detail_len = strlen(detail_clean);
+    memcpy(detail_out, detail_clean, detail_len + 1U);
+    if(event->has_position &&
+       room_sweep_field_coord_eligible(
+           row_kind_for_event(event_clean, source_clean),
+           event->has_position,
+           event->has_position)) {
+        char token[ROOM_SWEEP_FIELD_COORD_TOKEN_MAX];
+        if(room_sweep_field_coord_token(token, sizeof(token), event->latitude, event->longitude, false, 0) >
+           0) {
+            size_t token_len = strlen(token);
+            size_t separator = detail_len > 0 ? 2U : 0U;
+            if(detail_len + separator + token_len < sizeof(detail_out)) {
+                if(separator > 0) memcpy(detail_out + detail_len, "; ", 2);
+                memcpy(detail_out + detail_len + separator, token, token_len + 1U);
+            }
+        }
+    }
     if(!room_sweep_record_identifier_ref(
            &s_log.identifiers,
            id_kind_for_event(source_clean, event_clean, submode_clean),
@@ -378,7 +433,7 @@ bool session_log_write_event(const SessionLogEvent* event) {
         snprintf(course_deg, sizeof(course_deg), "%.2f", (double)event->course_deg);
     }
 
-    char line[384];
+    char line[448];
     int written = snprintf(
         line,
         sizeof(line),
@@ -409,7 +464,7 @@ bool session_log_write_event(const SessionLogEvent* event) {
         (unsigned long)event->count,
         state_clean,
         error_clean,
-        detail_clean);
+        detail_out);
     if(written <= 0 || written >= (int)sizeof(line)) {
         session_log_note_drop(1);
         return false;
@@ -422,6 +477,9 @@ bool session_log_write_event(const SessionLogEvent* event) {
         strcmp(event_clean, "snapshot") == 0) &&
        index >= 0) {
         s_log.observation_count[index]++;
+        /* Field sweep per-source hits count only rows logged while the loop
+         * runs (specs/field-sweep.md report section). */
+        if(s_log.field_active && index < 6) s_log.field_hits[index]++;
         /* RF=0 WIFI=1 BLE=2 NRF24=4 map to strongest slots 0..3 */
         int strong_i = (index == 4) ? 3 : (index < 3 ? index : -1);
         if(strong_i >= 0 && event->rssi > s_log.strongest_rssi[strong_i]) {
@@ -510,6 +568,7 @@ void session_log_note_sensor_unavailable(uint8_t sensor_mask) {
         RoomSweepReportSensorBle,
         RoomSweepReportSensorGps,
         RoomSweepReportSensorNrf24,
+        RoomSweepReportSensorRid,
     };
     for(size_t i = 0; i < sizeof(sensors) / sizeof(sensors[0]); i++) {
         if(sensor_mask & (uint8_t)sensors[i])
@@ -525,6 +584,15 @@ void session_log_note_watchlist(bool enabled, uint32_t distinct_matches) {
     if(enabled) s_log.watchlist_enabled = true;
     if(distinct_matches > s_log.watchlist_matches)
         s_log.watchlist_matches = distinct_matches;
+}
+
+void session_log_note_field_active(bool active) {
+    s_log.field_active = active;
+}
+
+void session_log_note_field(const RoomSweepReportField* stats) {
+    if(!stats) return;
+    s_log.field = *stats;
 }
 
 static bool write_report(void) {
@@ -559,6 +627,11 @@ static bool write_report(void) {
     memcpy(findings.vendors, s_log.vendors, sizeof(findings.vendors));
     findings.vendor_count = s_log.vendor_count;
     used = room_sweep_report_append_findings(&findings, report, sizeof(report), used);
+    /* Field sweep section (specs/field-sweep.md): prints only when a field
+     * sweep ran; hit counts are the rows logged while the loop was active. */
+    RoomSweepReportField field = s_log.field;
+    for(size_t i = 0; i < 6U; i++) field.hits[i] = s_log.field_hits[i];
+    used = room_sweep_report_append_field(&field, report, sizeof(report), used);
     bool uart_exists = storage_file_exists(s_log.storage, s_log.uart_path);
     room_sweep_report_append(
         report,
