@@ -9,7 +9,7 @@ receive-side RF surveying on the operator's own property: sub-GHz survey/sweep
 via CC1101, WiFi/BLE scans driven over UART on a Just Call Me Koko **BFFB**
 ESP32 running ESP32Marauder, nRF24 RPD survey, passive GPS display, session
 recording, and a safety-gated TX tab. Target firmware: **Momentum mntm-012,
-API 87.1, target 7**. Seven tabs: RF / Wi / BT / nR / GP / TX / i.
+API 87.1, target 7**. Eight tabs: RF / Wi / BT / nR / GP / TX / i / AV.
 
 **Mission scope is a hard constraint, not prose:** receive-side surveying plus a
 bounded carrier-frequency TX test only. No jamming, blocking, deauthentication,
@@ -52,8 +52,9 @@ the serial CLI first.
 
 ## Architecture
 
-Single ViewPort app, one draw function, **7 tabs** (`SweepMode` in
-`room_sweep.h`): RF / Wi / BT / nR / GP / TX / i. `room_sweep.c` (~5790 lines)
+Single ViewPort app, one draw function, **8 tabs** (`SweepMode` in
+`room_sweep.h`): RF / Wi / BT / nR / GP / TX / i / AV. `room_sweep.c`
+(~8.2k lines)
 is the intentional monolith: input routing, drawing, RF engine, TX thread,
 UART parsing, feedback. Everything that can be logic-tested off-device lives in
 **header-only, Flipper-header-free state files** so host suites compile with
@@ -74,7 +75,9 @@ plain `cc`:
 - `room_sweep_analyzer.h`, `room_sweep_radar.h`, `room_sweep_waterfall.h`,
   `room_sweep_ui_layout.h`, `room_sweep_rf_presets.h` (20-preset survey table;
   host-tested invariants — all three parallel arrays in sync, every frequency
-  inside a real CC1101 band).
+  inside a real CC1101 band), plus `room_sweep_rid.h` / `room_sweep_rid_state.h`
+  (ASTM F3411 RID parse + 8-drone track/alert state) and `room_sweep_field.h`
+  (FieldSweep loop/rate-limit/coordinate policy).
 
 When changing behavior, put the decision logic in one of these headers and add
 a host test; keep `room_sweep.c` as the wiring/rendering layer.

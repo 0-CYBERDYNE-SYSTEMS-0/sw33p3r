@@ -52,11 +52,12 @@ gitignored.
 
 ## Architecture
 
-Single ViewPort app, one draw function, **7 tabs** (`SweepMode` in
-`room_sweep.h`): RF / Wi / BT / nR / GP / TX / i. The RF tab cycles **5
-sub-modes** (`RfSubMode`): Survey / Sweep / Peak / Waterfall / Watch.
+Single ViewPort app, one draw function, **8 tabs** (`SweepMode` in
+`room_sweep.h`): RF / Wi / BT / nR / GP / TX / i / AV (air vehicles — RID
+receive, detect-only). The RF tab cycles **5 sub-modes** (`RfSubMode`):
+Survey / Sweep / Peak / Waterfall / Watch.
 
-- `room_sweep.c` (~7.4k lines) is an intentional monolith: input
+- `room_sweep.c` (~8.2k lines) is an intentional monolith: input
   routing, drawing, RF engine, TX thread, UART parsing, feedback.
 - **All logic that can be host-tested lives in header-only, Flipper-header-free
   state files** so suites compile with plain `cc`. When changing behavior, put
@@ -79,7 +80,10 @@ sub-modes** (`RfSubMode`): Survey / Sweep / Peak / Waterfall / Watch.
   `room_sweep_rogue.h` (duplicate-SSID rogue correlation),
   `room_sweep_stats.h` (per-device RSSI evidence stats),
   `room_sweep_watch.h` (RF burst watch), `room_sweep_watchlist.h`
-  (cross-session watchlist), `room_sweep_feedback.h` (feedback cadence curves).
+  (cross-session watchlist), `room_sweep_feedback.h` (feedback cadence curves),
+  `room_sweep_rid.h` (ASTM F3411 RID text parse), `room_sweep_rid_state.h`
+  (8-drone track list, staleness, alert edges), `room_sweep_field.h`
+  (FieldSweep loop/rate-limit/coordinate-eligibility policy).
 - Other modules: `nmea.c/h` (host-tested NMEA parser),
   `session_log.c/h` (session writer, main-loop-only), `nrf24_survey.c/h`.
   The nRF24 driver test builds against stub headers in `tests/nrf24_stubs/`.
@@ -127,6 +131,11 @@ sub-modes** (`RfSubMode`): Survey / Sweep / Peak / Waterfall / Watch.
   validated against a redacted fixture (2026-09-21 — `RSSI: -NN Ch: N Client:
   <mac> Requesting: <ssid>`), while esp/pwn remain upstream-pinned only,
   annotated "not yet observed live" (see `docs/BFFB_MOMENTUM.md`).
+- `remoteid` (AV tab RID receive) is parsed but its send path is gated OFF
+  (`ROOM_SWEEP_RID_SEND_ENABLED` in `room_sweep.h`): the command is NOT
+  compiled into the current BFFB build (2026-10-11 probe receipt — see
+  `docs/BFFB_MOMENTUM.md`). Flip the gate only on a build whose `help` lists
+  `remoteid`, backed by a fresh probe receipt pinning the output format.
 - GPS primary: Flipper GPIO **LPUART 15/16 @ 9600**; Marauder `nmea` stream is
   the fallback. Verify against `docs/BFFB_MOMENTUM.md`.
 
@@ -136,7 +145,8 @@ Settings → Record opens session N; artifacts in
 `/ext/apps_data/room_sweep/`: `session-N.csv` (events), `report-N.txt` (Room
 Report), `uart-N.txt` (only if Raw Dump). Privacy: WiFi/BLE identifiers are
 per-session ordinals; GPS coordinates omitted unless GPS Log ON. Every TX
-attempt recorded as an event.
+attempt recorded as an event. RID rows use per-session `DR-nn` ordinals;
+FieldSweep rows carry `pos=` coordinate tokens only when GPS Log is ON.
 
 ## Hard rules (from FLIPPER_PITFALLS.md)
 

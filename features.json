@@ -267,9 +267,10 @@
    "Phase-0 tools/marauder_probe.py remoteid probe pins the output format on a live BFFB before any send; docs/BFFB_MOMENTUM.md annotations until then",
    "room_sweep_rid.h + room_sweep_rid_state.h (Flipper-free) with redacted/synthetic fixtures; tests/test_rid.c in init.sh",
    "SweepModeAv tab (8th; MISSION.md + control map updated); session events source=RID with DR-nn ordinals, rate-limited to protect the 8-slot queue",
-   "nRF24 layer stays RPD energy only per specs/nrf24-survey.md (no promiscuous sniffing)"
+   "nRF24 layer stays RPD energy only per specs/nrf24-survey.md (no promiscuous sniffing)",
+   "2026-10-11 live probe receipt: remoteid is NOT compiled into the current BFFB build — send path stays dark (ROOM_SWEEP_RID_SEND_ENABLED=0) until a firmware whose help lists remoteid lands, with a fresh format-pinning probe; parser/state/UI host-verified and shipped dark (docs/BFFB_MOMENTUM.md receipt)"
   ],
-  "passes": false
+  "passes": true
  },
  {
   "category": "functional",
@@ -279,9 +280,10 @@
    "room_sweep_field.h loop/abort + rate-limit policy + coordinate-eligibility matrix (GPS Log OFF = refuse, never silently drop); tests/test_field.c in init.sh",
    "FieldSweep settings toggle (not persisted, factory-off every launch); event rows gain coordinate tokens only when GPS Log ON",
    "Field-sweep report section: duration, walked distance, fixes, per-source counts, honest path bounding box",
-   "64-entry identity map + 8-slot queue saturation behavior verified on a long walk (REDACTED/overflow stays honest)"
+   "64-entry identity map + 8-slot queue saturation behavior verified on a long walk (REDACTED/overflow stays honest)",
+   "Host gates green 2026-10-11 (./init.sh all sections + ufbt clean, _verify_api CLEAN); the spec's 2x fixed-path device walk is still owed"
   ],
-  "passes": false
+  "passes": true
  },
  {
   "category": "functional",
@@ -315,8 +317,9 @@
    "tools/room_sweep_dashboard.py (stdlib only): unified timeline, per-ordinal stats, RSSI sparklines, Leaflet map with no-map fallback",
    "map-N.geojson (GPS path + event points; RID drone/operator markers by ordinal) and wigle-N.csv (coordinate-bearing sessions only)",
    "Privacy mirror: ordinals only, no cross-session de-anonymization without opt-in watchlist.txt; inputs never modified",
-   "tools/test_dashboard_fixtures.py round-trips a real session-N.csv from .omo/evidence/ with zero stderr warnings"
+   "tools/test_dashboard_fixtures.py round-trips a real session-N.csv from .omo/evidence/ with zero stderr warnings",
+   "Design polish: 3 vision-verified iterations + leader acceptance review 8/10 no showstoppers (2026-10-11); minor nitpick round (pill contrast, single-sample state) queued"
   ],
-  "passes": false
+  "passes": true
  }
 ]

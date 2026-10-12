@@ -1,7 +1,7 @@
 # MISSION CONTRACT — Room Sweep
 
 **Owner:** 0-CYBERDYNE-SYSTEMS-0 · **Updated:** 2026-08-19
-**Status:** Current FAP is 7 tabs (RF / Wi / BT / nR / GP / TX / i). v3.1
+**Status:** Current FAP is 8 tabs (RF / Wi / BT / nR / GP / TX / i / AV). v3.1
 field fixes below still apply. Later work added nRF24, FullSweep, waterfall,
 and the analyzer meter suite.
 
@@ -21,6 +21,8 @@ on the user's own property and hardware:
 - **GP tab**: NMEA listener (GPIO LPUART primary, Marauder `nmea` fallback)
 - **TX tab**: Dedicated transmit mode, safety-gated (disarm → arm → transmit)
 - **i tab**: Live capability card (Radio / State / Keys / Files / Limits)
+- **AV tab**: Remote ID receive + 2.4 GHz drone-link energy, detect-only
+  (RID send path gated: `remoteid` absent from current BFFB build)
 
 ## Scope / legal
 
