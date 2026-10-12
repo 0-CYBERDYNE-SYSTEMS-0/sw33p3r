@@ -117,7 +117,7 @@ def parse_tokens(detail):
 
 def fmt_rssi(value):
     if value is None:
-        return "\u2014"
+        return '<span class="empty">\u2014</span>'
     return "%d" % int(value)
 
 
@@ -405,10 +405,11 @@ def ordinal_stats(events):
     return groups
 
 
-def sparkline_svg(values, width=248, height=44, spark_id="s"):
-    """Inline SVG RSSI sparkline: gradient area + accent line + end dot."""
+def sparkline_svg(values, width=248, height=44, spark_id="s", color="#5aa9ff"):
+    """Inline SVG RSSI sparkline tinted with its source's palette hue:
+    gradient area + accent line + end dot."""
     if not values:
-        return '<span class="dim num">\u2014</span>'
+        return '<span class="empty">no samples</span>'
     low, high = min(values), max(values)
     spread = (high - low) or 1
     pad_x, pad_y = 4.0, 6.0
@@ -431,27 +432,30 @@ def sparkline_svg(values, width=248, height=44, spark_id="s"):
             'role="img" aria-label="RSSI sparkline: single sample">'
             '<line x1="%(pad).1f" y1="%(my).1f" x2="%(mx2).1f" y2="%(my).1f" '
             'stroke="#2e3949" stroke-width="1" stroke-dasharray="3 4"/>'
-            '<circle cx="%(cx).1f" cy="%(cy).1f" r="3" fill="#5aa9ff"/>'
+            '<circle cx="%(cx).1f" cy="%(cy).1f" r="3" fill="%(c)s"/>'
             "</svg>"
         ) % {"w": width, "h": height, "pad": pad_x, "my": mid_y,
-             "mx2": width - pad_x, "cx": mid_x, "cy": mid_y}
+             "mx2": width - pad_x, "cx": mid_x, "cy": mid_y, "c": color}
     area = "%.1f,%.1f " % (pts[0][0], height - 1.0) + line + \
         " %.1f,%.1f" % (pts[-1][0], height - 1.0)
+    fill_hi = hex_rgba(color, 0.28)
+    fill_lo = hex_rgba(color, 0.02)
     return (
         '<svg class="spark" width="%(w)d" height="%(h)d" '
         'viewBox="0 0 %(w)d %(h)d" preserveAspectRatio="none" '
         'role="img" aria-label="RSSI sparkline">'
         '<defs><linearGradient id="g%(id)s" x1="0" y1="0" x2="0" y2="1">'
-        '<stop offset="0%%" stop-color="rgba(90,169,255,0.28)"/>'
-        '<stop offset="100%%" stop-color="rgba(90,169,255,0.02)"/>'
+        '<stop offset="0%%" stop-color="%(hi)s"/>'
+        '<stop offset="100%%" stop-color="%(lo)s"/>'
         '</linearGradient></defs>'
         '<polygon points="%(area)s" fill="url(#g%(id)s)" stroke="none"/>'
-        '<polyline points="%(line)s" fill="none" stroke="#5aa9ff" '
+        '<polyline points="%(line)s" fill="none" stroke="%(c)s" '
         'stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>'
-        '<circle cx="%(ex).1f" cy="%(ey).1f" r="2.2" fill="#8cc4ff"/>'
+        '<circle cx="%(ex).1f" cy="%(ey).1f" r="2.2" fill="%(c)s"/>'
         '</svg>'
     ) % {"w": width, "h": height, "id": spark_id, "area": area,
-         "line": line, "ex": end_x, "ey": end_y}
+         "line": line, "ex": end_x, "ey": end_y, "c": color,
+         "hi": fill_hi, "lo": fill_lo}
 
 
 # --------------------------------------------------------------------------
@@ -556,18 +560,51 @@ def wigle_rows(session):
 # Rendering
 # --------------------------------------------------------------------------
 
+# One semantic source palette: hue FAMILY per source type, harmonized
+# chroma. Members of a family share a hue (base + light variant). The same
+# table drives every surface a source appears on: pills, timeline chips,
+# RSSI sparklines, and map markers.
+#   spectrum (blue)   RF instruments + burst watch
+#   link     (green)  2.4 GHz data radios (Wi-Fi, nRF24)
+#   proximity(violet) BLE beacons
+#   position (teal)   GPS
+#   transmit (red)    keyed carrier attempts (alert semantics)
+#   aerial   (amber)  drone identity + video (RID, FPV)
+#   system   (slate)  session lifecycle
+SOURCE_FAMILY = {
+    "RF": "spectrum", "WATCH": "spectrum",
+    "WIFI": "link", "NRF24": "link",
+    "BLE": "proximity",
+    "GPS": "position",
+    "TX": "transmit",
+    "RID": "aerial", "FPV": "aerial",
+    "SYSTEM": "system",
+}
+FAMILY_ORDER = ("spectrum", "link", "proximity", "position", "transmit",
+                "aerial", "system")
+
 SOURCE_COLORS = {
     "RF": ("#6ea8fe", "rgba(110,168,254,0.12)", "rgba(110,168,254,0.30)"),
+    "WATCH": ("#9dbdf7", "rgba(157,189,247,0.12)", "rgba(157,189,247,0.30)"),
     "WIFI": ("#57c785", "rgba(87,199,133,0.12)", "rgba(87,199,133,0.30)"),
+    "NRF24": ("#86d6a5", "rgba(134,214,165,0.12)", "rgba(134,214,165,0.30)"),
     "BLE": ("#9d7cd8", "rgba(157,124,216,0.12)", "rgba(157,124,216,0.30)"),
-    "NRF24": ("#d4a03c", "rgba(212,160,60,0.12)", "rgba(212,160,60,0.30)"),
     "GPS": ("#3fc9b0", "rgba(63,201,176,0.12)", "rgba(63,201,176,0.30)"),
     "TX": ("#ef6b6b", "rgba(239,107,107,0.12)", "rgba(239,107,107,0.30)"),
-    "WATCH": ("#9aa5b5", "rgba(154,165,181,0.12)", "rgba(154,165,181,0.30)"),
     "RID": ("#f08c46", "rgba(240,140,70,0.12)", "rgba(240,140,70,0.30)"),
-    "FPV": ("#4fc3e8", "rgba(79,195,232,0.12)", "rgba(79,195,232,0.30)"),
-    "SYSTEM": ("#6b7686", "rgba(107,118,134,0.10)", "rgba(107,118,134,0.24)"),
+    "FPV": ("#f2a86b", "rgba(242,168,107,0.12)", "rgba(242,168,107,0.30)"),
+    "SYSTEM": ("#8b96a6", "rgba(139,150,166,0.10)", "rgba(139,150,166,0.26)"),
 }
+
+
+def source_solid(source):
+    return SOURCE_COLORS.get(source.upper(), SOURCE_COLORS["SYSTEM"])[0]
+
+
+def hex_rgba(hex_color, alpha):
+    h = hex_color.lstrip("#")
+    r, g, b = (int(h[i:i + 2], 16) for i in (0, 2, 4))
+    return "rgba(%d,%d,%d,%s)" % (r, g, b, alpha)
 
 
 def chip(source, count=None):
@@ -590,7 +627,7 @@ def detail_html(ev):
         extras.append("ch %d" % ev.channel)
     if extras:
         parts.append('<span class="dim">%s</span>' % e(" \u00b7 ".join(extras)))
-    return " ".join(parts) if parts else '<span class="dim">\u2014</span>'
+    return " ".join(parts) if parts else '<span class="empty">\u2014</span>'
 
 
 def render_index(sessions, watchlist, warnings, source_dir):
@@ -623,7 +660,7 @@ def render_index(sessions, watchlist, warnings, source_dir):
 :root{
   --bg:#0b0e14; --bg-soft:#0f131b; --panel:#141a24; --panel-2:#182029;
   --border:#232c39; --border-strong:#2e3949;
-  --text:#dbe2ee; --dim:#8c96a6; --faint:#5c6675;
+  --text:#dbe2ee; --dim:#8c96a6; --faint:#707b8c;
   --accent:#5aa9ff; --alert:#e8b04b;
   --mono:"SF Mono",ui-monospace,"JetBrains Mono",Menlo,Consolas,monospace;
   --sans:-apple-system,BlinkMacSystemFont,"SF Pro Text",Inter,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
@@ -638,67 +675,93 @@ a:hover{text-decoration:underline}
 .num{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:13px}
 .dim{color:var(--dim)}
 .faint{color:var(--faint)}
+.empty{color:var(--faint);font-family:var(--mono);font-variant-numeric:tabular-nums}
 
-/* header */
+/* header: stepped type ladder 12 -> 15 -> 24 -> 11 */
 header.top{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;
-  gap:16px;padding-bottom:24px;border-bottom:1px solid var(--border)}
-.kicker{font-family:var(--mono);font-size:11px;letter-spacing:.18em;
+  gap:16px;padding-bottom:32px;border-bottom:1px solid var(--border)}
+.kicker{font-family:var(--mono);font-size:12px;letter-spacing:.18em;
   text-transform:uppercase;color:var(--accent)}
-h1{margin:6px 0 0;font-size:23px;font-weight:650;letter-spacing:-0.01em}
-.meta{margin-top:6px;font-family:var(--mono);font-size:12px;color:var(--dim)}
-.meta b{color:var(--text);font-weight:500}
+.product{margin-top:8px;font-size:16px;font-weight:600;letter-spacing:.01em;
+  color:var(--dim)}
+h1{margin:2px 0 0;font-size:24px;font-weight:650;letter-spacing:-0.012em;
+  line-height:1.25}
+.meta{margin-top:10px;font-family:var(--mono);font-size:11px;letter-spacing:.02em;
+  color:var(--faint)}
+.meta b{color:var(--dim);font-weight:500}
 
 /* sections */
 section{margin-top:48px}
-h2{margin:0 0 16px;font-size:12px;font-weight:600;letter-spacing:.16em;
+h2{margin:0 0 8px;font-size:12px;font-weight:600;letter-spacing:.16em;
   text-transform:uppercase;color:var(--dim)}
-h2 .rule{display:inline-block;width:26px;height:1px;background:var(--accent);
-  vertical-align:middle;margin-right:10px;opacity:.7}
-h3{margin:28px 0 12px;font-size:15px;font-weight:600;letter-spacing:.01em}
+h2 .h2-sub{font-family:var(--mono);font-size:11px;font-weight:400;letter-spacing:.02em;
+  text-transform:none;color:var(--faint);margin-left:12px}
+.sec-rule{height:1px;margin:0 0 24px;
+  background:linear-gradient(90deg,rgba(90,169,255,0.55) 0 56px,var(--border-strong) 56px)}
+h3{margin:32px 0 16px;font-size:15px;font-weight:600;letter-spacing:.01em}
 h3 .sub{font-family:var(--mono);font-size:12px;font-weight:400;color:var(--faint);
   margin-left:10px;letter-spacing:0}
 
-/* banners */
-.banner{border:1px solid var(--border);border-left:3px solid var(--accent);
-  background:linear-gradient(90deg,rgba(90,169,255,0.07),rgba(90,169,255,0.02));
-  border-radius:8px;padding:14px 18px;font-size:13px;color:var(--dim);
-  line-height:1.65}
-.banner.alert{border-left-color:var(--alert);
-  background:linear-gradient(90deg,rgba(232,176,75,0.08),rgba(232,176,75,0.02))}
-.banner b{color:var(--text);font-weight:600}
-.banner + .banner{margin-top:12px}
+/* privacy boxes: differentiated surface (panel-2) + scannable bullets */
+.privacy{border:1px solid var(--border);border-left:3px solid var(--accent);
+  background:var(--panel-2);border-radius:12px;padding:20px 24px}
+.privacy .p-title{font-family:var(--mono);font-size:11px;font-weight:600;
+  letter-spacing:.14em;text-transform:uppercase;color:var(--dim)}
+.privacy ul{margin:12px 0 0;padding:0;list-style:none}
+.privacy li{position:relative;padding-left:16px;margin-top:10px;font-size:13px;
+  line-height:1.6;color:var(--dim)}
+.privacy li:first-child{margin-top:0}
+.privacy li::before{content:"";position:absolute;left:2px;top:.58em;width:6px;
+  height:6px;border-radius:50%;background:var(--accent);opacity:.8}
+.privacy li b{color:var(--text);font-weight:600}
+.privacy .fine{margin-top:16px;padding-top:12px;border-top:1px solid var(--border);
+  font-family:var(--mono);font-size:11px;letter-spacing:.02em;line-height:1.75;
+  color:var(--dim)}
+.privacy.alert{border-left-color:var(--alert)}
+.privacy.alert li::before{background:var(--alert)}
+.privacy + .privacy{margin-top:16px}
 
 /* cards */
 .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(168px,1fr));gap:16px}
-.card{background:var(--panel);border:1px solid var(--border);border-radius:10px;
-  padding:16px 18px;transition:border-color .15s ease}
-.card:hover{border-color:var(--border-strong)}
-.card .label{font-family:var(--mono);font-size:10px;letter-spacing:.14em;
-  text-transform:uppercase;color:var(--faint)}
-.card .value{margin-top:8px;font-family:var(--mono);font-variant-numeric:tabular-nums;
-  font-size:26px;font-weight:600;line-height:1.1;letter-spacing:-0.01em}
-.card .sub{margin-top:6px;font-size:12px;color:var(--dim);line-height:1.7}
+.card{position:relative;background:
+  linear-gradient(180deg,rgba(90,169,255,.10),rgba(90,169,255,0) 32px),var(--panel);
+  border:1px solid var(--border);
+  border-radius:12px;padding:16px 18px 18px;
+  transition:border-color .15s ease,box-shadow .15s ease,transform .15s ease;
+  box-shadow:0 1px 2px rgba(0,0,0,.28)}
+.card:hover{border-color:#3b4a60;box-shadow:0 12px 28px rgba(0,0,0,.38);
+  transform:translateY(-1px)}
+.card .label{font-family:var(--mono);font-size:12px;font-weight:600;
+  letter-spacing:.12em;text-transform:uppercase;color:var(--dim)}
+.card .value{margin-top:16px;font-family:var(--mono);font-variant-numeric:tabular-nums;
+  font-size:30px;font-weight:600;line-height:1.05;letter-spacing:-0.02em}
+.card .sub{margin-top:16px;font-size:11px;line-height:1.55;color:var(--faint)}
 
 /* source mix strip */
 .mix{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}
 .mix .chip{padding:4px 11px;font-size:11px}
-.mix .chip .n{opacity:.75;font-weight:500}
+.mix .chip .n{opacity:.9;font-weight:600}
+.mix-note{margin:10px 0 0;font-family:var(--mono);font-size:10px;letter-spacing:.08em;
+  text-transform:uppercase;color:var(--faint)}
 
 /* device cards */
 .device-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px}
-.device{background:var(--panel);border:1px solid var(--border);border-radius:10px;
-  padding:16px 18px;transition:border-color .15s ease}
-.device:hover{border-color:var(--border-strong)}
+.device{position:relative;background:var(--panel);border:1px solid var(--border);
+  border-radius:12px;padding:16px 18px;
+  transition:border-color .15s ease,box-shadow .15s ease,transform .15s ease;
+  box-shadow:0 1px 2px rgba(0,0,0,.28)}
+.device:hover{border-color:#3b4a60;box-shadow:0 12px 28px rgba(0,0,0,.38);
+  transform:translateY(-1px)}
 .device .head{display:flex;align-items:center;justify-content:space-between;gap:8px}
 .device .ident{font-family:var(--mono);font-size:14px;font-weight:600;letter-spacing:.02em}
 .device .ident .label{margin-left:8px;font-size:11px;font-weight:500;color:var(--alert)}
-.device .stats{display:flex;gap:24px;margin-top:14px}
+.device .stats{display:flex;gap:24px;margin-top:16px}
 .device .stat{min-width:52px}
-.device .stat .k{font-family:var(--mono);font-size:9px;letter-spacing:.14em;
+.device .stat .k{font-family:var(--mono);font-size:10px;letter-spacing:.14em;
   text-transform:uppercase;color:var(--faint)}
 .device .stat .v{font-family:var(--mono);font-variant-numeric:tabular-nums;
-  font-size:15px;font-weight:600;margin-top:3px}
-.device .spark-wrap{margin-top:14px;padding-top:14px;border-top:1px solid var(--border)}
+  font-size:15px;font-weight:600;margin-top:4px}
+.device .spark-wrap{margin-top:16px;padding-top:16px;border-top:1px solid var(--border)}
 .spark{display:block;width:100%;height:44px}
 .device .foot{margin-top:12px;font-family:var(--mono);font-size:11px;
   color:var(--faint);line-height:1.6}
@@ -720,7 +783,8 @@ td .detail{color:var(--dim);font-family:var(--mono);font-size:11.5px;
   word-break:break-word;max-width:520px}
 td.r{text-align:right}
 .t-source .chip{margin-right:8px;vertical-align:1px}
-tr.sys td{opacity:.62}
+tr.sys td{color:var(--faint)}
+tr.sys .detail{color:var(--faint)}
 
 /* chips */
 .chip{display:inline-flex;align-items:center;gap:5px;padding:2px 9px;
@@ -729,21 +793,43 @@ tr.sys td{opacity:.62}
   white-space:nowrap}
 
 /* session list */
-.sess-idx{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px}
-.sess-card{background:var(--panel);border:1px solid var(--border);border-radius:10px;
-  padding:18px 20px;transition:border-color .15s ease}
-.sess-card:hover{border-color:var(--border-strong)}
-.sess-card .id{font-family:var(--mono);font-size:12px;letter-spacing:.12em;
-  text-transform:uppercase;color:var(--accent)}
-.sess-card .row{display:flex;justify-content:space-between;gap:12px;
-  margin-top:10px;font-size:12.5px;color:var(--dim)}
-.sess-card .row b{color:var(--text);font-family:var(--mono);font-weight:500}
-.sess-card .links{margin-top:14px;padding-top:12px;border-top:1px solid var(--border);
-  display:flex;flex-wrap:wrap;gap:12px;font-family:var(--mono);font-size:11px}
+.sess-idx{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));
+  gap:16px;grid-auto-rows:1fr}
+.sess-card{position:relative;display:flex;flex-direction:column;
+  background:
+    linear-gradient(180deg,rgba(90,169,255,.10),rgba(90,169,255,0) 32px),var(--panel);
+  border:1px solid var(--border);border-radius:12px;
+  padding:20px 22px;
+  transition:border-color .15s ease,box-shadow .15s ease,transform .15s ease;
+  box-shadow:0 1px 2px rgba(0,0,0,.28)}
+.sess-card:hover{border-color:#3b4a60;box-shadow:0 12px 28px rgba(0,0,0,.38);
+  transform:translateY(-1px)}
+.sess-card .id{font-family:var(--mono);font-size:12px;font-weight:600;
+  letter-spacing:.12em;text-transform:uppercase;color:var(--accent)}
+.sess-card .rows{margin-top:16px;margin-bottom:16px;display:flex;flex-direction:column;
+  gap:12px}
+.sess-card .row{display:flex;align-items:baseline;justify-content:space-between;
+  gap:16px;font-size:11px;color:var(--faint)}
+.sess-card .row .k{flex:0 0 72px;letter-spacing:.04em}
+.sess-card .row .v{flex:1;min-width:0;text-align:right;font-family:var(--mono);
+  font-variant-numeric:tabular-nums;font-size:13px;font-weight:600;
+  letter-spacing:.01em;color:var(--text);line-height:1.5}
+.sess-card .row .v.src{display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end;
+  align-items:center;align-content:center;
+  min-height:calc(2 * 20px + 6px)}
+.sess-card .row .v.src .chip{padding:2px 8px;font-size:9.5px;letter-spacing:.06em}
+.sess-card .row .v .pill{display:inline-block;padding:3px 12px;border-radius:999px;
+  font-family:var(--mono);font-size:10.5px;font-weight:500;letter-spacing:.08em;
+  text-transform:uppercase;line-height:1.4}
+.sess-card .row .v .pill.on{color:var(--text);background:rgba(90,169,255,.10);
+  border:1px solid rgba(90,169,255,.28)}
+.sess-card .row .v .pill.off{color:var(--dim);border:1px dashed var(--border-strong)}
+.sess-card .links{margin-top:auto;padding-top:16px;border-top:1px solid var(--border-strong);
+  display:flex;flex-wrap:wrap;gap:8px 12px;font-family:var(--mono);font-size:10.5px}
 .sess-card .links .none{color:var(--faint)}
 
 /* map */
-.map-shell{position:relative;border:1px solid var(--border);border-radius:10px;
+.map-shell{position:relative;border:1px solid var(--border);border-radius:12px;
   overflow:hidden;background:var(--bg-soft);
   background-image:linear-gradient(rgba(90,169,255,0.05) 1px,transparent 1px),
     linear-gradient(90deg,rgba(90,169,255,0.05) 1px,transparent 1px);
@@ -760,7 +846,7 @@ tr.sys td{opacity:.62}
 .leaflet-container{background:#0f131b;font:12px/1.4 var(--mono)}
 
 /* report pre */
-details.report{border:1px solid var(--border);border-radius:10px;
+details.report{border:1px solid var(--border);border-radius:12px;
   background:var(--panel)}
 details.report summary{cursor:pointer;padding:14px 18px;font-family:var(--mono);
   font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);
@@ -777,7 +863,8 @@ footer{margin-top:64px;padding-top:24px;border-top:1px solid var(--border);
 
     # ---- header ----
     add('<header class="top"><div>')
-    add('<div class="kicker">room sweep \u00b7 host dashboard</div>')
+    add('<div class="kicker">room sweep</div>')
+    add('<div class="product">host dashboard</div>')
     add("<h1>Session evidence console</h1>")
     add('<div class="meta">generated %s &nbsp;\u00b7&nbsp; source <b>%s</b> '
         '&nbsp;\u00b7&nbsp; <b>%d</b> session%s &nbsp;\u00b7&nbsp; <b>%d</b> '
@@ -786,25 +873,32 @@ footer{margin-top:64px;padding-top:24px;border-top:1px solid var(--border);
            len(sessions), "" if len(sessions) == 1 else "s", total_events))
     add("</div></header>")
 
-    # ---- privacy banners ----
-    add("<section style=\"margin-top:28px\">")
-    add('<div class="banner"><b>Privacy mirror.</b> Identifiers render as '
-        "per-session ordinals (AP-01, BL-02, DR-03 \u2026); MAC/serial-shaped "
-        "values are redacted from every rendered field. Coordinates appear "
-        "only for sessions whose rows carried them (GPS Log ON). This "
-        "dashboard never de-anonymizes across sessions. <span class=\"faint\">%s</span></div>"
-        % e(HONESTY_LINE))
+    # ---- privacy boxes ----
+    add("<section style=\"margin-top:24px\">")
+    add('<div class="privacy"><div class="p-title">Privacy mirror</div><ul>')
+    add("<li>Identifiers render as per-session ordinals "
+        "(AP-01, BL-02, DR-03 \u2026).</li>")
+    add("<li>MAC/serial-shaped values are redacted from every rendered "
+        "field.</li>")
+    add("<li>Coordinates appear only for sessions whose rows carried them "
+        "(GPS Log ON).</li>")
+    add("<li>This dashboard <b>never</b> de-anonymizes across sessions.</li>")
+    add("</ul><div class=\"fine\">%s</div></div>" % e(HONESTY_LINE))
     if has_watch:
-        add('<div class="banner alert"><b>Opt-in cross-session identity.</b> '
-            "watchlist.txt is present: operator-supplied labels are joined "
-            "onto matching per-session ordinals. Ordinals are <b>not</b> stable "
-            "identities across sessions \u2014 labels are operator guesses, "
-            "shown for convenience only. Raw watchlist keys are never "
-            "rendered.</div>")
+        add('<div class="privacy alert">'
+            '<div class="p-title">Opt-in cross-session identity</div><ul>')
+        add("<li>watchlist.txt is present: operator-supplied labels are joined "
+            "onto matching per-session ordinals.</li>")
+        add("<li>Ordinals are <b>not</b> stable identities across sessions "
+            "\u2014 labels are operator guesses, shown for convenience "
+            "only.</li>")
+        add("<li>Raw watchlist keys are never rendered.</li>")
+        add("</ul></div>")
     add("</section>")
 
     # ---- coverage summary ----
-    add('<section id="coverage"><h2><span class="rule"></span>Coverage summary</h2>')
+    add('<section id="coverage"><h2>Coverage summary</h2>'
+        '<div class="sec-rule"></div>')
     add('<div class="cards">')
     cards = [
         ("sessions", str(len(sessions)),
@@ -822,11 +916,18 @@ footer{margin-top:64px;padding-top:24px;border-top:1px solid var(--border);
             % (e(label), e(value), e(sub)))
     add("</div>")
     add('<div class="mix">')
-    for k in list(KNOWN_SOURCES) + sorted(
-            k for k in source_counts if k not in KNOWN_SOURCES):
-        if k in source_counts:
-            add(chip(k, source_counts[k]))
+    # one row, grouped by hue family so the palette reads as a system
+    for family in FAMILY_ORDER:
+        for k in KNOWN_SOURCES:
+            if SOURCE_FAMILY.get(k) == family and k in source_counts:
+                add(chip(k, source_counts[k]))
+    for k in sorted(k for k in source_counts
+                    if k not in KNOWN_SOURCES):
+        add(chip(k, source_counts[k]))
     add("</div>")
+    add('<p class="mix-note">chip hue = source family \u00b7 spectrum \u00b7 '
+        "links \u00b7 proximity \u00b7 position \u00b7 transmit \u00b7 aerial "
+        "\u00b7 system</p>")
     if warnings:
         add('<p class="dim" style="margin-top:16px;font-size:12px">'
             "tolerated input issues: %s</p>"
@@ -834,25 +935,47 @@ footer{margin-top:64px;padding-top:24px;border-top:1px solid var(--border);
     add("</section>")
 
     # ---- session list ----
-    add('<section id="sessions"><h2><span class="rule"></span>Sessions</h2>')
+    add('<section id="sessions"><h2>Sessions</h2><div class="sec-rule"></div>')
     add('<div class="sess-idx">')
     for s in sessions:
         events = s["events"]
         sources = sorted({ev.source for ev in events})
         span = (max(ev.tick_ms for ev in events) - min(ev.tick_ms for ev in events)
                 ) / 1000.0 if events else 0.0
-        status = s["report"].get("status", "\u2014")
-        coverage = s["report"].get("coverage", "\u2014")
+        report_fields = s["report"]
+        report_parts = [report_fields[k] for k in ("status", "coverage")
+                        if report_fields.get(k)]
+        if report_parts:
+            report_val = ('<span class="v"><span class="pill on">%s</span></span>'
+                          % e(" \u00b7 ".join(report_parts)))
+        elif s["report_text"]:
+            report_val = ('<span class="v"><span class="pill off">'
+                          "report on file</span></span>")
+        else:
+            report_val = ('<span class="v"><span class="pill off">'
+                          "no report</span></span>")
+        source_order = [k for family in FAMILY_ORDER for k in KNOWN_SOURCES
+                        if SOURCE_FAMILY.get(k) == family and k in sources]
+        source_order += sorted(k for k in sources if k not in KNOWN_SOURCES)
+        sources_val = ('<span class="v src">%s</span>'
+                       % "".join(chip(k) for k in source_order)) \
+            if source_order else ('<span class="v"><span class="pill off">'
+                                  "none recorded</span></span>")
         add('<div class="sess-card">')
         add('<div class="id">session %d</div>' % s["n"])
-        add('<div class="row"><span>events</span><b>%d</b></div>' % len(events))
-        add('<div class="row"><span>duration</span><b>%.1f s</b></div>' % span)
-        add('<div class="row"><span>sources</span><b>%s</b></div>'
-            % e(", ".join(sources) or "\u2014"))
-        add('<div class="row"><span>gps</span><b>%s</b></div>'
+        add('<div class="rows">')
+        add('<div class="row"><span class="k">events</span>'
+            '<span class="v">%d</span></div>' % len(events))
+        add('<div class="row"><span class="k">duration</span>'
+            '<span class="v">%.1f s</span></div>' % span)
+        add('<div class="row"><span class="k">sources</span>%s</div>'
+            % sources_val)
+        add('<div class="row"><span class="k">gps</span>'
+            '<span class="v">%s</span></div>'
             % ("logged" if s["has_coords"] else "omitted"))
-        add('<div class="row"><span>report</span><b>%s \u00b7 %s</b></div>'
-            % (e(status), e(coverage)))
+        add('<div class="row"><span class="k">report</span>%s</div>'
+            % report_val)
+        add("</div>")
         links = ['<a href="#timeline-%d">timeline</a>' % s["n"],
                  '<a href="#stats-%d">per-device</a>' % s["n"]]
         if events:
@@ -875,10 +998,10 @@ footer{margin-top:64px;padding-top:24px;border-top:1px solid var(--border);
         if not events:
             continue
         add('<section id="timeline-%d">' % s["n"])
-        add('<h2><span class="rule"></span>Unified timeline \u00b7 session %d'
-            '<span style="letter-spacing:0;text-transform:none;font-weight:400;'
-            'color:var(--faint);margin-left:12px">all sources, sorted by time '
+        add('<h2>Unified timeline \u00b7 session %d'
+            '<span class="h2-sub">all sources, sorted by time '
             "(%d rows)</span></h2>" % (s["n"], len(events)))
+        add('<div class="sec-rule"></div>')
 
         add('<div class="tbl-wrap"><table><thead><tr>'
             "<th>t+</th><th>tick ms</th><th>source</th><th>event</th>"
@@ -934,7 +1057,8 @@ footer{margin-top:64px;padding-top:24px;border-top:1px solid var(--border);
                 % (ident_html, chip(g["source"]),
                    fmt_rssi(g["min"]), fmt_rssi(g["avg"]), fmt_rssi(g["max"]),
                    g["n"],
-                   sparkline_svg(g["values"], spark_id="sp%d" % spark_counter[0]),
+                   sparkline_svg(g["values"], spark_id="sp%d" % spark_counter[0],
+                                 color=source_solid(g["source"])),
                    fmt_t(g["first"] - t0), fmt_t(g["last"] - t0),
                    (" \u00b7 " + channels) if channels else "", freqs))
         add("</div>")
@@ -990,7 +1114,10 @@ footer{margin-top:64px;padding-top:24px;border-top:1px solid var(--border);
             maps[str(s["n"])] = geojson_for_session(s)
     add("<script>window.SWEEP_MAPS=%s;</script>"
         % redact(json.dumps(maps, separators=(",", ":"))).replace("</", "<\\/"))
-    add("""<script>
+    src_js = json.dumps({k: v[0] for k, v in SOURCE_COLORS.items()},
+                        separators=(",", ":"))
+    add(("""<script>
+window.SWEEP_SRC=__SRC__;
 (function(){
   function showFallbacks(){
     var nodes=document.querySelectorAll('.map-shell');
@@ -1011,7 +1138,8 @@ footer{margin-top:64px;padding-top:24px;border-top:1px solid var(--border);
           style:function(){return {color:'#5aa9ff',weight:2.5,opacity:.9};},
           pointToLayer:function(feature,latlng){
             var p=feature.properties||{};
-            var color=p.kind==='rid'?(p.role==='operator'?'#e8b04b':'#f08c46'):'#5aa9ff';
+            var color=p.kind==='rid'?(p.role==='operator'?'#e8b04b':'#f08c46')
+              :(window.SWEEP_SRC[p.source]||'#8c96a6');
             return L.circleMarker(latlng,{radius:p.kind==='rid'?7:5,
               color:color,weight:1.5,fillColor:color,fillOpacity:.35});
           },
@@ -1036,7 +1164,7 @@ footer{margin-top:64px;padding-top:24px;border-top:1px solid var(--border);
     document.addEventListener('DOMContentLoaded',boot);
   }else{boot();}
 })();
-</script>""")
+</script>""".replace("__SRC__", src_js)))
 
     add('<footer>room_sweep_dashboard.py \u00b7 static output \u00b7 no data '
         "leaves this machine \u00b7 WiGLE uploads are manual and optional<br>"
