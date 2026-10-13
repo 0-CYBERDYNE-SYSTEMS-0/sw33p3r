@@ -5,8 +5,8 @@
 
 /*
  * Host-testable integer radar geometry for the room sweep display.
- * All trigonometry is 1/128 fixed point implemented with lookup tables:
- * the FAP cannot link libm, and -Wdouble-promotion forbids float/double.
+ * Radar angles use 1/128 fixed point lookup tables; GPS distance uses a
+ * Q30 integer haversine to avoid pulling float trig routines from libm.
  * Flipper-header-free so host tests compile with plain cc.
  *
  * Conventions: 0 deg = north = up on screen; angles increase clockwise
@@ -17,35 +17,16 @@
 #define ROOM_SWEEP_RADAR_FLOOR_DBM (-127)
 #define ROOM_SWEEP_RADAR_CEIL_DBM (-20)
 
-/*
- * round(sin(deg * pi / 180) * 128) for deg in 0..359, one entry per
- * integer degree.  A full 360-entry table keeps every lookup exact to the
- * nearest integer with no quadrant fold arithmetic.
- */
-static const int16_t k_room_sweep_radar_sin128[360] = {
-       0,    2,    4,    7,    9,   11,   13,   16,   18,   20,   22,   24,   27,   29,   31,   33,
-      35,   37,   40,   42,   44,   46,   48,   50,   52,   54,   56,   58,   60,   62,   64,   66,
-      68,   70,   72,   73,   75,   77,   79,   81,   82,   84,   86,   87,   89,   91,   92,   94,
-      95,   97,   98,   99,  101,  102,  104,  105,  106,  107,  109,  110,  111,  112,  113,  114,
-     115,  116,  117,  118,  119,  119,  120,  121,  122,  122,  123,  124,  124,  125,  125,  126,
-     126,  126,  127,  127,  127,  128,  128,  128,  128,  128,  128,  128,  128,  128,  128,  128,
-     127,  127,  127,  126,  126,  126,  125,  125,  124,  124,  123,  122,  122,  121,  120,  119,
-     119,  118,  117,  116,  115,  114,  113,  112,  111,  110,  109,  107,  106,  105,  104,  102,
-     101,   99,   98,   97,   95,   94,   92,   91,   89,   87,   86,   84,   82,   81,   79,   77,
-      75,   73,   72,   70,   68,   66,   64,   62,   60,   58,   56,   54,   52,   50,   48,   46,
-      44,   42,   40,   37,   35,   33,   31,   29,   27,   24,   22,   20,   18,   16,   13,   11,
-       9,    7,    4,    2,    0,   -2,   -4,   -7,   -9,  -11,  -13,  -16,  -18,  -20,  -22,  -24,
-     -27,  -29,  -31,  -33,  -35,  -37,  -40,  -42,  -44,  -46,  -48,  -50,  -52,  -54,  -56,  -58,
-     -60,  -62,  -64,  -66,  -68,  -70,  -72,  -73,  -75,  -77,  -79,  -81,  -82,  -84,  -86,  -87,
-     -89,  -91,  -92,  -94,  -95,  -97,  -98,  -99, -101, -102, -104, -105, -106, -107, -109, -110,
-    -111, -112, -113, -114, -115, -116, -117, -118, -119, -119, -120, -121, -122, -122, -123, -124,
-    -124, -125, -125, -126, -126, -126, -127, -127, -127, -128, -128, -128, -128, -128, -128, -128,
-    -128, -128, -128, -128, -127, -127, -127, -126, -126, -126, -125, -125, -124, -124, -123, -122,
-    -122, -121, -120, -119, -119, -118, -117, -116, -115, -114, -113, -112, -111, -110, -109, -107,
-    -106, -105, -104, -102, -101,  -99,  -98,  -97,  -95,  -94,  -92,  -91,  -89,  -87,  -86,  -84,
-     -82,  -81,  -79,  -77,  -75,  -73,  -72,  -70,  -68,  -66,  -64,  -62,  -60,  -58,  -56,  -54,
-     -52,  -50,  -48,  -46,  -44,  -42,  -40,  -37,  -35,  -33,  -31,  -29,  -27,  -24,  -22,  -20,
-     -18,  -16,  -13,  -11,   -9,   -7,   -4,   -2,
+/* round(sin(deg * pi / 180) * 128) for deg in 0..90; quadrant folding
+ * keeps the 1-degree table exact while storing only one quarter-wave. */
+static const int16_t k_room_sweep_radar_sin128[91] = {
+       0,    2,    4,    7,    9,   11,   13,   16,   18,   20,   22,   24,   27,
+      29,   31,   33,   35,   37,   40,   42,   44,   46,   48,   50,   52,   54,
+      56,   58,   60,   62,   64,   66,   68,   70,   72,   73,   75,   77,   79,
+      81,   82,   84,   86,   87,   89,   91,   92,   94,   95,   97,   98,   99,
+     101,  102,  104,  105,  106,  107,  109,  110,  111,  112,  113,  114,  115,
+     116,  117,  118,  119,  119,  120,  121,  122,  122,  123,  124,  124,  125,
+     125,  126,  126,  126,  127,  127,  127,  128,  128,  128,  128,  128,  128,
 };
 
 /*
@@ -67,12 +48,182 @@ static const uint16_t k_room_sweep_radar_atan45[46] = {
 static inline int16_t room_sweep_radar_sin128(int16_t deg) {
     while(deg < 0) deg += 360;
     while(deg >= 360) deg -= 360;
-    return k_room_sweep_radar_sin128[deg];
+    if(deg <= 90) return k_room_sweep_radar_sin128[deg];
+    if(deg <= 180) return k_room_sweep_radar_sin128[180 - deg];
+    if(deg <= 270) return (int16_t)-k_room_sweep_radar_sin128[deg - 180];
+    return (int16_t)-k_room_sweep_radar_sin128[360 - deg];
 }
 
 /* cos(deg) * 128 = sin(deg + 90) * 128. */
 static inline int16_t room_sweep_radar_cos128(int16_t deg) {
     return room_sweep_radar_sin128(deg + 90);
+}
+
+/* Fixed-point geodesic distance (WGS84-style spherical Earth radius). */
+#define ROOM_SWEEP_GEO_Q30 (1073741824LL)
+#define ROOM_SWEEP_GEO_PI_Q30 (3373259426LL)
+#define ROOM_SWEEP_GEO_HALF_PI_Q30 (1686629713LL)
+
+static inline int64_t room_sweep_geo_q30_mul(int64_t a, int64_t b) {
+    return (a * b) >> 30;
+}
+
+/* sin(x), where x is radians in Q30 and |x| <= pi/2. */
+static inline int64_t room_sweep_geo_sin_q30(int64_t x) {
+    bool negative = x < 0;
+    if(negative) x = -x;
+
+    if(x > (ROOM_SWEEP_GEO_HALF_PI_Q30 / 2)) {
+        int64_t y = ROOM_SWEEP_GEO_HALF_PI_Q30 - x;
+        int64_t y2 = room_sweep_geo_q30_mul(y, y);
+        int64_t p = 2;
+        p = -296 + room_sweep_geo_q30_mul(y2, p);
+        p = 26631 + room_sweep_geo_q30_mul(y2, p);
+        p = -1491308 + room_sweep_geo_q30_mul(y2, p);
+        p = 44739243 + room_sweep_geo_q30_mul(y2, p);
+        p = -536870912 + room_sweep_geo_q30_mul(y2, p);
+        int64_t result = ROOM_SWEEP_GEO_Q30 + room_sweep_geo_q30_mul(y2, p);
+        return negative ? -result : result;
+    }
+
+    int64_t x2 = room_sweep_geo_q30_mul(x, x);
+    /* 1/13! is below half a Q30 unit and rounds to zero. */
+    int64_t p = 0;
+    p = -27 + room_sweep_geo_q30_mul(x2, p);
+    p = 2959 + room_sweep_geo_q30_mul(x2, p);
+    p = -213044 + room_sweep_geo_q30_mul(x2, p);
+    p = 8947849 + room_sweep_geo_q30_mul(x2, p);
+    p = -178956971 + room_sweep_geo_q30_mul(x2, p);
+    int64_t result = x + room_sweep_geo_q30_mul(room_sweep_geo_q30_mul(x, x2), p);
+    return negative ? -result : result;
+}
+
+/* pi * 2^60 / 360,000,000, rounded. Input is signed degrees * 1e6. */
+#define ROOM_SWEEP_GEO_HALF_DEGREE_TO_RAD_Q30 (10061138136LL)
+static inline int64_t room_sweep_geo_half_degrees_to_rad_q30(int64_t degrees_e6) {
+    return (degrees_e6 * ROOM_SWEEP_GEO_HALF_DEGREE_TO_RAD_Q30) >> 30;
+}
+
+/* Square root of an unsigned 64-bit integer, rounded down. */
+static inline uint64_t room_sweep_geo_isqrt(uint64_t value) {
+    uint64_t result = 0;
+    uint64_t bit = UINT64_C(1) << 62;
+    while(bit > value) bit >>= 2;
+    while(bit != 0) {
+        if(value >= result + bit) {
+            value -= result + bit;
+            result = (result >> 1) + bit;
+        } else {
+            result >>= 1;
+        }
+        bit >>= 2;
+    }
+    return result;
+}
+
+/* Vectoring CORDIC atan2 in Q30 radians for nonnegative Q30 components. */
+static inline int64_t room_sweep_geo_atan2_q30(uint64_t y, uint64_t x) {
+    static const int32_t k_atan_q30[31] = {
+        843314857, 497837829, 263043837, 133525159, 67021687, 33543516,
+        16775851, 8388437, 4194283, 2097149, 1048576, 524288, 262144,
+        131072, 65536, 32768, 16384, 8192, 4096, 2048, 1024, 512, 256,
+        128, 64, 32, 16, 8, 4, 2, 1,
+    };
+    if(y == 0) return 0;
+    if(x == 0) return ROOM_SWEEP_GEO_HALF_PI_Q30;
+
+    int32_t vx = (int32_t)x;
+    int32_t vy = (int32_t)y;
+    int64_t angle = 0;
+    for(uint8_t i = 0; i < 31U && vy != 0; i++) {
+        int32_t old_x = vx;
+        if(vy > 0) {
+            vx += vy >> i;
+            vy -= old_x >> i;
+            angle += k_atan_q30[i];
+        } else {
+            vx -= vy >> i;
+            vy += old_x >> i;
+            angle -= k_atan_q30[i];
+        }
+    }
+    return angle;
+}
+
+static inline int64_t room_sweep_geo_lat_cos_q30(int32_t latitude_e6) {
+    int64_t lat = latitude_e6;
+    if(lat == 0) return ROOM_SWEEP_GEO_Q30;
+    if(lat < 0) lat = -lat;
+    if(lat > 90000000) lat = 90000000;
+    int64_t lat_rad = room_sweep_geo_half_degrees_to_rad_q30(lat * 2);
+    return room_sweep_geo_sin_q30(ROOM_SWEEP_GEO_HALF_PI_Q30 - lat_rad);
+}
+
+/* Great-circle distance in whole meters. Coordinates are signed degrees *
+ * 1e6; the integer haversine retains sub-meter angular precision without
+ * linking the multi-kilobyte float trig implementation from libm. */
+static inline uint32_t room_sweep_geo_distance_m(
+    int32_t lat1_e6,
+    int32_t lon1_e6,
+    int32_t lat2_e6,
+    int32_t lon2_e6) {
+    if(lat1_e6 > 90000000) lat1_e6 = 90000000;
+    if(lat1_e6 < -90000000) lat1_e6 = -90000000;
+    if(lat2_e6 > 90000000) lat2_e6 = 90000000;
+    if(lat2_e6 < -90000000) lat2_e6 = -90000000;
+
+    int64_t dlat = (int64_t)lat2_e6 - lat1_e6;
+    int64_t dlon = (int64_t)lon2_e6 - lon1_e6;
+    while(dlon > 180000000) dlon -= 360000000;
+    while(dlon < -180000000) dlon += 360000000;
+
+    int64_t sin_lat = room_sweep_geo_sin_q30(
+        room_sweep_geo_half_degrees_to_rad_q30(dlat));
+    int64_t sin_lon = room_sweep_geo_sin_q30(
+        room_sweep_geo_half_degrees_to_rad_q30(dlon));
+    int64_t a = sin_lat * sin_lat;
+    int64_t cos_product = room_sweep_geo_q30_mul(
+        room_sweep_geo_lat_cos_q30(lat1_e6),
+        room_sweep_geo_lat_cos_q30(lat2_e6));
+    int64_t sin_lon_weighted = room_sweep_geo_q30_mul(cos_product, sin_lon);
+    a += sin_lon_weighted * sin_lon;
+    if(a < 0) a = 0;
+    const uint64_t one_q60 = UINT64_C(1) << 60;
+    if((uint64_t)a > one_q60) a = (int64_t)one_q60;
+
+    /* Near an antipode, 1 - a loses the small complementary angle.
+     * Compute cos²(distance/2) from small angles instead:
+     * sin²((lat1+lat2)/2) + cos(lat1)cos(lat2)cos²(dlon/2). */
+    int64_t lat_sum_half = room_sweep_geo_half_degrees_to_rad_q30(
+        (int64_t)lat1_e6 + lat2_e6);
+    int64_t lon_complement_half = room_sweep_geo_half_degrees_to_rad_q30(
+        180000000 - (dlon < 0 ? -dlon : dlon));
+    int64_t sin_lat_sum = room_sweep_geo_sin_q30(lat_sum_half);
+    int64_t sin_lon_complement = room_sweep_geo_sin_q30(lon_complement_half);
+    int64_t sin_lon_complement_weighted =
+        room_sweep_geo_q30_mul(cos_product, sin_lon_complement);
+    uint64_t antipode_complement = (uint64_t)(sin_lat_sum * sin_lat_sum) +
+        (uint64_t)(sin_lon_complement_weighted * sin_lon_complement_weighted);
+    if(antipode_complement > one_q60) antipode_complement = one_q60;
+
+    uint64_t a_q60;
+    uint64_t complement;
+    bool lower_hemisphere = antipode_complement >= (one_q60 / 2U);
+    if(lower_hemisphere) {
+        a_q60 = (uint64_t)a;
+        complement = one_q60 - a_q60;
+    } else {
+        complement = antipode_complement;
+        a_q60 = one_q60 - complement;
+    }
+    uint64_t y = room_sweep_geo_isqrt(lower_hemisphere ? a_q60 : complement);
+    uint64_t x = room_sweep_geo_isqrt(lower_hemisphere ? complement : a_q60);
+    if(x == 0) return 0;
+    int64_t quarter_angle = room_sweep_geo_atan2_q30(y, x);
+    int64_t angle = lower_hemisphere ? quarter_angle * 2 :
+                                       ROOM_SWEEP_GEO_PI_Q30 - quarter_angle * 2;
+    uint64_t distance = ((uint64_t)angle * 6371000U + (1U << 29)) >> 30;
+    return (uint32_t)distance;
 }
 
 /*

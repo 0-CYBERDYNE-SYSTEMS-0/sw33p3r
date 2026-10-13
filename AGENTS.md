@@ -49,12 +49,18 @@ gitignored.
 - On-device helpers (need a connected Flipper; `FLIPPER_PORT` env):
   `_smoke_test.py` / `_dev_check.py` (serial CLI checks) and
   `tools/marauder_probe.py` (BFFB UART probe battery, receive-only).
+- Agent USB access: install with `sh tools/install_flipperctl.sh`, then use
+  `flipperctl` for shared ownership, bounded CLI/RPC calls, full button events,
+  and verified file transfers. See `docs/flipper-agent-access.md`. Honor the
+  user-assigned USB owner; run external device helpers through `flipperctl run`.
 
 ## Architecture
 
 Single ViewPort app, one draw function, **8 tabs** (`SweepMode` in
-`room_sweep.h`): RF / Wi / BT / nR / GP / TX / i / AV (air vehicles — RID
-receive, detect-only). The RF tab cycles **5 sub-modes** (`RfSubMode`):
+`room_sweep.h`): RF / Wi / BT / nR / GP / TX / i / AV (air vehicles — passive
+RID scan, source-pinned parser, live aircraft row still needed; detect-only).
+The RF tab cycles
+**5 sub-modes** (`RfSubMode`):
 Survey / Sweep / Peak / Waterfall / Watch.
 
 - `room_sweep.c` (~8.2k lines) is an intentional monolith: input
@@ -87,7 +93,8 @@ Survey / Sweep / Peak / Waterfall / Watch.
 - Other modules: `nmea.c/h` (host-tested NMEA parser),
   `session_log.c/h` (session writer, main-loop-only), `nrf24_survey.c/h`.
   The nRF24 driver test builds against stub headers in `tests/nrf24_stubs/`.
-- `application.fam` — ufbt manifest: stack 6 KiB, `sources=["*.c","!tests"]`.
+- `application.fam` — ufbt manifest: app stack 4 KiB (set after the measured
+  OOM run), `sources=["*.c","!tests"]`.
 
 ### Threads & locking
 
@@ -131,11 +138,17 @@ Survey / Sweep / Peak / Waterfall / Watch.
   validated against a redacted fixture (2026-09-21 — `RSSI: -NN Ch: N Client:
   <mac> Requesting: <ssid>`), while esp/pwn remain upstream-pinned only,
   annotated "not yet observed live" (see `docs/BFFB_MOMENTUM.md`).
-- `remoteid` (AV tab RID receive) is parsed but its send path is gated OFF
-  (`ROOM_SWEEP_RID_SEND_ENABLED` in `room_sweep.h`): the command is NOT
-  compiled into the current BFFB build (2026-10-11 probe receipt — see
-  `docs/BFFB_MOMENTUM.md`). Flip the gate only on a build whose `help` lists
-  `remoteid`, backed by a fresh probe receipt pinning the output format.
+- RID transmission and the explicit `remoteid clear` command remain disabled.
+  Marauder v1.18.0 clears and rebuilds its volatile RID table when an
+  all-target scan starts; this is an upstream receive-scan side effect. The
+  passive `remoteid scan` command and strict receive parser are enabled against the
+  official v1.18.0 `RID,` CSV schema. On 2026-10-12 the attached BFFB reported
+  v1.18.0, accepted `remoteid scan` / `stopscan` / `remoteid list`, and returned
+  an empty list; no aircraft row was observed. The parser is host-tested with
+  synthetic rows, so app-level RID reception still needs a real row on the
+  Flipper. Classic ESP32 BFFB receives 2.4 GHz Wi-Fi and supported BLE legacy
+  service-data broadcasts; it cannot receive 5 GHz or BLE 5 extended
+  advertising. See `docs/BFFB_MOMENTUM.md`.
 - GPS primary: Flipper GPIO **LPUART 15/16 @ 9600**; Marauder `nmea` stream is
   the fallback. Verify against `docs/BFFB_MOMENTUM.md`.
 

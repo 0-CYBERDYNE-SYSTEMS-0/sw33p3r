@@ -561,6 +561,21 @@ void session_log_note_storage_failure(void) {
     note_storage_failure();
 }
 
+void session_log_note_sensor_confirmed(uint8_t sensor_mask) {
+    static const RoomSweepReportSensor sensors[] = {
+        RoomSweepReportSensorRf,
+        RoomSweepReportSensorWifi,
+        RoomSweepReportSensorBle,
+        RoomSweepReportSensorGps,
+        RoomSweepReportSensorNrf24,
+        RoomSweepReportSensorRid,
+    };
+    for(size_t i = 0; i < sizeof(sensors) / sizeof(sensors[0]); i++) {
+        if(sensor_mask & (uint8_t)sensors[i])
+            room_sweep_report_sensor_confirmed(&s_log.report, sensors[i]);
+    }
+}
+
 void session_log_note_sensor_unavailable(uint8_t sensor_mask) {
     static const RoomSweepReportSensor sensors[] = {
         RoomSweepReportSensorRf,
@@ -597,8 +612,9 @@ void session_log_note_field(const RoomSweepReportField* stats) {
 
 static bool write_report(void) {
     if(!s_log.storage || !s_log.report_path[0]) return false;
-    char report[REPORT_BUFFER_SIZE];
-    size_t used = room_sweep_report_format(&s_log.report, report, sizeof(report));
+    char* report = malloc(REPORT_BUFFER_SIZE);
+    if(!report) return false;
+    size_t used = room_sweep_report_format(&s_log.report, report, REPORT_BUFFER_SIZE);
     RoomSweepReportFindings findings;
     room_sweep_report_findings_init(&findings);
     findings.rf_observations = s_log.observation_count[0];
@@ -626,16 +642,16 @@ static bool write_report(void) {
     findings.watchlist_matches = s_log.watchlist_matches;
     memcpy(findings.vendors, s_log.vendors, sizeof(findings.vendors));
     findings.vendor_count = s_log.vendor_count;
-    used = room_sweep_report_append_findings(&findings, report, sizeof(report), used);
+    used = room_sweep_report_append_findings(&findings, report, REPORT_BUFFER_SIZE, used);
     /* Field sweep section (specs/field-sweep.md): prints only when a field
      * sweep ran; hit counts are the rows logged while the loop was active. */
     RoomSweepReportField field = s_log.field;
     for(size_t i = 0; i < 6U; i++) field.hits[i] = s_log.field_hits[i];
-    used = room_sweep_report_append_field(&field, report, sizeof(report), used);
+    used = room_sweep_report_append_field(&field, report, REPORT_BUFFER_SIZE, used);
     bool uart_exists = storage_file_exists(s_log.storage, s_log.uart_path);
     room_sweep_report_append(
         report,
-        sizeof(report),
+        REPORT_BUFFER_SIZE,
         &used,
         "Files: session=%s; report=%s; UART snapshot=%s%s\nRecords: %lu; bytes: %lu; dropped: %lu\n",
         s_log.session_path,
@@ -647,17 +663,21 @@ static bool write_report(void) {
         (unsigned long)s_log.record.dropped_records);
     room_sweep_report_append(
         report,
-        sizeof(report),
+        REPORT_BUFFER_SIZE,
         &used,
         "Detail CSV holds per-event fields. This Room Report is the plain summary.\n");
     File* report_file = storage_file_alloc(s_log.storage);
-    if(!report_file) return false;
+    if(!report_file) {
+        free(report);
+        return false;
+    }
     bool opened = storage_file_open(
         report_file, s_log.report_path, FSAM_WRITE, FSOM_CREATE_NEW);
     bool ok = opened && storage_file_write(report_file, report, used) == used &&
               storage_file_sync(report_file);
     if(!storage_file_close(report_file)) ok = false;
     storage_file_free(report_file);
+    free(report);
     return ok;
 }
 

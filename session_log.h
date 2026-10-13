@@ -54,6 +54,7 @@ bool session_log_write_event(const SessionLogEvent* event);
 
 void session_log_note_drop(uint32_t count);
 void session_log_note_storage_failure(void);
+void session_log_note_sensor_confirmed(uint8_t sensor_mask);
 void session_log_note_sensor_unavailable(uint8_t sensor_mask);
 
 /* Phase 6: report the current duplicate-SSID group count found in the AP

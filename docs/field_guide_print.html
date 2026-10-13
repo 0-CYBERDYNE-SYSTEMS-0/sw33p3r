@@ -1410,10 +1410,11 @@
         <div class="blocklabel">What it does</div>
         <p>Record opens session N and writes <b style="color:var(--hi);">session-N.csv</b> plus a
         Room Report. Baseline snapshots the RF survey floor so the
-        <b style="color:var(--hi);">&gt;-75dBm</b> energy gate means something. Raw Dump captures a
-        bounded UART
-        snapshot (<b style="color:var(--hi);">uart-N.txt</b>) &mdash; the only file that can
-        contain raw identifiers. FullSweep launches the whole-room sequence.</p>
+        <b style="color:var(--hi);">&gt;-75dBm</b> energy gate means something. Raw Dump is opt-in:
+        press once to capture up to 24 UART lines, then press again to save
+        <b style="color:var(--hi);">uart-N.txt</b> and stop. Only one dump is saved per recorded
+        session; it is the only file that can contain raw identifiers. FullSweep launches the
+        whole-room sequence.</p>
       </div>
       <div class="block">
         <div class="blocklabel">How to use</div>

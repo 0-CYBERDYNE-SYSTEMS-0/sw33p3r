@@ -19,7 +19,6 @@
  * No TX interaction of any kind (same as FullSweep).
  */
 
-#include <math.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -27,7 +26,7 @@
 #include <string.h>
 
 #include "room_sweep_full_sweep.h"
-#include "room_sweep_scan.h" /* geo_distance_m — the GPS haversine */
+#include "room_sweep_radar.h" /* integer great-circle distance */
 
 /* ------------------------------------------------------------------ */
 /* 1. Loop-transition policy                                           */
@@ -302,21 +301,15 @@ static inline uint32_t room_sweep_field_duration_ms(
 }
 
 /*
- * Walked-distance step in whole meters between two e6 fixes. Reuses the GPS
- * haversine (geo_distance_m, room_sweep_scan.h); the policy state itself
- * keeps only integer meters.
+ * Walked-distance step in whole meters between two e6 fixes. The policy
+ * state keeps only integer meters.
  */
 static inline uint32_t room_sweep_field_step_m(
     int32_t lat1_e6,
     int32_t lon1_e6,
     int32_t lat2_e6,
     int32_t lon2_e6) {
-    float distance = geo_distance_m(
-        (float)lat1_e6 * 1e-6f,
-        (float)lon1_e6 * 1e-6f,
-        (float)lat2_e6 * 1e-6f,
-        (float)lon2_e6 * 1e-6f);
-    return (uint32_t)(distance + 0.5f);
+    return room_sweep_geo_distance_m(lat1_e6, lon1_e6, lat2_e6, lon2_e6);
 }
 
 /*

@@ -59,6 +59,19 @@ typedef enum {
     WiSourceCount,
 } WiSource;
 
+typedef enum {
+    RoomSweepDumpStartCapture = 0,
+    RoomSweepDumpSaveAndStop,
+} RoomSweepDumpAction;
+
+static inline RoomSweepDumpAction room_sweep_dump_action(bool capturing) {
+    return capturing ? RoomSweepDumpSaveAndStop : RoomSweepDumpStartCapture;
+}
+
+static inline bool room_sweep_dump_can_start(bool session_active, bool saved_in_session) {
+    return !session_active || !saved_in_session;
+}
+
 static inline WiSource room_sweep_wi_source_step(WiSource source, bool down) {
     if((uint8_t)source >= WiSourceCount) source = WiSourceBeacon;
     if(down) {

@@ -264,13 +264,13 @@
   "description": "AV tab: ASTM F3411 Remote ID reception (drone identity/position/operator) + 2.4 GHz drone-link energy, detect-only",
   "steps": [
    "Spec: specs/drone-rid.md",
-   "Phase-0 tools/marauder_probe.py remoteid probe pins the output format on a live BFFB before any send; docs/BFFB_MOMENTUM.md annotations until then",
+   "Official BFFB v1.18.0 remoteid scan/stopscan/list verified; the exact RID CSV shape is pinned to source and strict synthetic parser fixtures pass; a real aircraft row is still required for app-level device verification",
    "room_sweep_rid.h + room_sweep_rid_state.h (Flipper-free) with redacted/synthetic fixtures; tests/test_rid.c in init.sh",
    "SweepModeAv tab (8th; MISSION.md + control map updated); session events source=RID with DR-nn ordinals, rate-limited to protect the 8-slot queue",
    "nRF24 layer stays RPD energy only per specs/nrf24-survey.md (no promiscuous sniffing)",
-   "2026-10-11 live probe receipt: remoteid is NOT compiled into the current BFFB build — send path stays dark (ROOM_SWEEP_RID_SEND_ENABLED=0) until a firmware whose help lists remoteid lands, with a fresh format-pinning probe; parser/state/UI host-verified and shipped dark (docs/BFFB_MOMENTUM.md receipt)"
+   "2026-10-12: official Marauder v1.18.0 installed on the BFFB; bounded passive scan returned an empty list and no row. App RID receive is enabled for field validation, but the candidate FAP has not been device-tested because the Flipper USB CDC port is disconnected; see .omo/evidence/bffb-rid-scan-2026-10-12.txt and docs/BFFB_MOMENTUM.md"
   ],
-  "passes": true
+  "passes": false
  },
  {
   "category": "functional",
