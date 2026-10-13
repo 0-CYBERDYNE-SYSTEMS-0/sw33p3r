@@ -58,7 +58,26 @@ static void check_bearing(
         buf);
 }
 
+static void check_geo_distance(
+    int32_t lat1,
+    int32_t lon1,
+    int32_t lat2,
+    int32_t lon2,
+    uint32_t want,
+    uint32_t tol,
+    const char* message) {
+    char buf[128];
+    uint32_t got = room_sweep_geo_distance_m(lat1, lon1, lat2, lon2);
+    snprintf(buf, sizeof(buf), "%s (got %lu m, expected %lu m)",
+             message, (unsigned long)got, (unsigned long)want);
+    check(near_int((int)got, (int)want, (int)tol), buf);
+}
+
 int main(void) {
+    check(
+        room_sweep_geo_sin_q30(ROOM_SWEEP_GEO_HALF_PI_Q30) == ROOM_SWEEP_GEO_Q30,
+        "Q30 sin(pi/2) is exact after range reduction");
+
     /* --- sin128: cardinals, wraparound, and reference values --- */
     check_sin(0, 0, 0, "sin128(0) is zero");
     check_sin(90, 128, 0, "sin128(90) is full scale");
@@ -123,6 +142,24 @@ int main(void) {
     check_bearing(5, 7, 5, 7, 0, 0, "coincident points bear zero");
     check_bearing(90000000, 0, 90000000, 1000000, 90, 2, "clamped polar latitude keeps east");
     check_bearing(-90000000, 0, -90000000, 1000000, 90, 2, "clamped south polar latitude keeps east");
+
+    /* --- great-circle distance: local, high-latitude, and global paths --- */
+    check_geo_distance(0, 0, 1000000, 0, 111195, 2, "one degree latitude");
+    check_geo_distance(0, 0, 0, 1000000, 111195, 2, "one degree longitude at equator");
+    check_geo_distance(37774900, -122419400, 37774900, -122419400, 0, 0, "same GPS fix");
+    check_geo_distance(0, 0, 9, 0, 1, 0, "one-meter equatorial distance");
+    check_geo_distance(0, 0, 90, 0, 10, 0, "ten-meter equatorial distance");
+    check_geo_distance(0, 0, 225, 0, 25, 0, "25-meter equatorial distance");
+    check_geo_distance(0, 0, 899, 0, 100, 0, "100-meter equatorial distance");
+    check_geo_distance(0, 0, 2248, 0, 250, 0, "250-meter equatorial distance");
+    check_geo_distance(0, 0, 9000, 0, 1001, 2, "short walking distance");
+    check_geo_distance(80000000, 0, 80000000, 1000000, 19309, 10, "longitude at high latitude");
+    check_geo_distance(0, 179999000, 0, -179999000, 222, 2, "short path across antimeridian");
+    check_geo_distance(0, 0, 0, 179000000, 19903892, 3, "179-degree equatorial arc near antipode");
+    check_geo_distance(0, 0, 0, 179500000, 19959489, 3, "179.5-degree equatorial arc near antipode");
+    check_geo_distance(0, 0, 0, 179900000, 20003967, 3, "179.9-degree equatorial arc near antipode");
+    check_geo_distance(0, 0, 0, 180000000, 20015087, 2, "antipodal points");
+    check_geo_distance(40712800, -74006000, 51507400, -127800, 5570222, 2000, "New York to London");
 
     /* --- rssi_radius: endpoints, midpoint, and clamping --- */
     check(room_sweep_radar_rssi_radius(-127, 100) == 0, "floor dBm maps to radius 0");

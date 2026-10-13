@@ -8,6 +8,23 @@
 
 #include "room_sweep_scan.h" /* framing helpers: strip_prompt, find_ble_record, ble_record_end */
 
+static inline bool room_sweep_marauder_uart_required(
+    bool wifi_or_ble_tab,
+    bool rid_scan_tab,
+    bool bffb_gps_tab) {
+    return wifi_or_ble_tab || rid_scan_tab || bffb_gps_tab;
+}
+
+static inline bool room_sweep_marauder_tab_autostart_allowed(bool marauder_confirmed) {
+    return marauder_confirmed;
+}
+
+static inline bool room_sweep_marauder_should_close_on_mode_change(
+    bool uart_open,
+    bool target_requires_uart) {
+    return uart_open && !target_requires_uart;
+}
+
 /*
  * Pure Marauder line parsing — Flipper-header-free so host tests compile with
  * plain cc. A line in, a parsed record out. No App*, no furi_get_tick(), no

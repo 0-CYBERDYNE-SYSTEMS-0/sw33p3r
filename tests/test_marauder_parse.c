@@ -27,6 +27,34 @@ static void check_str(const char* name, const char* got, const char* want) {
 }
 
 int main(void) {
+    check(
+        "UART: RF-only launch leaves Marauder closed",
+        !room_sweep_marauder_uart_required(false, false, false));
+    check(
+        "UART: Wi/BLE tab needs Marauder",
+        room_sweep_marauder_uart_required(true, false, false));
+    check(
+        "UART: enabled RID scan needs Marauder",
+        room_sweep_marauder_uart_required(false, true, false));
+    check(
+        "UART: BFFB GPS needs Marauder",
+        room_sweep_marauder_uart_required(false, false, true));
+    check(
+        "tab entry: unconfirmed UART does not start a scan",
+        !room_sweep_marauder_tab_autostart_allowed(false));
+    check(
+        "tab entry: confirmed Marauder can keep scanning",
+        room_sweep_marauder_tab_autostart_allowed(true));
+    check(
+        "mode change: open UART stays for a UART-backed tab",
+        !room_sweep_marauder_should_close_on_mode_change(true, true));
+    check(
+        "mode change: open UART closes for nRF24-only tab",
+        room_sweep_marauder_should_close_on_mode_change(true, false));
+    check(
+        "mode change: closed UART remains closed",
+        !room_sweep_marauder_should_close_on_mode_change(false, false));
+
     /* ---------------------------------------------------------- */
     /* WiFi                                                       */
     /* ---------------------------------------------------------- */

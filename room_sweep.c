@@ -2,7 +2,7 @@
  * Tabs: RF | WiFi | BLE | nRF24 | GPS | TX | Info | AV
  * RF: BFFB external CC1101 when SPI path is CC1101; internal when nRF24 path.
  * nRF24: RPD detect-only on external SPI. WiFi/BLE/GPS via Marauder UART.
- * AV: ASTM F3411 Remote ID receive (send path gated, see room_sweep.h).
+ * AV: passive RID scan + receive parser; 2.4 GHz energy remains receive-only.
  * Momentum mntm-012, API 87.1. No jam/block modes.
  */
 #include <furi.h>
@@ -220,6 +220,7 @@ typedef struct {
     volatile float peak_rssi;
     volatile uint8_t peak_ch;
     FuriThread* rf_thread;
+    volatile bool rf_thread_stop_requested;
 
     /* RF band sweep state */
     volatile bool sweep_running;
@@ -248,7 +249,7 @@ typedef struct {
     /* Marauder UART */
     volatile MarauderState marauder_state;
     FuriHalSerialHandle* serial;
-    char pending_lines[MARAUDER_MAX_LINES][MARAUDER_LINE_MAX];
+    char (*pending_lines)[MARAUDER_LINE_MAX]; /* allocated on first Marauder tab */
     volatile uint8_t uart_line_head;
     volatile uint8_t uart_line_tail;
     RoomSweepUartLineAccum uart_accum; /* byte→line framer (handles headless BLE) */
@@ -260,6 +261,7 @@ typedef struct {
     volatile bool marauder_confirmed;
     volatile uint32_t marauder_confirmed_tick;
     volatile uint32_t marauder_probe_tick;
+    bool marauder_tab_autostart_pending;
 
     /* WiFi parsed results */
     WifiAp wifi_aps[MAX_WIFI_APS];
@@ -307,7 +309,7 @@ typedef struct {
     bool gps_log_coordinates;
     uint32_t last_gps_record_tick;
     uint32_t last_rf_record_tick;
-    PendingRecordEvent record_queue[RECORD_QUEUE_CAPACITY];
+    PendingRecordEvent* record_queue; /* allocated only for an open session */
     uint8_t record_head;
     uint8_t record_tail;
     uint32_t record_queue_drops;
@@ -333,11 +335,13 @@ typedef struct {
     ExtBandPref ext_band;
 
     /* UART dump ring for BFFB capture */
-    char dump_lines[24][MARAUDER_LINE_MAX];
+    char (*dump_lines)[MARAUDER_DUMP_LINE_MAX]; /* allocated only during explicit capture */
     uint8_t dump_head;
     uint8_t dump_count;
     volatile uint32_t dump_overwrites;
     bool raw_dump_error;
+    bool dump_capture_on;
+    bool dump_saved_in_session;
 
     /* Notification / feedback */
     NotificationApp* notif;
@@ -451,15 +455,15 @@ typedef struct {
     RoomSweepGpsTrail gps_trail;
     uint32_t gps_trail_last_push_tick;
 
-    /* AV tab (specs/drone-rid.md): Remote ID track state + pages. RID rows
-     * carry per-session DR-nn ordinals — the raw serial never reaches a CSV
-     * (it goes through the record fingerprint map like Wi/BLE identifiers).
-     * Main-loop-only state (process_uart_lines / feedback_tick own it). */
-    RoomSweepRidState rid;
-    uint8_t av_ui_page;  /* AvSubMode: 0=RID LIST 1=TRACK 2=2.4G energy */
-    bool av_detail;      /* decoded-fields detail page open over list/track */
+#if ROOM_SWEEP_RID_RECEIVE_ENABLED
+    /* Allocate the 844-byte track table only after the first parsed RID row. */
+    RoomSweepRidState* rid;
+    bool rid_memory_error;
     RoomSweepRidEdge rid_edge_pending; /* alert edge awaiting feedback */
     uint32_t rid_tick_ms; /* staleness sweep cadence stamp */
+#endif
+    uint8_t av_ui_page;  /* AvSubMode: 0=RID LIST 1=TRACK 2=2.4G energy */
+    bool av_detail;      /* decoded-fields detail page open over list/track */
 
     /* Per-mode content pages (Hold Right). TX has no pages. */
     uint8_t wifi_ui_page; /* 0=detail 1=list 2=help */
@@ -472,6 +476,9 @@ typedef struct {
     bool settings_active;
     uint8_t settings_sel;
 } App;
+
+static void rf_thread_start(App* app);
+static void rf_thread_stop(App* app);
 
 /* ================================================================== */
 /* TX frequency presets                                                */
@@ -738,10 +745,15 @@ static void apply_ext_band_pref(App* app, ExtBandPref band) {
 }
 
 static void dump_push_line(App* app, const char* line) {
-    if(!line || !line[0]) return;
+    if(!app || !app->dump_capture_on || !app->dump_lines || !line || !line[0]) return;
+    const char* body = room_sweep_uart_strip_prompt(line);
+    /* RID CSV rows contain public UAS/operator identifiers and coordinates.
+     * Keep them out of the optional raw UART snapshot; the normal RID event
+     * path stores only the per-session ordinal and privacy-gated fields. */
+    if(body && strncmp(body, "RID,", 4) == 0) return;
     if(app->dump_count == DUMP_LINE_COUNT) app->dump_overwrites++;
-    strncpy(app->dump_lines[app->dump_head], line, MARAUDER_LINE_MAX - 1U);
-    app->dump_lines[app->dump_head][MARAUDER_LINE_MAX - 1U] = '\0';
+    strncpy(app->dump_lines[app->dump_head], line, MARAUDER_DUMP_LINE_MAX - 1U);
+    app->dump_lines[app->dump_head][MARAUDER_DUMP_LINE_MAX - 1U] = '\0';
     app->dump_head = (uint8_t)((app->dump_head + 1U) % DUMP_LINE_COUNT);
     if(app->dump_count < DUMP_LINE_COUNT) app->dump_count++;
 }
@@ -760,6 +772,29 @@ static const char* mode_record_text(SweepMode mode) {
     }
 }
 
+static bool record_queue_prepare(App* app) {
+    if(app->record_queue) return true;
+    app->record_queue = malloc(sizeof(*app->record_queue) * RECORD_QUEUE_CAPACITY);
+    return app->record_queue != NULL;
+}
+
+static void record_queue_release(App* app) {
+    free(app->record_queue);
+    app->record_queue = NULL;
+    app->record_head = 0;
+    app->record_tail = 0;
+}
+
+static bool session_log_begin_for_app(App* app) {
+    if(!record_queue_prepare(app)) return false;
+    if(session_log_begin(app->storage)) {
+        app->dump_saved_in_session = false;
+        return true;
+    }
+    record_queue_release(app);
+    return false;
+}
+
 static const char* record_mode_for_source(const char* source, SweepMode current) {
     if(source && strcmp(source, "RF") == 0) return "RF";
     if(source && strcmp(source, "WIFI") == 0) return "WIFI";
@@ -769,6 +804,17 @@ static const char* record_mode_for_source(const char* source, SweepMode current)
     if(source && strcmp(source, "TX") == 0) return "TX";
     if(source && strcmp(source, "RID") == 0) return "AV";
     return mode_record_text(current);
+}
+
+static uint8_t report_sensor_for_marauder_mode(const App* app) {
+    if(!app) return 0;
+    if(app->mode == SweepModeWifi) return (uint8_t)RoomSweepReportSensorWifi;
+    if(app->mode == SweepModeBle) return (uint8_t)RoomSweepReportSensorBle;
+    if(app->mode == SweepModeAv && ROOM_SWEEP_RID_SCAN_ENABLED != 0)
+        return (uint8_t)RoomSweepReportSensorRid;
+    if(app->mode == SweepModeGps && app->gps_profile == GPS_PROFILE_BFFB)
+        return (uint8_t)RoomSweepReportSensorGps;
+    return 0;
 }
 
 static const char* record_submode_for_source(App* app, const char* source) {
@@ -1026,6 +1072,7 @@ static void record_drain(App* app) {
         app->record_queue_drops = 0;
         furi_mutex_release(app->record_mutex);
         if(abandoned) session_log_note_drop(abandoned);
+        record_queue_release(app);
         session_log_end(app->storage);
         app->record_dropped_total = session_log_dropped();
         app->record_storage_error = true;
@@ -1090,6 +1137,7 @@ static void record_finish_session(App* app) {
     app->session_log_on = false;
     furi_mutex_release(app->record_mutex);
     for(uint8_t pass = 0; pass < 4U && session_log_is_open(); pass++) record_drain(app);
+    record_queue_release(app);
     if(session_log_is_open()) session_log_end(app->storage);
     app->record_ordinal = session_log_ordinal();
     app->record_dropped_total = session_log_dropped();
@@ -1285,7 +1333,7 @@ static bool tx_pick_allowed_preset(App* app) {
 
 /* Enqueue one completed UART line into the ring (ISR or main after RX stop). */
 static void uart_enqueue_completed_line(App* app, const char* line) {
-    if(!app || !line || line[0] == '\0') return;
+    if(!app || !app->pending_lines || !line || line[0] == '\0') return;
     uint8_t next_head = (uint8_t)((app->uart_line_head + 1U) % MARAUDER_MAX_LINES);
     if(next_head == app->uart_line_tail) {
         app->uart_line_drops++;
@@ -1319,6 +1367,19 @@ static void uart_rx_cb(FuriHalSerialHandle* handle, FuriHalSerialRxEvent event, 
 /* Marauder UART open / close / send                                   */
 /* ================================================================== */
 static bool marauder_open(App* app) {
+    /* The UART receive queue and serial service need heap headroom. The RF
+     * worker's 2 KiB stack is idle utility on this path, so yield it first. */
+    rf_thread_stop(app);
+    if(!app->pending_lines) {
+        app->pending_lines = malloc(MARAUDER_MAX_LINES * MARAUDER_LINE_MAX);
+        if(!app->pending_lines) {
+            app->marauder_state = MarauderError;
+            FURI_LOG_E("RoomSweep", "not enough heap for BFFB receive queue");
+            rf_thread_start(app);
+            return false;
+        }
+    }
+
     Expansion* expansion = furi_record_open(RECORD_EXPANSION);
     expansion_disable(expansion);
     furi_record_close(RECORD_EXPANSION);
@@ -1333,9 +1394,15 @@ static bool marauder_open(App* app) {
     app->serial = furi_hal_serial_control_acquire(FuriHalSerialIdUsart);
     if(!app->serial) {
         app->marauder_state = MarauderNoDevice;
+        free(app->pending_lines);
+        app->pending_lines = NULL;
         Expansion* expansion = furi_record_open(RECORD_EXPANSION);
         expansion_enable(expansion);
         furi_record_close(RECORD_EXPANSION);
+        if(app->session_log_on) {
+            session_log_note_sensor_unavailable(report_sensor_for_marauder_mode(app));
+        }
+        rf_thread_start(app);
         return false;
     }
 
@@ -1348,6 +1415,7 @@ static bool marauder_open(App* app) {
     app->uart_byte_tick = 0;
     app->marauder_confirmed = false;
     app->marauder_probe_tick = furi_get_tick();
+    app->marauder_tab_autostart_pending = false;
     static const uint8_t help_command[] = "help\n";
     furi_hal_serial_tx(app->serial, help_command, sizeof(help_command) - 1U);
     furi_hal_serial_tx_wait_complete(app->serial);
@@ -1355,15 +1423,21 @@ static bool marauder_open(App* app) {
 }
 
 static void marauder_close(App* app) {
-    if(!app->serial) return;
-    furi_hal_serial_async_rx_stop(app->serial);
-    furi_hal_serial_deinit(app->serial);
-    furi_hal_serial_control_release(app->serial);
-    app->serial = NULL;
+    if(app->serial) {
+        furi_hal_serial_async_rx_stop(app->serial);
+        furi_hal_serial_deinit(app->serial);
+        furi_hal_serial_control_release(app->serial);
+        app->serial = NULL;
 
-    Expansion* expansion = furi_record_open(RECORD_EXPANSION);
-    expansion_enable(expansion);
-    furi_record_close(RECORD_EXPANSION);
+        Expansion* expansion = furi_record_open(RECORD_EXPANSION);
+        expansion_enable(expansion);
+        furi_record_close(RECORD_EXPANSION);
+    }
+    free(app->pending_lines);
+    app->pending_lines = NULL;
+    app->marauder_confirmed = false;
+    app->marauder_tab_autostart_pending = false;
+    if(app->running) rf_thread_start(app);
 }
 
 /* Marauder CLI (JCMK): readStringUntil('\\n') + trim. Official Flipper
@@ -1494,6 +1568,12 @@ static void marauder_start_scan(App* app, const char* command, bool clear_result
 }
 
 static void marauder_start_for_mode(App* app) {
+    app->marauder_tab_autostart_pending = false;
+    bool needs_uart = room_sweep_marauder_uart_required(
+        app->mode == SweepModeWifi || app->mode == SweepModeBle,
+        app->mode == SweepModeAv && ROOM_SWEEP_RID_SCAN_ENABLED != 0,
+        app->mode == SweepModeGps && app->gps_profile == GPS_PROFILE_BFFB);
+    if(!app->serial && needs_uart && !marauder_open(app)) return;
     if(!app->serial) return;
     if(app->mode == SweepModeWifi) {
         /* Command follows the active Wi source (Phase 4/5/10). clear=true
@@ -1503,10 +1583,10 @@ static void marauder_start_for_mode(App* app) {
     } else if(app->mode == SweepModeBle) {
         marauder_start_scan(app, MARAUDER_CMD_BLE, true);
     } else if(app->mode == SweepModeAv) {
-        /* Remote ID receive — GATED (room_sweep.h): the send path stays dark
-         * until a phase-0 probe receipt pins the live output format. The
-         * parser still consumes any RID lines that arrive on their own. */
-        if(ROOM_SWEEP_RID_SEND_ENABLED != 0) {
+        /* This is a passive receive scan; RID transmission stays disabled. */
+        if(ROOM_SWEEP_RID_SCAN_ENABLED != 0) {
+            app->marauder_confirmed = false;
+            app->marauder_confirmed_tick = 0;
             marauder_start_scan(app, MARAUDER_CMD_RID_SCAN, true);
         }
     }
@@ -1584,6 +1664,20 @@ static void gps_marauder_poll(App* app) {
     app->gps_last_request_tick = furi_get_tick();
 }
 
+static void gps_marauder_start_or_poll(App* app) {
+    if(!app->serial && !marauder_open(app)) return;
+    if(app->gps.sentences == 0) gps_marauder_stream(app);
+    else gps_marauder_poll(app);
+}
+
+static void marauder_start_tab_for_mode(App* app) {
+    if(app->mode == SweepModeGps && app->gps_profile == GPS_PROFILE_BFFB) {
+        gps_marauder_stream(app);
+    } else {
+        marauder_start_for_mode(app);
+    }
+}
+
 static void update_gps_mode(App* app) {
     bool active = app->mode == SweepModeGps;
     if(active && !app->gps_active) {
@@ -1602,8 +1696,8 @@ static void update_gps_mode(App* app) {
                 furi_delay_ms(30);
             }
             gps_gpio_open(app, GPS_GPIO_BAUD_PRIMARY);
-        } else if(app->serial) {
-            gps_marauder_stream(app);
+        } else {
+            if(app->serial) gps_marauder_stream(app);
         }
         app->gps_last_request_tick = furi_get_tick();
     } else if(!active && app->gps_active) {
@@ -1942,6 +2036,7 @@ static uint8_t parse_ble_line(App* app, const char* line) {
     return n;
 }
 
+#if ROOM_SWEEP_RID_RECEIVE_ENABLED
 /* ---- AV tab: Remote ID session rows (specs/drone-rid.md) ----
  * One row per drone per ROOM_SWEEP_RID_EVENT_MIN_MS plus always-on
  * state-change rows, so the 8-slot record queue cannot burst-drop. The id
@@ -1949,8 +2044,8 @@ static uint8_t parse_ble_line(App* app, const char* line) {
  * per-session DR-nn ordinal before it reaches the CSV — raw serials never
  * appear in session files (same privacy rule as Wi/BLE identifiers). */
 static void rid_record_row(App* app, uint8_t idx, RoomSweepRidEdge edge) {
-    if(idx >= ROOM_SWEEP_RID_MAX_TRACKS) return;
-    const RoomSweepRidTrack* row = &app->rid.tracks[idx];
+    if(!app || !app->rid || idx >= ROOM_SWEEP_RID_MAX_TRACKS) return;
+    const RoomSweepRidTrack* row = &app->rid->tracks[idx];
     if(!row->valid) return;
     const char* event = "rid_obs";
     const char* state = "observed";
@@ -2031,21 +2126,36 @@ static void rid_record_row(App* app, uint8_t idx, RoomSweepRidEdge edge) {
     record_drain(app);
 }
 
+static bool rid_state_ensure(App* app) {
+    if(!app) return false;
+    if(app->rid) return true;
+    app->rid = malloc(sizeof(*app->rid));
+    if(!app->rid) {
+        app->rid_memory_error = true;
+        return false;
+    }
+    room_sweep_rid_state_reset(app->rid);
+    app->rid_memory_error = false;
+    return true;
+}
+
 /* Staleness sweep: at most one STALE transition per main-loop pass (the
  * state helper enforces it), each one a session row + feedback edge. Runs
  * regardless of tab — "STALE" means no message for N seconds, wherever the
  * operator is looking. */
 static void rid_stale_tick(App* app) {
+    if(!app || !app->rid) return;
     uint32_t now = furi_get_tick();
     if((uint32_t)(now - app->rid_tick_ms) < 250U) return;
     app->rid_tick_ms = now;
     uint8_t idx = 0;
     RoomSweepRidEdge edge = RoomSweepRidEdgeNone;
-    if(room_sweep_rid_state_tick(&app->rid, now, &idx, &edge)) {
+    if(room_sweep_rid_state_tick(app->rid, now, &idx, &edge)) {
         rid_record_row(app, idx, edge);
         app->rid_edge_pending = edge;
     }
 }
+#endif
 
 /* Process new UART lines — route to appropriate parser.
  * Marauder streams results continuously until stopscan — no "done" marker.
@@ -2063,7 +2173,7 @@ static void process_uart_lines(App* app) {
     }
 
     char latest[MARAUDER_LINE_MAX];
-    while(app->uart_line_tail != app->uart_line_head) {
+    while(app->pending_lines && app->uart_line_tail != app->uart_line_head) {
         uint8_t tail = app->uart_line_tail;
         strncpy(latest, app->pending_lines[tail], MARAUDER_LINE_MAX - 1);
         latest[MARAUDER_LINE_MAX - 1] = '\0';
@@ -2078,6 +2188,10 @@ static void process_uart_lines(App* app) {
                 app->gps_from_gpio = false; /* came from Marauder USART */
                 app->marauder_confirmed = true;
                 app->marauder_confirmed_tick = app->gps_last_valid_tick;
+                if(app->session_log_on) {
+                    session_log_note_sensor_confirmed(
+                        (uint8_t)RoomSweepReportSensorGps);
+                }
             }
             furi_mutex_release(app->gps_mutex);
         }
@@ -2099,9 +2213,28 @@ static void process_uart_lines(App* app) {
            strstr(body, "sniffbt") || strstr(body, "Commands") ||
            strstr(body, "Started BLE") || strstr(body, "Beacon sniff") ||
            strstr(body, "Raw sniff") || strstr(body, "Probe sniff") ||
-           strstr(body, "Pwnagotchi sniff") || strstr(body, "Espressif device sniff")) {
+           strstr(body, "Pwnagotchi sniff") || strstr(body, "Espressif device sniff") ||
+           strstr(body, "Starting Remote ID scan")) {
             app->marauder_confirmed = true;
             app->marauder_confirmed_tick = furi_get_tick();
+        }
+
+        if(app->session_log_on) {
+            bool scan_response =
+                (app->mode == SweepModeWifi &&
+                 (strstr(body, "Beacon sniff") || strstr(body, "Raw sniff") ||
+                  strstr(body, "Probe sniff") || strstr(body, "Pwnagotchi sniff") ||
+                  strstr(body, "Espressif device sniff"))) ||
+                (app->mode == SweepModeBle && strstr(body, "Started BLE")) ||
+                (app->mode == SweepModeAv && strstr(body, "Starting Remote ID scan"));
+            if(scan_response) {
+                session_log_note_sensor_confirmed(report_sensor_for_marauder_mode(app));
+            }
+        }
+
+        if(app->marauder_tab_autostart_pending && app->marauder_confirmed) {
+            app->marauder_tab_autostart_pending = false;
+            marauder_start_tab_for_mode(app);
         }
 
         if(strstr(body, "not supported") || strstr(body, "Index not in range")) {
@@ -2473,13 +2606,17 @@ static void process_uart_lines(App* app) {
             }
             furi_mutex_release(app->mutex);
         } else if(app->mode == SweepModeAv) {
-            /* Remote ID text lines (ASTM F3411-22a / OpenDroneID). The
-             * tolerant parser skips unknown message types whole. The RID
+#if ROOM_SWEEP_RID_RECEIVE_ENABLED
+            /* Remote ID CSV rows (ASTM F3411-22a / OpenDroneID). The strict
+             * v1.18 parser skips malformed/unknown lines whole. The RID
              * track state is main-loop-only (this function + feedback_tick),
              * so no app->mutex round-trip is needed here. */
             RoomSweepRidRecord rid_rec;
             if(room_sweep_rid_parse_line(body, &rid_rec) != RoomSweepRidKindNone) {
                 uint32_t rid_now = furi_get_tick();
+                app->marauder_confirmed = true;
+                app->marauder_confirmed_tick = rid_now;
+                if(!rid_state_ensure(app)) continue;
                 /* Opt-in watchlist match = cross-session RETURNING semantics
                  * (never proof of the same physical drone — the row says so). */
                 bool watchlisted = app->watchlist_on && rid_rec.id_present &&
@@ -2487,10 +2624,8 @@ static void process_uart_lines(App* app) {
                 RoomSweepRidEdge edge = RoomSweepRidEdgeNone;
                 bool log_row = false;
                 int rid_idx = room_sweep_rid_state_observe(
-                    &app->rid, &rid_rec, rid_now, watchlisted, &edge, &log_row);
+                    app->rid, &rid_rec, rid_now, watchlisted, &edge, &log_row);
                 if(rid_idx >= 0) {
-                    app->marauder_confirmed = true;
-                    app->marauder_confirmed_tick = rid_now;
                     if(app->marauder_state == MarauderIdle ||
                        app->marauder_state == MarauderError) {
                         app->marauder_state = MarauderScanning;
@@ -2499,6 +2634,7 @@ static void process_uart_lines(App* app) {
                     if(edge != RoomSweepRidEdgeNone) app->rid_edge_pending = edge;
                 }
             }
+#endif
         }
     }
 }
@@ -2603,6 +2739,8 @@ static void radio_idle(App* app) {
 static int32_t rf_sweep_thread(void* ctx) {
     App* app = ctx;
 
+    if(app->rf_thread_stop_requested) return 0;
+
     furi_mutex_acquire(app->radio_mutex, FuriWaitForever);
     if(app->radio) {
         subghz_devices_reset(app->radio);
@@ -2611,7 +2749,7 @@ static int32_t rf_sweep_thread(void* ctx) {
     }
     furi_mutex_release(app->radio_mutex);
 
-    while(app->running) {
+    while(app->running && !app->rf_thread_stop_requested) {
         if(app->tx_active || !app->radio) {
             furi_delay_ms(20);
             continue;
@@ -2626,7 +2764,9 @@ static int32_t rf_sweep_thread(void* ctx) {
             uint32_t peak_tuned_hz = 0;
             bool complete = true;
 
-            for(uint8_t ch = 0; ch < RF_NUM_CHANNELS && app->running; ch++) {
+            for(uint8_t ch = 0; ch < RF_NUM_CHANNELS && app->running &&
+                                  !app->rf_thread_stop_requested;
+                ch++) {
                 if(app->tx_active) {
                     complete = false;
                     break;
@@ -2638,7 +2778,8 @@ static int32_t rf_sweep_thread(void* ctx) {
                     continue;
                 }
                 furi_mutex_acquire(app->radio_mutex, FuriWaitForever);
-                if(!app->running || app->tx_active || !app->radio) {
+                if(!app->running || app->rf_thread_stop_requested || app->tx_active ||
+                   !app->radio) {
                     furi_mutex_release(app->radio_mutex);
                     complete = false;
                     break;
@@ -2646,11 +2787,14 @@ static int32_t rf_sweep_thread(void* ctx) {
                 uint32_t tuned_hz = radio_rx_at(app, rf_channels[ch]);
 
                 float sum = 0;
-                for(uint8_t s = 0; s < RF_SAMPLES_PER_CH && app->running && !app->tx_active; s++) {
+                for(uint8_t s = 0; s < RF_SAMPLES_PER_CH && app->running &&
+                                    !app->rf_thread_stop_requested && !app->tx_active;
+                    s++) {
                     sum += radio_rssi(app);
                     furi_delay_ms(5);
                 }
-                bool sample_valid = app->running && !app->tx_active;
+                bool sample_valid = app->running && !app->rf_thread_stop_requested &&
+                                    !app->tx_active;
                 float avg = sum / RF_SAMPLES_PER_CH;
                 radio_idle(app);
                 furi_mutex_release(app->radio_mutex);
@@ -2712,7 +2856,9 @@ static int32_t rf_sweep_thread(void* ctx) {
             uint32_t best_tuned_freq = 0;
             bool complete = true;
 
-            for(uint32_t step = 0; step < total_steps && app->running && app->sweep_running; step++) {
+            for(uint32_t step = 0; step < total_steps && app->running &&
+                                   !app->rf_thread_stop_requested && app->sweep_running;
+                step++) {
                 if(app->tx_active) {
                     complete = false;
                     break;
@@ -2721,7 +2867,8 @@ static int32_t rf_sweep_thread(void* ctx) {
                 app->sweep_freq = freq;
 
                 furi_mutex_acquire(app->radio_mutex, FuriWaitForever);
-                if(!app->running || app->tx_active || !app->sweep_running || !app->radio) {
+                if(!app->running || app->rf_thread_stop_requested || app->tx_active ||
+                   !app->sweep_running || !app->radio) {
                     furi_mutex_release(app->radio_mutex);
                     complete = false;
                     break;
@@ -2729,11 +2876,15 @@ static int32_t rf_sweep_thread(void* ctx) {
                 uint32_t tuned_hz = radio_rx_at(app, freq);
 
                 float sum = 0;
-                for(uint8_t s = 0; s < SWEEP_SAMPLES && app->running && !app->tx_active && app->sweep_running; s++) {
+                for(uint8_t s = 0; s < SWEEP_SAMPLES && app->running &&
+                                    !app->rf_thread_stop_requested && !app->tx_active &&
+                                    app->sweep_running;
+                    s++) {
                     sum += radio_rssi(app);
                     furi_delay_ms(SWEEP_DWELL_MS / SWEEP_SAMPLES);
                 }
-                bool sample_valid = app->running && !app->tx_active && app->sweep_running;
+                bool sample_valid = app->running && !app->rf_thread_stop_requested &&
+                                    !app->tx_active && app->sweep_running;
                 float avg = sum / SWEEP_SAMPLES;
                 radio_idle(app);
                 furi_mutex_release(app->radio_mutex);
@@ -2754,7 +2905,8 @@ static int32_t rf_sweep_thread(void* ctx) {
                 app->sweep_progress = (uint8_t)((step + 1) * 100 / total_steps);
             }
 
-            bool finished = complete && app->running && app->sweep_running;
+            bool finished = complete && app->running && !app->rf_thread_stop_requested &&
+                            app->sweep_running;
             app->sweep_running = false;
             if(finished && config_generation == app->rf_config_generation &&
                best_rssi > RF_ALERT_THRESHOLD && best_tuned_freq > 0) {
@@ -2798,14 +2950,17 @@ static int32_t rf_sweep_thread(void* ctx) {
             uint32_t best_tuned_freq = 0;
             bool complete = true;
 
-            for(uint32_t step = 0; step < total_steps && app->running && app->peak_running; step++) {
+            for(uint32_t step = 0; step < total_steps && app->running &&
+                                   !app->rf_thread_stop_requested && app->peak_running;
+                step++) {
                 if(app->tx_active) {
                     complete = false;
                     break;
                 }
                 uint32_t freq = start + step * SWEEP_STEP_FINE;
                 furi_mutex_acquire(app->radio_mutex, FuriWaitForever);
-                if(!app->running || app->tx_active || !app->peak_running || !app->radio) {
+                if(!app->running || app->rf_thread_stop_requested || app->tx_active ||
+                   !app->peak_running || !app->radio) {
                     furi_mutex_release(app->radio_mutex);
                     complete = false;
                     break;
@@ -2813,11 +2968,15 @@ static int32_t rf_sweep_thread(void* ctx) {
                 uint32_t tuned_hz = radio_rx_at(app, freq);
 
                 float sum = 0;
-                for(uint8_t s = 0; s < SWEEP_SAMPLES && app->running && !app->tx_active && app->peak_running; s++) {
+                for(uint8_t s = 0; s < SWEEP_SAMPLES && app->running &&
+                                    !app->rf_thread_stop_requested && !app->tx_active &&
+                                    app->peak_running;
+                    s++) {
                     sum += radio_rssi(app);
                     furi_delay_ms(SWEEP_DWELL_MS / SWEEP_SAMPLES);
                 }
-                bool sample_valid = app->running && !app->tx_active && app->peak_running;
+                bool sample_valid = app->running && !app->rf_thread_stop_requested &&
+                                    !app->tx_active && app->peak_running;
                 float avg = sum / SWEEP_SAMPLES;
                 radio_idle(app);
                 furi_mutex_release(app->radio_mutex);
@@ -2836,7 +2995,8 @@ static int32_t rf_sweep_thread(void* ctx) {
                 app->sweep_progress = (uint8_t)((step + 1) * 100 / total_steps);
             }
 
-            bool finished = complete && app->running && app->peak_running;
+            bool finished = complete && app->running && !app->rf_thread_stop_requested &&
+                            app->peak_running;
             app->peak_running = false;
             if(finished && config_generation == app->rf_config_generation &&
                best_rssi > RF_ALERT_THRESHOLD && best_tuned_freq > 0) {
@@ -2858,7 +3018,8 @@ static int32_t rf_sweep_thread(void* ctx) {
             uint32_t now = furi_get_tick();
             uint32_t lock_hz = app->watch_freq_hz;
             furi_mutex_acquire(app->radio_mutex, FuriWaitForever);
-            if(!app->running || app->tx_active || !app->radio ||
+            if(!app->running || app->rf_thread_stop_requested || app->tx_active ||
+               !app->radio ||
                app->rf_sub != RfSubWatch) {
                 furi_mutex_release(app->radio_mutex);
                 furi_delay_ms(20);
@@ -2925,6 +3086,26 @@ static int32_t rf_sweep_thread(void* ctx) {
     if(app->radio) subghz_devices_sleep(app->radio);
     furi_mutex_release(app->radio_mutex);
     return 0;
+}
+
+static void rf_thread_start(App* app) {
+    if(!app || !app->running || app->rf_thread) return;
+    app->rf_thread_stop_requested = false;
+    app->rf_thread = furi_thread_alloc_ex("RoomSweepRF", 2048, rf_sweep_thread, app);
+    if(!app->rf_thread) {
+        FURI_LOG_E("RoomSweep", "could not allocate RF worker");
+        return;
+    }
+    furi_thread_start(app->rf_thread);
+}
+
+static void rf_thread_stop(App* app) {
+    if(!app || !app->rf_thread) return;
+    app->rf_thread_stop_requested = true;
+    furi_thread_join(app->rf_thread);
+    furi_thread_free(app->rf_thread);
+    app->rf_thread = NULL;
+    app->rf_thread_stop_requested = false;
 }
 
 /* ================================================================== */
@@ -3140,11 +3321,12 @@ static void feedback_tick(App* app) {
     if((now / 250) % 2 == 0) blink_phase = true;
     else blink_phase = false;
 
+#if ROOM_SWEEP_RID_RECEIVE_ENABLED
     /* AV alert edges (NEW DRONE / RETURNING DRONE / OPERATOR MOVED / STALE):
      * one pulse per edge through the existing feedback ladder, on whatever
      * tab the operator is (an alert that only fires on its own tab is no
      * alert). Sound/Vibro settings are respected, never forced. */
-    RoomSweepRidEdge rid_edge = app->rid_edge_pending;
+    RoomSweepRidEdge rid_edge = app->rid ? app->rid_edge_pending : RoomSweepRidEdgeNone;
     if(rid_edge != RoomSweepRidEdgeNone) {
         app->rid_edge_pending = RoomSweepRidEdgeNone;
         if(rid_edge == RoomSweepRidEdgeStale) {
@@ -3157,6 +3339,7 @@ static void feedback_tick(App* app) {
             if(app->vibro_on) notification_message(app->notif, &seq_vibro_pulse);
         }
     }
+#endif
 
     float peak = -120.0f;
     bool alerting = false;
@@ -3445,6 +3628,7 @@ static void feedback_tick(App* app) {
                                  -120.0f;
             alerting = av_nrf_live && (peak > RF_ALERT_THRESHOLD);
         } else {
+#if ROOM_SWEEP_RID_RECEIVE_ENABLED
             /* RID list/track: aged strongest tracked drone (broadcast RSSI),
              * selection first so the row under the cursor leads. Ages fade
              * the same way as Wi/BT so silence decays instead of freezing. */
@@ -3452,12 +3636,14 @@ static void feedback_tick(App* app) {
             int8_t av_sel_rssi = -127, av_strong_rssi = -127;
             uint32_t av_sel_age = ROOM_SWEEP_ANALYZER_DEAD_MS;
             uint32_t av_strong_age = ROOM_SWEEP_ANALYZER_DEAD_MS;
-            for(uint8_t i = 0; i < app->rid.count && i < ROOM_SWEEP_RID_MAX_TRACKS; i++) {
-                const RoomSweepRidTrack* row = &app->rid.tracks[i];
+            for(uint8_t i = 0; app->rid && i < app->rid->count &&
+                              i < ROOM_SWEEP_RID_MAX_TRACKS;
+                i++) {
+                const RoomSweepRidTrack* row = &app->rid->tracks[i];
                 if(!row->valid || !row->has_rssi) continue;
                 uint32_t age = row->last_seen_ms > 0 ? now - row->last_seen_ms :
                                                        ROOM_SWEEP_ANALYZER_DEAD_MS;
-                if(i == app->rid.selected) {
+                if(i == app->rid->selected) {
                     av_sel = true;
                     av_sel_rssi = (int8_t)row->rssi;
                     av_sel_age = age;
@@ -3482,6 +3668,10 @@ static void feedback_tick(App* app) {
                 &av_valid);
             if(!av_valid) peak = -120.0f;
             alerting = (peak > RF_ALERT_THRESHOLD);
+#else
+            peak = -120.0f;
+            alerting = false;
+#endif
         }
         use_rssi_geiger = true;
         led_from_rssi(app->notif, peak, blink_phase);
@@ -4144,9 +4334,8 @@ static void draw_gps_radar(Canvas* canvas, App* app, const GpsFix* gps, bool fre
     int32_t now_lat = (int32_t)(gps->latitude * 1e6f);
     int32_t now_lon = (int32_t)(gps->longitude * 1e6f);
 
-    float dist_m = geo_distance_m(
-        app->gps_mark_lat, app->gps_mark_lon, gps->latitude, gps->longitude);
-    uint16_t unit = room_sweep_radar_ring_unit_m((uint32_t)dist_m);
+    uint32_t dist_m = room_sweep_geo_distance_m(mark_lat, mark_lon, now_lat, now_lon);
+    uint16_t unit = room_sweep_radar_ring_unit_m(dist_m);
     uint32_t bearing = room_sweep_radar_bearing_deg(
         mark_lat, mark_lon, now_lat, now_lon);
 
@@ -4169,11 +4358,9 @@ static void draw_gps_radar(Canvas* canvas, App* app, const GpsFix* gps, bool fre
     for(uint8_t age = 0; age < ROOM_SWEEP_GPS_TRAIL_MAX; age++) {
         const RoomSweepGpsTrailPoint* p = room_sweep_gps_trail_point_at(&app->gps_trail, age);
         if(!p) break;
-        float pd = geo_distance_m(
-            app->gps_mark_lat, app->gps_mark_lon,
-            (float)p->lat_e6 * 1e-6f, (float)p->lon_e6 * 1e-6f);
+        uint32_t pd = room_sweep_geo_distance_m(mark_lat, mark_lon, p->lat_e6, p->lon_e6);
         uint32_t pb = room_sweep_radar_bearing_deg(mark_lat, mark_lon, p->lat_e6, p->lon_e6);
-        uint32_t pr = (uint32_t)(pd * (float)(max_r * 3U) / ((float)unit * 3.0f));
+        uint32_t pr = (pd * (uint32_t)max_r) / unit;
         if(pr > max_r) pr = max_r;
         int16_t px, py;
         room_sweep_radar_blip_xy((int16_t)pb, (uint8_t)pr, cx, cy, &px, &py);
@@ -4191,10 +4378,12 @@ static void draw_gps_radar(Canvas* canvas, App* app, const GpsFix* gps, bool fre
     canvas_set_font(canvas, FontKeyboard);
     snprintf(buf, sizeof(buf), "%ludeg true", (unsigned long)bearing);
     canvas_draw_str(canvas, UI_MARGIN_X, 26, buf);
-    if(dist_m >= 1000.0f) {
-        snprintf(buf, sizeof(buf), "%.2fkm", (double)(dist_m / 1000.0f));
+    if(dist_m >= 1000U) {
+        uint32_t km100 = (dist_m + 5U) / 10U;
+        snprintf(buf, sizeof(buf), "%lu.%02lukm",
+                 (unsigned long)(km100 / 100U), (unsigned long)(km100 % 100U));
     } else {
-        snprintf(buf, sizeof(buf), "%.1fm", (double)dist_m);
+        snprintf(buf, sizeof(buf), "%lum", (unsigned long)dist_m);
     }
     canvas_draw_str(canvas, UI_MARGIN_X, 38, buf);
     snprintf(buf, sizeof(buf), "ring %s", room_sweep_radar_ring_label(unit));
@@ -5531,13 +5720,18 @@ static void draw_gps_tab(Canvas* canvas, App* app) {
      * mark line underlapped the y63 footer (QA 2026-09-04). */
     canvas_set_font(canvas, FontKeyboard);
     if(app->gps_mark_set && gps_fresh && gps.has_pos) {
-        float dist = geo_distance_m(
-            app->gps_mark_lat, app->gps_mark_lon,
-            gps.latitude, gps.longitude);
-        if(dist >= 1000.0f) {
-            snprintf(buf, sizeof(buf), "mark %.2fkm", (double)(dist / 1000.0f));
+        int32_t mark_lat = (int32_t)(app->gps_mark_lat * 1e6f);
+        int32_t mark_lon = (int32_t)(app->gps_mark_lon * 1e6f);
+        int32_t now_lat = (int32_t)(gps.latitude * 1e6f);
+        int32_t now_lon = (int32_t)(gps.longitude * 1e6f);
+        uint32_t dist = room_sweep_geo_distance_m(
+            mark_lat, mark_lon, now_lat, now_lon);
+        if(dist >= 1000U) {
+            uint32_t km100 = (dist + 5U) / 10U;
+            snprintf(buf, sizeof(buf), "mark %lu.%02lukm",
+                     (unsigned long)(km100 / 100U), (unsigned long)(km100 % 100U));
         } else {
-            snprintf(buf, sizeof(buf), "mark %.0fm", (double)dist);
+            snprintf(buf, sizeof(buf), "mark %lum", (unsigned long)dist);
         }
         canvas_draw_str(canvas, 2, UI_ROW_FOOTER_BASELINE, buf);
     } else if(app->gps_mark_set) {
@@ -5728,10 +5922,12 @@ static void draw_nrf24_tab(Canvas* canvas, App* app) {
 /* Title "AIR VEHICLES" on detail/track, "RID LIST" on the list page.  */
 /* ================================================================== */
 #define UI_HINT_AV_LIST    "U/D=sel OK=det R=sub"
+#define UI_HINT_AV_EMPTY  "OK=det R=sub"
 #define UI_HINT_AV_DETAIL  "OK=back R=sub"
 #define UI_HINT_AV_TRACK   "OK=det R=sub"
 #define UI_HINT_AV_ENERGY  "OK=pass R=sub"
 
+#if ROOM_SWEEP_RID_RECEIVE_ENABLED
 /* One list row: ordinal, type/ID class, RSSI, age — 19-20 chars max. */
 static void draw_av_row(Canvas* canvas, uint8_t y, const RoomSweepRidTrack* row, bool selected) {
     char buf[32];
@@ -5784,11 +5980,14 @@ static void av_fmt_speed(char* out, size_t cap, int32_t cms) {
         snprintf(out, cap, "%ld.%02ld", whole, frac);
     }
 }
+#endif
 
 static void draw_av_tab(Canvas* canvas, App* app) {
     char buf[40];
     canvas_set_font(canvas, FontKeyboard);
+#if ROOM_SWEEP_RID_RECEIVE_ENABLED
     uint32_t now = furi_get_tick();
+#endif
 
     if(app->av_ui_page == AvSubEnergy) {
         /* 2.4G energy page — the nR ACT-unit presentation. Never dBm,
@@ -5827,17 +6026,24 @@ static void draw_av_tab(Canvas* canvas, App* app) {
         return;
     }
 
-    uint8_t sel = app->rid.selected;
+#if ROOM_SWEEP_RID_RECEIVE_ENABLED
+    RoomSweepRidState* rid = app->rid;
+    uint8_t sel = rid ? rid->selected : 0U;
     if(app->av_detail) {
         /* Detail page: every decoded field + operator-position indicator.
          * Values are LAST BROADCAST, never a live position claim. */
         canvas_draw_str(canvas, 2, 14, "AIR VEHICLES");
-        if(app->rid.count == 0 || sel >= app->rid.count) {
-            canvas_draw_str(canvas, 2, 30, "no drone selected");
+        if(!rid || rid->count == 0 || sel >= rid->count) {
+            canvas_draw_str(
+                canvas, 2, 30, app->rid_memory_error ? "RID memory low" : "no RID broadcast yet");
+            if(!app->rid_memory_error) {
+                canvas_draw_str(
+                    canvas, 2, 42, app->marauder_confirmed ? "passive scan active" : "check BFFB UART");
+            }
             canvas_draw_str(canvas, 2, 63, UI_HINT_AV_DETAIL);
             return;
         }
-        const RoomSweepRidTrack* row = &app->rid.tracks[sel];
+        const RoomSweepRidTrack* row = &rid->tracks[sel];
         char ord[8];
         room_sweep_rid_ordinal_text(row->ordinal, ord, sizeof(ord));
         snprintf(
@@ -5883,13 +6089,17 @@ static void draw_av_tab(Canvas* canvas, App* app) {
         /* Track sub-mode: selected drone's last-known alt/speed/heading + age.
          * Honest labels: "last broadcast", never "current position". */
         canvas_draw_str(canvas, 2, 14, "AIR VEHICLES");
-        if(app->rid.count == 0 || sel >= app->rid.count) {
-            canvas_draw_str(canvas, 2, 30, "no drone selected");
-            canvas_draw_str(canvas, 2, 42, "browse the RID list");
+        if(!rid || rid->count == 0 || sel >= rid->count) {
+            canvas_draw_str(
+                canvas, 2, 30, app->rid_memory_error ? "RID memory low" : "no RID broadcast yet");
+            if(!app->rid_memory_error) {
+                canvas_draw_str(
+                    canvas, 2, 42, app->marauder_confirmed ? "passive scan active" : "check BFFB UART");
+            }
             canvas_draw_str(canvas, 2, 63, UI_HINT_AV_TRACK);
             return;
         }
-        const RoomSweepRidTrack* row = &app->rid.tracks[sel];
+        const RoomSweepRidTrack* row = &rid->tracks[sel];
         char ord[8];
         room_sweep_rid_ordinal_text(row->ordinal, ord, sizeof(ord));
         snprintf(buf, sizeof(buf), "TRACK %s", ord);
@@ -5929,15 +6139,19 @@ static void draw_av_tab(Canvas* canvas, App* app) {
 
     /* RID LIST page: ordinal, type/ID class, RSSI, age. */
     canvas_draw_str(canvas, 2, 14, "RID LIST");
-    snprintf(buf, sizeof(buf), "n=%u", (unsigned)app->rid.count);
+    snprintf(buf, sizeof(buf), "n=%u", (unsigned)(rid ? rid->count : 0U));
     canvas_draw_str(
         canvas,
         room_sweep_ui_right_align_x(UI_TEXT_RIGHT_EDGE, canvas_string_width(canvas, buf)),
         14,
         buf);
-    if(app->rid.count == 0) {
-        canvas_draw_str(canvas, 2, 30, "no RID messages seen");
-        canvas_draw_str(canvas, 2, 42, "parse ready; TX gated");
+    if(!rid || rid->count == 0) {
+        canvas_draw_str(
+            canvas, 2, 30, app->rid_memory_error ? "RID memory low" : "no RID broadcast yet");
+        if(!app->rid_memory_error) {
+            canvas_draw_str(
+                canvas, 2, 42, app->marauder_confirmed ? "passive scan active" : "check BFFB UART");
+        }
         canvas_draw_str(canvas, 2, 63, UI_HINT_AV_LIST);
         return;
     }
@@ -5946,10 +6160,28 @@ static void draw_av_tab(Canvas* canvas, App* app) {
     if(sel >= 4U) first = (uint8_t)(sel - 3U);
     for(uint8_t visible = 0; visible < 4U; visible++) {
         uint8_t i = (uint8_t)(first + visible);
-        if(i >= app->rid.count || i >= ROOM_SWEEP_RID_MAX_TRACKS) break;
-        draw_av_row(canvas, (uint8_t)(24 + visible * 10), &app->rid.tracks[i], i == sel);
+        if(!rid || i >= rid->count || i >= ROOM_SWEEP_RID_MAX_TRACKS) break;
+        draw_av_row(canvas, (uint8_t)(24 + visible * 10), &rid->tracks[i], i == sel);
     }
     canvas_draw_str(canvas, 2, 63, UI_HINT_AV_LIST);
+#else
+    if(app->av_detail) {
+        canvas_draw_str(canvas, 2, 14, "AIR VEHICLES");
+        canvas_draw_str(canvas, 2, 30, "RID parser disabled");
+        canvas_draw_str(canvas, 2, 42, "see BFFB firmware");
+        canvas_draw_str(canvas, 2, 63, UI_HINT_AV_DETAIL);
+    } else if(app->av_ui_page == AvSubTrack) {
+        canvas_draw_str(canvas, 2, 14, "AIR VEHICLES");
+        canvas_draw_str(canvas, 2, 30, "RID parser disabled");
+        canvas_draw_str(canvas, 2, 42, "see BFFB firmware");
+        canvas_draw_str(canvas, 2, 63, UI_HINT_AV_TRACK);
+    } else {
+        canvas_draw_str(canvas, 2, 14, "RID LIST");
+        canvas_draw_str(canvas, 2, 30, "RID parser disabled");
+        canvas_draw_str(canvas, 2, 42, "see BFFB firmware");
+        canvas_draw_str(canvas, 2, 63, UI_HINT_AV_EMPTY);
+    }
+#endif
 }
 
 /* ================================================================== */
@@ -6338,7 +6570,10 @@ static void draw_settings(Canvas* canvas, App* app) {
             snprintf(val, sizeof(val), "%s", app->baseline_set ? "set" : "OK=");
         else if(i == SET_DUMP) {
             if(app->raw_dump_error) snprintf(val, sizeof(val), "ERR");
-            else snprintf(val, sizeof(val), "%u", app->dump_count);
+            else if(app->dump_capture_on) snprintf(val, sizeof(val), "CAP%u", app->dump_count);
+            else if(app->session_log_on && app->dump_saved_in_session)
+                snprintf(val, sizeof(val), "DONE");
+            else snprintf(val, sizeof(val), "OFF");
         }
         else if(i == SET_TXDUR) snprintf(val, sizeof(val), "%ds", app->tx_duration_s);
         else if(i == SET_WATCHLIST) {
@@ -6600,7 +6835,25 @@ static void navigate_tab(App* app, bool next) {
         app, "mode", "SYSTEM", mode_record_text(app->mode), 0, 0, 0, "tab selected");
     tx_preload_detected_frequency(app);
     update_gps_mode(app);
-    marauder_start_for_mode(app);
+    bool target_requires_uart = room_sweep_marauder_uart_required(
+        app->mode == SweepModeWifi || app->mode == SweepModeBle,
+        app->mode == SweepModeAv && ROOM_SWEEP_RID_SCAN_ENABLED != 0,
+        app->mode == SweepModeGps && app->gps_profile == GPS_PROFILE_BFFB);
+    if(room_sweep_marauder_should_close_on_mode_change(
+           app->serial != NULL, target_requires_uart)) {
+        marauder_close(app);
+    }
+    if(target_requires_uart && !app->serial) {
+        app->marauder_tab_autostart_pending = marauder_open(app);
+    }
+    if(room_sweep_marauder_tab_autostart_allowed(
+           app->serial != NULL && app->marauder_confirmed)) {
+        app->marauder_tab_autostart_pending = false;
+        if(app->mode != SweepModeGps) marauder_start_for_mode(app);
+    } else if(target_requires_uart && app->serial) {
+        /* Wait for a real Marauder response before auto-starting the tab. */
+        app->marauder_tab_autostart_pending = true;
+    }
 }
 
 /* Full-sweep: hard per-phase timeouts, auto-save report, clear DONE banner. */
@@ -6616,6 +6869,7 @@ static void full_sweep_enter_phase(App* app, RoomSweepFullPhase phase) {
         app->rf_sub = RfSubSurvey;
         if(app->serial) marauder_stop_scan(app);
         nrf24_stop_survey(app);
+        rf_thread_start(app);
         break;
     case RoomSweepFullWifi:
         app->mode = SweepModeWifi;
@@ -6898,11 +7152,14 @@ int32_t room_sweep_app(void* p) {
     app->nrf_ui_page = 0;
 
     /* AV tab (Remote ID): fresh track state every launch. */
-    room_sweep_rid_state_reset(&app->rid);
+#if ROOM_SWEEP_RID_RECEIVE_ENABLED
+#endif
     app->av_ui_page = AvSubList;
     app->av_detail = false;
+#if ROOM_SWEEP_RID_RECEIVE_ENABLED
     app->rid_edge_pending = RoomSweepRidEdgeNone;
     app->rid_tick_ms = 0;
+#endif
 
     /* TX defaults — 433.92 MHz preset index 3 in the expanded table */
     app->tx_state = TxDisarmed;
@@ -6940,12 +7197,10 @@ int32_t room_sweep_app(void* p) {
     /* SubGHz: BFFB external CC1101 if present, else internal */
     radio_open(app);
 
-    /* UART (BFFB Marauder) */
-    marauder_open(app);
+    /* Open the BFFB UART only when a receive/GPS tab needs it. */
 
     /* RF sweep thread */
-    app->rf_thread = furi_thread_alloc_ex("RoomSweepRF", 2048, rf_sweep_thread, app);
-    furi_thread_start(app->rf_thread);
+    rf_thread_start(app);
 
     /* GUI */
     FuriMessageQueue* input_queue =
@@ -7030,7 +7285,9 @@ int32_t room_sweep_app(void* p) {
 
             full_sweep_tick(app);
             analyzer_feed_tick(app);
+#if ROOM_SWEEP_RID_RECEIVE_ENABLED
             rid_stale_tick(app);
+#endif
 
             /* Meter suite: waterfall snapshot (~2.5 Hz) while its sub-mode shows. */
             if(app->mode == SweepModeRF && app->rf_sub == RfSubWaterfall) {
@@ -7297,7 +7554,7 @@ int32_t room_sweep_app(void* p) {
                 } else if(app->settings_sel == SET_LOG) {
                     if(!app->session_log_on) {
                         if(!app->storage) app->storage = furi_record_open(RECORD_STORAGE);
-                        if(session_log_begin(app->storage)) {
+                        if(session_log_begin_for_app(app)) {
                             app->record_storage_error = false;
                             furi_mutex_acquire(app->record_mutex, FuriWaitForever);
                             app->record_head = 0;
@@ -7314,14 +7571,11 @@ int32_t room_sweep_app(void* p) {
                             uint8_t unavailable = 0;
                             if(!app->radio)
                                 unavailable |= (uint8_t)RoomSweepReportSensorRf;
-                            if(!app->serial) {
-                                unavailable |= (uint8_t)RoomSweepReportSensorWifi;
-                                unavailable |= (uint8_t)RoomSweepReportSensorBle;
-                                /* RID text arrives on the same UART. */
-                                unavailable |= (uint8_t)RoomSweepReportSensorRid;
-                            }
-                            if(app->gps_profile == GPS_PROFILE_EXTERNAL ?
-                                   !app->gps_gpio_open : !app->serial)
+                            if(app->marauder_state == MarauderNoDevice)
+                                unavailable |= report_sensor_for_marauder_mode(app);
+                            if(app->mode == SweepModeGps &&
+                               app->gps_profile == GPS_PROFILE_EXTERNAL &&
+                               !app->gps_gpio_open)
                                 unavailable |= (uint8_t)RoomSweepReportSensorGps;
                             session_log_note_sensor_unavailable(unavailable);
                             /* Phase 9: per-session watch evidence restarts;
@@ -7395,12 +7649,12 @@ int32_t room_sweep_app(void* p) {
                         if(!app->session_log_on) {
                             /* Start a session so the Room Report has data. */
                             if(!app->storage) app->storage = furi_record_open(RECORD_STORAGE);
-                            if(session_log_begin(app->storage)) {
+                            if(session_log_begin_for_app(app)) {
                                 app->session_log_on = true;
                                 app->record_ordinal = session_log_ordinal();
                                 app->watch_hit_mask = 0;
                                 session_log_note_watchlist(app->watchlist_on, 0);
-                            }
+                            } else app->record_storage_error = true;
                         }
                         room_sweep_full_sweep_start(&app->full_sweep);
                         app->settings_active = false;
@@ -7490,39 +7744,98 @@ int32_t room_sweep_app(void* p) {
                     notification_message(app->notif, &seq_test_beep);
                 } else if(app->settings_sel == SET_DUMP) {
                     if(!app->storage) app->storage = furi_record_open(RECORD_STORAGE);
-                    const char* lines[DUMP_LINE_COUNT];
-                    uint8_t n = app->dump_count;
-                    if(n > DUMP_LINE_COUNT) n = DUMP_LINE_COUNT;
-                    /* oldest first */
-                    uint8_t start =
-                        (uint8_t)((app->dump_head + DUMP_LINE_COUNT - n) % DUMP_LINE_COUNT);
-                    for(uint8_t i = 0; i < n; i++) {
-                        lines[i] = app->dump_lines[(start + i) % DUMP_LINE_COUNT];
-                    }
-                    if(session_log_write_dump(
-                           app->storage,
-                           lines,
-                           n,
-                           app->uart_line_drops,
-                           app->dump_overwrites)) {
-                        app->raw_dump_error = false;
-                        record_enqueue(
-                            app,
-                            "raw_dump",
-                            "SYSTEM",
-                            "uart",
-                            0,
-                            0,
-                            0,
-                            "explicit raw UART snapshot created");
-                        notification_message(app->notif, &seq_test_beep);
-                    } else {
-                        app->raw_dump_error = true;
-                        if(session_log_has_error()) {
-                            app->record_storage_error = true;
-                            if(session_log_is_open()) record_finish_session(app);
+                    if(room_sweep_dump_action(app->dump_capture_on) ==
+                       RoomSweepDumpStartCapture) {
+                        if(room_sweep_dump_can_start(
+                               app->session_log_on, app->dump_saved_in_session)) {
+                            app->dump_lines = malloc(DUMP_LINE_COUNT * MARAUDER_DUMP_LINE_MAX);
+                            if(app->dump_lines) {
+                                bool opened_uart = false;
+                                if(!app->serial) {
+                                    if(marauder_open(app)) {
+                                        opened_uart = true;
+                                    } else {
+                                        free(app->dump_lines);
+                                        app->dump_lines = NULL;
+                                    }
+                                }
+                                if(app->dump_lines) {
+                                    app->dump_head = 0;
+                                    app->dump_count = 0;
+                                    app->dump_overwrites = 0;
+                                    app->dump_capture_on = true;
+                                    app->raw_dump_error = false;
+                                    if(opened_uart) {
+                                        if(app->mode == SweepModeGps &&
+                                           app->gps_profile == GPS_PROFILE_BFFB) {
+                                            gps_marauder_stream(app);
+                                        } else {
+                                            marauder_start_for_mode(app);
+                                        }
+                                    }
+                                    record_enqueue(
+                                        app,
+                                        "raw_dump_start",
+                                        "SYSTEM",
+                                        "uart",
+                                        0,
+                                        0,
+                                        0,
+                                        "explicit raw UART capture started");
+                                    notification_message(app->notif, &seq_test_beep);
+                                } else {
+                                    app->raw_dump_error = true;
+                                    notification_message(app->notif, &seq_vibro_pulse);
+                                }
+                            } else {
+                                app->raw_dump_error = true;
+                                notification_message(app->notif, &seq_vibro_pulse);
+                            }
+                        } else {
+                            notification_message(app->notif, &seq_vibro_pulse);
                         }
-                        notification_message(app->notif, &seq_vibro_pulse);
+                    } else {
+                        const char* lines[DUMP_LINE_COUNT];
+                        uint8_t n = app->dump_count;
+                        if(n > DUMP_LINE_COUNT) n = DUMP_LINE_COUNT;
+                        /* oldest first */
+                        uint8_t start =
+                            (uint8_t)((app->dump_head + DUMP_LINE_COUNT - n) % DUMP_LINE_COUNT);
+                        for(uint8_t i = 0; i < n; i++) {
+                            lines[i] = app->dump_lines[(start + i) % DUMP_LINE_COUNT];
+                        }
+                        if(session_log_write_dump(
+                               app->storage,
+                               lines,
+                               n,
+                               app->uart_line_drops,
+                               app->dump_overwrites)) {
+                            app->raw_dump_error = false;
+                            app->dump_capture_on = false;
+                            if(app->session_log_on) app->dump_saved_in_session = true;
+                            free(app->dump_lines);
+                            app->dump_lines = NULL;
+                            app->dump_head = 0;
+                            app->dump_count = 0;
+                            app->dump_overwrites = 0;
+                            record_enqueue(
+                                app,
+                                "raw_dump",
+                                "SYSTEM",
+                                "uart",
+                                0,
+                                0,
+                                0,
+                                "explicit raw UART capture saved and stopped");
+                            notification_message(app->notif, &seq_test_beep);
+                        } else {
+                            app->raw_dump_error = true;
+                            if(session_log_has_error()) {
+                                app->record_storage_error = true;
+                                if(session_log_is_open()) record_finish_session(app);
+                            }
+                            notification_message(app->notif, &seq_vibro_pulse);
+                        }
                     }
                 } else if(app->settings_sel == SET_TXDUR) {
                     app->tx_duration_s = (app->tx_duration_s % TX_MAX_DURATION_S) + 1;
@@ -7591,12 +7904,12 @@ int32_t room_sweep_app(void* p) {
                             /* Start a session so the Room Report has data. */
                             if(!app->storage)
                                 app->storage = furi_record_open(RECORD_STORAGE);
-                            if(session_log_begin(app->storage)) {
+                            if(session_log_begin_for_app(app)) {
                                 app->session_log_on = true;
                                 app->record_ordinal = session_log_ordinal();
                                 app->watch_hit_mask = 0;
                                 session_log_note_watchlist(app->watchlist_on, 0);
-                            }
+                            } else app->record_storage_error = true;
                         }
                         session_log_note_field_active(true);
                         room_sweep_full_sweep_start(&app->full_sweep);
@@ -7930,19 +8243,28 @@ int32_t room_sweep_app(void* p) {
                     }
                 }
             } else {
+#if ROOM_SWEEP_RID_RECEIVE_ENABLED
                 if(input_action == RoomSweepInputBrowseUp ||
                    input_action == RoomSweepInputBrowseDown) {
-                    app->rid.selected = room_sweep_rid_state_step(
-                        &app->rid, input_action == RoomSweepInputBrowseDown);
-                } else if(input_action == RoomSweepInputPrimary) {
-                    /* OK opens/closes the decoded-fields detail page. */
-                    app->av_detail = !app->av_detail;
+                    if(app->rid) {
+                        app->rid->selected = room_sweep_rid_state_step(
+                            app->rid, input_action == RoomSweepInputBrowseDown);
+                    }
+                } else
+#endif
+                if(input_action == RoomSweepInputPrimary) {
+                    if(!app->serial) {
+                        marauder_start_for_mode(app);
+                    } else {
+                        /* OK opens/closes the decoded-fields detail page. */
+                        app->av_detail = !app->av_detail;
+                    }
                 }
             }
-            /* Hold OK: remoteid clear + rescan — GATED with the whole send
-             * path (room_sweep.h). Nothing is sent while the gate is 0. */
+            /* Hold OK: remoteid clear + rescan is a separate local-table
+             * command and stays disabled until explicitly validated. */
             if(input_action == RoomSweepInputSecondary &&
-               ROOM_SWEEP_RID_SEND_ENABLED != 0 && app->serial) {
+               ROOM_SWEEP_RID_CLEAR_ENABLED != 0 && app->serial) {
                 marauder_send(app, MARAUDER_CMD_RID_CLEAR);
                 furi_delay_ms(80);
                 app->av_detail = false;
@@ -7973,9 +8295,9 @@ int32_t room_sweep_app(void* p) {
                         app->wifi_scroll, wifi_source_table_count(app), input_action);
                     furi_mutex_release(app->mutex);
                 }
-            } else if(input_action == RoomSweepInputPrimary && app->serial) {
+            } else if(input_action == RoomSweepInputPrimary) {
                 if(app->wifi_source != WiSourceBeacon ||
-                   wifi_source_table_count(app) == 0) {
+                   wifi_source_table_count(app) == 0 || !app->serial) {
                     /* Empty list (any source) or a RAW/PROBE/TOOL source:
                      * OK restarts the active source's scan — these tables
                      * have no lock targets. */
@@ -8020,7 +8342,7 @@ int32_t room_sweep_app(void* p) {
                     }
                     furi_mutex_release(app->mutex);
                 }
-            } else if(input_action == RoomSweepInputSecondary && app->serial) {
+            } else if(input_action == RoomSweepInputSecondary) {
                 /* Hold OK = manual rescan; intentionally clears the table and
                  * the lock (clear=true) — that is what "rescan" means. */
                 marauder_start_for_mode(app);
@@ -8048,8 +8370,8 @@ int32_t room_sweep_app(void* p) {
                         app->ble_scroll, app->ble_count, input_action);
                     furi_mutex_release(app->mutex);
                 }
-            } else if(input_action == RoomSweepInputPrimary && app->serial) {
-                if(app->ble_count == 0) {
+            } else if(input_action == RoomSweepInputPrimary) {
+                if(app->ble_count == 0 || !app->serial) {
                     /* Empty list: first press starts a scan. */
                     marauder_start_for_mode(app);
                 } else {
@@ -8092,7 +8414,7 @@ int32_t room_sweep_app(void* p) {
                     }
                     furi_mutex_release(app->mutex);
                 }
-            } else if(input_action == RoomSweepInputSecondary && app->serial) {
+            } else if(input_action == RoomSweepInputSecondary) {
                 /* Hold OK = manual rescan; intentionally clears the table and
                  * the lock (clear=true) — that is what "rescan" means. */
                 marauder_start_for_mode(app);
@@ -8120,8 +8442,8 @@ int32_t room_sweep_app(void* p) {
                         app,
                         app->gps_gpio_baud == GPS_GPIO_BAUD_PRIMARY ?
                             GPS_GPIO_BAUD_ALT : GPS_GPIO_BAUD_PRIMARY);
-                } else if(app->serial) {
-                    gps_marauder_stream(app);
+                } else {
+                    gps_marauder_start_or_poll(app);
                 }
                 app->gps_last_request_tick = furi_get_tick();
                 continue;
@@ -8139,8 +8461,8 @@ int32_t room_sweep_app(void* p) {
                         app,
                         app->gps_gpio_baud == GPS_GPIO_BAUD_PRIMARY ?
                             GPS_GPIO_BAUD_ALT : GPS_GPIO_BAUD_PRIMARY);
-                } else if(app->serial) {
-                    gps_marauder_stream(app);
+                } else {
+                    gps_marauder_start_or_poll(app);
                 }
                 app->gps_last_request_tick = furi_get_tick();
             } else if(gps_fresh && app->gps.has_pos) {
@@ -8189,8 +8511,7 @@ int32_t room_sweep_app(void* p) {
 
     tx_stop_and_join(app);
 
-    furi_thread_join(app->rf_thread);
-    furi_thread_free(app->rf_thread);
+    rf_thread_stop(app);
 
     radio_close(app);
 
@@ -8212,6 +8533,12 @@ int32_t room_sweep_app(void* p) {
     furi_mutex_free(app->radio_mutex);
     furi_mutex_free(app->gps_mutex);
     furi_mutex_free(app->record_mutex);
+    free(app->record_queue);
+    free(app->dump_lines);
+    free(app->pending_lines);
+#if ROOM_SWEEP_RID_RECEIVE_ENABLED
+    free(app->rid);
+#endif
     free(app);
     return 0;
 }

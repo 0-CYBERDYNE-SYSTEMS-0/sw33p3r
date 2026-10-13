@@ -50,6 +50,15 @@ int main(void) {
         "nRF24 rows are 2.4 GHz channel energy only, not packets or device IDs",
         "nRF24 limitation is explicit");
 
+    RoomSweepReportState sensor_retry;
+    room_sweep_report_init(&sensor_retry);
+    room_sweep_report_sensor_unavailable(&sensor_retry, RoomSweepReportSensorWifi);
+    room_sweep_report_sensor_confirmed(&sensor_retry, RoomSweepReportSensorWifi);
+    check(
+        (sensor_retry.sensors_unavailable & (uint8_t)RoomSweepReportSensorWifi) == 0 &&
+            (sensor_retry.sensors_confirmed & (uint8_t)RoomSweepReportSensorWifi) != 0,
+        "a successful no-observation scan response clears unavailable status");
+
     RoomSweepReportFindings findings;
     room_sweep_report_findings_init(&findings);
     findings.rf_observations = 4;

@@ -3,7 +3,7 @@ App(
     name="Room Sweep",
     apptype=FlipperAppType.EXTERNAL,
     entry_point="room_sweep_app",
-    stack_size=6 * 1024,
+    stack_size=4 * 1024,
     fap_category="Tools",
     fap_description="Passive room survey: Sub-GHz sweep, WiFi/BLE scan, nRF24 RPD, GPS — detect only + safety-gated TX check",
     fap_author="0-CYBERDYNE-SYSTEMS-0",

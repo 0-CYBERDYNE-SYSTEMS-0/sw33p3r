@@ -22,7 +22,7 @@ activity and whatever a device advertises about itself.
 | GP | Position, speed, course, mark distance | Anything about RF sources |
 | TX | Bounded 1–10 s carrier test state | Any receive-side finding |
 | i | Radio path, session state, limits | — |
-| AV | Remote ID broadcasts a drone makes about itself (ordinal, type, last-known position/speed/heading, operator position); 2.4 GHz RC energy | Who is flying; operator identity (FAA-only lookup); anything the drone does not broadcast |
+| AV | Passive BFFB Remote ID scan and 2.4 GHz RC energy; app reception still needs a live RID row | Who is flying; operator identity (FAA-only lookup); anything the drone does not broadcast |
 
 ## Remember these controls
 
@@ -126,6 +126,8 @@ On RAW/PROBE/TOOL, **OK restarts the scan** — locking is a BEACON/AP
 feature. TOOL alternates its two commands window by window; `sniffesp`
 produces no lines on current Marauder builds (pinned from upstream source,
 see `docs/BFFB_MOMENTUM.md`), so an empty ESP half is normal, not a fault.
+If no Marauder response has been confirmed yet, press **OK** to start the
+first Wi/BLE/AV scan; simply browsing tabs leaves the UART closed.
 
 #### Source truth lines
 
@@ -280,22 +282,36 @@ app's own features, not a claim about any device in the room.
 
 ### Air vehicles (AV tab)
 
-**Receive-only Remote ID** (ASTM F3411-22a / OpenDroneID). Remote ID is a
-public broadcast (FAA 14 CFR §89) — a compliant drone announces its identity,
-position and operator position; this tab listens. **No RID transmission, no
-spoofing, no injection, ever.** Drone identity is shown as per-session
-ordinals **DR-nn**; raw serials never reach the session CSV (same privacy
-rule as Wi/BLE identifiers).
+Once the BFFB Marauder UART is confirmed, the AV tab uses its passive
+`remoteid scan`; if no response is confirmed, press **OK** on RID LIST to
+request the first scan. The documented BFFB runs official ESP32 Marauder
+v1.18.0, and its `RID,` CSV layout is pinned from the release source. A
+bounded live scan returned an empty list and no aircraft row, so a real row
+is still needed to verify app-level reception. **No RID transmission,
+spoofing, or injection, ever.** Drone identities use per-session ordinals
+**DR-nn**; raw identifiers are not shown or written to session CSVs.
+
+For app use, attach the BFFB to the Flipper GPIO UART (pins 13/14 at 115200)
+and open Room Sweep on the Flipper. The BFFB's direct USB-C/CP2102 connection
+is for firmware updates and its serial console; it does not connect the FAP.
+The classic ESP32 BFFB supports 2.4 GHz Wi-Fi and supported legacy BLE
+service-data broadcasts, not 5 GHz or BLE 5 extended advertisements. An empty
+list is normal when no supported Remote ID broadcast is present.
 
 | Page (Hold ▶) | Content |
 |---------------|---------|
-| **RID LIST** | Ordinal, type/ID class, RSSI, age (`!` = STALE) |
-| **TRACK** | Selected drone's last-known alt/speed/heading + age — labelled **"last broadcast"**, never "current position" |
+| **RID LIST** | Per-session ordinal, ID class, RSSI, and age (`!` = STALE); empty until a supported RID broadcast is received |
+| **TRACK** | Last-broadcast altitude/speed/heading and age, never "current position" |
 | **2.4G ENERGY** | The nR ACT-unit presentation (RPD energy; never dBm, never a distance claim) |
 
-- **Up/Down** selects a drone · **OK** opens/closes the decoded-fields
-  **detail page** (all fields + operator-position indicator) · **Hold OK** =
-  clear + rescan (see the gate below).
+An nRF24-only attachment can show broad 2.4 GHz energy on this page; it
+cannot decode Remote ID or identify a drone. Decoded RID requires a compatible
+Marauder ESP32 receiver on the Flipper UART.
+
+- **Up/Down** selects a drone and **OK** opens/closes decoded-field detail.
+  **Hold OK** sends nothing; the explicit BFFB clear command and RID
+  transmission are disabled. Marauder v1.18.0 resets its volatile RID table
+  when a new all-target scan starts.
 - Alert edges ride the existing vibro/LED/sound feedback, wherever you are:
   **NEW DRONE** (first sighting), **RETURNING DRONE** (back after going
   quiet, or first sighting of a watchlist identity), **OPERATOR MOVED** (the
@@ -303,16 +319,15 @@ rule as Wi/BLE identifiers).
   **STALE** (no message for 15 s). Watchlist matching is by exact identity
   string; the watchlist file stores MAC-shaped addresses, so only a MAC-form
   UAS ID can match one.
-- Session rows are rate-limited: one row per drone per 5 s plus always-on
-  state-change rows, so the recorder queue cannot burst-drop.
+- Session rows are rate-limited: one row per drone
+  per 5 s plus always-on state-change rows, so the recorder queue cannot
+  burst-drop.
 - 2.4 GHz RC/drone links (toy/camera drones) appear only as **energy hits**
   in the nR survey / this energy page — no packet decoding exists here.
 
-**Honest gates:** the `remoteid` send path (`scan`/`clear`) is **disabled**
-until a `tools/marauder_probe.py` phase-0 receipt pins the live output
-format ("not yet observed live" — see `docs/BFFB_MOMENTUM.md`). Until then
-nothing is sent and the parser consumes only lines that arrive on their own;
-the host fixtures are synthetic. A watchlist match is **not proof** of the
+**Honest status:** passive scan and receive parsing are enabled. The BFFB
+command sequence is verified, but no live aircraft row has been observed and
+host parser fixtures are synthetic. A watchlist match is **not proof** of the
 same physical drone session-over-session without a sighting gap model.
 Operator identity lookup is FAA-only — the app never attempts it.
 
@@ -360,7 +375,7 @@ Every value toggle confirms with a soft tick/beep (respects Sound/Vibro).
 | GPS Src | BFFB Marauder vs GPIO |
 | GPS Log | Include coordinates in session |
 | Baseline | Snapshot RF survey floor |
-| Raw Dump | Bounded UART snapshot file |
+| Raw Dump | Press to start a 24-line UART capture; press again to save `uart-N.txt` and stop (once per recording session) |
 | TXDur | Carrier length 1–10 s |
 | FullSweep | Auto RF→Wi→BT→raw→probe→nR→GPS, save report, **SWEEP DONE** |
 | Watchlist | Cross-session flags, **off** every launch (opt-in) |

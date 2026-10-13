@@ -21,8 +21,9 @@ on the user's own property and hardware:
 - **GP tab**: NMEA listener (GPIO LPUART primary, Marauder `nmea` fallback)
 - **TX tab**: Dedicated transmit mode, safety-gated (disarm → arm → transmit)
 - **i tab**: Live capability card (Radio / State / Keys / Files / Limits)
-- **AV tab**: Remote ID receive + 2.4 GHz drone-link energy, detect-only
-  (RID send path gated: `remoteid` absent from current BFFB build)
+- **AV tab**: passive Remote ID receive and 2.4 GHz drone-link energy,
+  detect-only; RID transmission, spoofing, and injection are never allowed.
+  The v1.18.0 CSV schema is pinned, but app reception still needs a live row.
 
 ## Scope / legal
 

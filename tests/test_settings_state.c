@@ -104,6 +104,18 @@ int main(void) {
     check(strcmp(room_sweep_wi_source_label(WiSourceProbe), "PROBE") == 0, "PROBE label");
     check(strcmp(room_sweep_wi_source_label(WiSourceTool), "TOOL") == 0, "TOOL label");
     check(
+        room_sweep_dump_action(false) == RoomSweepDumpStartCapture,
+        "Raw Dump starts an opt-in capture when off");
+    check(
+        room_sweep_dump_action(true) == RoomSweepDumpSaveAndStop,
+        "Raw Dump saves and stops an active capture");
+    check(
+        room_sweep_dump_can_start(false, true),
+        "Raw Dump can start outside a recording session");
+    check(
+        !room_sweep_dump_can_start(true, true),
+        "Raw Dump permits one file per recording session");
+    check(
         strcmp(room_sweep_wi_source_tag(WiSourceBeacon), "SCAN") == 0,
         "BEACON header tag stays SCAN");
     check(strcmp(room_sweep_wi_source_tag(WiSourceRaw), "RAW") == 0, "RAW header tag");

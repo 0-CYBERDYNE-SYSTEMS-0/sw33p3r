@@ -383,3 +383,70 @@
   report-24 confirms nRF24 sensor. GPS coordinates omitted, TX none.
 - Local receipts: .omo/evidence/nrf24-live-session-24.csv,
   nrf24-live-report-24.txt, hardware diagnostic and launch/gate logs.
+
+## 2026-10-12 — shared Flipper access for coding agents
+- Added flipperctl: exclusive host lease, external-owner check, real CLI
+  handshake, complete button events, bounded helpers, verified transfers,
+  and full-frame RPC screenshots. Installer uses an isolated Python env.
+- Fixed CLI-to-protobuf transition contamination after a live DecodeError;
+  regression uses real protobuf messages on a fresh offline pseudo-terminal.
+- Offline transport checks: 13/13 PASS. Root verified live CLI, full RPC
+  screenshot, and exact 146,196-byte candidate upload with matching MD5.
+- Root verified live Back input: crash UI dismissed to desktop and uptime
+  remained continuous. USB I/O remains exclusively with Root.
+- Installed both CYBERDYNE Flipper skills and a local harness skill; normalized
+  skill metadata for Codex and linked discovery for Claude and Hermes.
+- Current candidate still OOMs on launch. Access remains responsive after
+  reset; candidate UI walks and survival validation remain open with Root.
+- Local live receipt: .omo/evidence/flipperctl-live-2026-10-12.md.
+- Follow-up transport checks: 17/17 PASS. A failing offline reproduction
+  showed a TERM-ignoring descendant could retain the lease after supervisor
+  timeout; cleanup now stops remaining group members. Screen reads now retain
+  frames received before ACKs, skip empty async messages, and assemble partial
+  protobuf payloads through a bounded deadline. Root owns live revalidation.
+
+## 2026-10-12 — Room Sweep OOM v5 device validation (supersedes earlier status)
+- v5 image: 140,492 B, SHA-256
+  `40095b308e09a120b659b7586897aebd642bd44cce803603318b410a5ff47f56`;
+  Target 7 loaded sections 88,450 B; App state 6,548 B. `./init.sh` and
+  `_verify_api.py` passed before deployment.
+- Exact upload and earlier full read-back matched by size, MD5, and SHA-256.
+  Five launch/exit cycles passed; eight tabs walked with TX DISARMED; FieldSweep
+  refused when GPS Log was OFF; AV list/track/detail were honestly unverified;
+  the AV energy page remained available. A prior 131-second hands-off run
+  survived and reported 13,288 B free heap, 1,096 B low-water, and a 6,576 B
+  largest free block.
+- After a later wrapper read-back disconnected at chunk 8/18, `loader info`
+  reported no app. Relaunched `/ext/apps/Tools/room_sweep.fap`; status and RPC
+  screenshot confirmed Room Sweep on RF Survey. A further screenshot/status
+  check more than 25 minutes later still showed the app running. It is left
+  open for the user. No retry of the interrupted read-back.
+- The installed `~/.local/bin/flipperctl` Python venv bootstrap worked for live
+  CLI and screenshots without `PYTHONPATH`. Current frame:
+  `.omo/evidence/v5-final-open-2026-10-12.png`.
+- Three stale Herdr workers showed token-refresh/sign-in errors. Their Codex
+  processes were closed and restarted in the existing project panes as
+  GPT-6-Luna max. The memory review confirmed the observed 1,096 B low-water
+  is thin headroom; geometry review found no concrete Q30 antipode issue. The
+  validator confirmed the v5 acceptance receipts and flagged the incomplete
+  formal historical A/B sequence plus the zero-byte failed-download artifact.
+
+## 2026-10-12 — BFFB v1.18.0 and strict RID receive candidate
+- Backed up and SHA-verified the full 8 MiB BFFB flash before updating; wrote
+  only the official Marauder Dev Board Pro app0 image. Restore point and update
+  receipts are under `.omo/evidence/`.
+- Verified `remoteid scan`, `stopscan`, and an empty `remoteid list`; no real
+  aircraft row arrived during the 12-second scan.
+- Replaced the speculative RID parser with a strict parser for the exact
+  v1.18.0 30-field `RID,` row. Fixed E7/E6 coordinate scaling, metric units,
+  validity flags, source bounds, and 360-degree heading. Framer handles 271
+  bytes plus NUL. Host fixtures are synthetic only.
+- Deferred the 844-byte RID track allocation until the first valid row and
+  fixed the FieldSweep report buffer capacity argument. `./init.sh` and
+  `_verify_api.py` pass.
+- Candidate FAP: 149,104 bytes, SHA-256
+  `5259b8b4e49700d64c0136458f454820e60c2d51e90f50bb9928d0db466ba591`.
+  Loaded sections total 94,454 bytes; `sizeof(App)` is 6,704 bytes; stack is
+  4 KiB. No Flipper CDC port was present, so this candidate is not uploaded or
+  device-verified. v5's 1,096 B low-water is not a measurement of this image.
+- Receipt: `.omo/evidence/room-sweep-rid-validation-2026-10-12.md`.

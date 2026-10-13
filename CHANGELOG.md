@@ -4,6 +4,22 @@ Keep-a-Changelog-inspired, condensed per release series. The full per-fix
 history lives in `fix_plan.md` (session-by-session) and `progress.log`
 (dated session log).
 
+## Unreleased — BFFB Remote ID receive validation (2026-10-12)
+
+- Updated the BFFB to official ESP32 Marauder v1.18.0 after capturing and
+  hash-verifying a full 8 MiB same-board restore image. Only app0 was written;
+  the existing partition layout was preserved.
+- Verified the passive `remoteid scan` / `stopscan` / `remoteid list` CLI
+  sequence. The list and 12-second scan were empty; no real RID row was
+  observed.
+- Replaced the speculative text parser with a strict, integer-only parser for
+  v1.18.0's 30-value `RID,` CSV row. Host fixtures are synthetic. App-side
+  receive is enabled for validation; a live aircraft row and Flipper FAP test
+  remain outstanding.
+- Allocate the 844-byte RID track table only after a valid row arrives and
+  fixed the FieldSweep report appender's capacity argument. See
+  `sw33p3r_handoff.md` and local QA receipts under `.omo/evidence/`.
+
 ## Unreleased — FieldSweep: outdoor GPS-stamped survey loop (2026-10-11)
 
 - **FieldSweep** (`specs/field-sweep.md`) — "room sweep, but outside": a
