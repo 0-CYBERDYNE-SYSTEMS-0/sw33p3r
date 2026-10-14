@@ -258,5 +258,68 @@
    "Receipts: .omo/evidence/phase-receipts-2026-09-21.md"
   ],
   "passes": false
+ },
+ {
+  "category": "functional",
+  "description": "AV tab: ASTM F3411 Remote ID reception (drone identity/position/operator) + 2.4 GHz drone-link energy, detect-only",
+  "steps": [
+   "Spec: specs/drone-rid.md",
+   "Official BFFB v1.18.0 remoteid scan/stopscan/list verified; the exact RID CSV shape is pinned to source and strict synthetic parser fixtures pass; a real aircraft row is still required for app-level device verification",
+   "room_sweep_rid.h + room_sweep_rid_state.h (Flipper-free) with redacted/synthetic fixtures; tests/test_rid.c in init.sh",
+   "SweepModeAv tab (8th; MISSION.md + control map updated); session events source=RID with DR-nn ordinals, rate-limited to protect the 8-slot queue",
+   "nRF24 layer stays RPD energy only per specs/nrf24-survey.md (no promiscuous sniffing)",
+   "2026-10-12: official Marauder v1.18.0 installed on the BFFB; bounded passive scan returned an empty list and no row. App RID receive is enabled for field validation, but the candidate FAP has not been device-tested because the Flipper USB CDC port is disconnected; see .omo/evidence/bffb-rid-scan-2026-10-12.txt and docs/BFFB_MOMENTUM.md"
+  ],
+  "passes": false
+ },
+ {
+  "category": "functional",
+  "description": "FieldSweep: continuous outdoor GPS-stamped survey loop (room sweep, but outside)",
+  "steps": [
+   "Spec: specs/field-sweep.md",
+   "room_sweep_field.h loop/abort + rate-limit policy + coordinate-eligibility matrix (GPS Log OFF = refuse, never silently drop); tests/test_field.c in init.sh",
+   "FieldSweep settings toggle (not persisted, factory-off every launch); event rows gain coordinate tokens only when GPS Log ON",
+   "Field-sweep report section: duration, walked distance, fixes, per-source counts, honest path bounding box",
+   "64-entry identity map + 8-slot queue saturation behavior verified on a long walk (REDACTED/overflow stays honest)",
+   "Host gates green 2026-10-11 (./init.sh all sections + ufbt clean, _verify_api CLEAN); the spec's 2x fixed-path device walk is still owed"
+  ],
+  "passes": true
+ },
+ {
+  "category": "functional",
+  "description": "ESP32-C5 dual-band board profile: 5 GHz Wi-Fi survey alongside 2.4-only BFFB support",
+  "steps": [
+   "Spec: specs/esp32-c5-dualband.md",
+   "room_sweep_board.h: info/help capability handshake -> conservative 2.4-only default; tests/test_board.c in init.sh",
+   "Band selector on Wi tab when dual_band; Marauder channel command pinned live before use (not-yet-observed annotation discipline)",
+   "band=2|5 token in CSV observation details; scan_end records band; Room Report per-band counts",
+   "Regression: 2.4-only BFFB path unchanged; scanap/scansta remain unsent per standing decision"
+  ],
+  "passes": false
+ },
+ {
+  "category": "functional",
+  "description": "RX5808 5.8 GHz FPV energy finder (analog FPV downlink detection, energy/channel only)",
+  "steps": [
+   "Spec: specs/rx5808-fpv-finder.md",
+   "Validation gates first: furi_hal_adc_* in API 87.1 export table (or digital-threshold fallback), bench-verified pin plan avoiding PA4/PB2/13/14/15/16, radio_path policy extended so RX5808/nRF24/CC1101 never contend",
+   "room_sweep_fpv.h sweep/peak-hold state + FPV band/channel table, integer math; tests/test_fpv.c in init.sh",
+   "Teardown mirrors nrf24_survey.c (SPI/GPIO release incl. failed start); events source=FPV with channel detail, honest raw/ACT units (no dBm fabrication)",
+   "Receipt: bench test against operator's own low-power FPV VTX, receive-only"
+  ],
+  "passes": false
+ },
+ {
+  "category": "functional",
+  "description": "Host dashboard + exports: session CSV/report -> static HTML dashboard, GeoJSON map, WiGLE CSV (stdlib-only Python)",
+  "steps": [
+   "Spec: specs/host-dashboard.md",
+   "tools/room_sweep_dashboard.py (stdlib only): unified timeline, per-ordinal stats, RSSI sparklines, Leaflet map with no-map fallback",
+   "map-N.geojson (GPS path + event points; RID drone/operator markers by ordinal) and wigle-N.csv (coordinate-bearing sessions only)",
+   "Privacy mirror: ordinals only, no cross-session de-anonymization without opt-in watchlist.txt; inputs never modified",
+   "tools/test_dashboard_fixtures.py round-trips a real session-N.csv from .omo/evidence/ with zero stderr warnings",
+   "Design polish: 3 vision-verified iterations + leader acceptance review 8/10 no showstoppers (2026-10-11); minor nitpick round (pill contrast, single-sample state) queued"
+  ],
+  "passes": true
  }
 ]

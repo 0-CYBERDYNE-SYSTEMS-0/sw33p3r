@@ -17,8 +17,21 @@ typedef enum {
     SweepModeGps,   // Passive GPS NMEA listener
     SweepModeTx,    // Dedicated TX tab (safety-gated)
     SweepModeInfo,  // Live capability / status card
+    SweepModeAv,    // Air vehicles: Remote ID receive + 2.4G energy (detect-only)
     SweepModeCount
 } SweepMode;
+
+/* ---------------------------------------------------------------------------
+ * AV tab pages (Hold Right) — specs/drone-rid.md UI section
+ * --------------------------------------------------------------------------- */
+typedef enum {
+    AvSubList,    // RID LIST: ordinal, type/ID class, RSSI, age
+    AvSubTrack,   // TRACK: selected drone's last-known alt/speed/heading + age
+    AvSubEnergy,  // 2.4G energy: the nR ACT-unit presentation (never dBm)
+    AvSubCount
+} AvSubMode;
+
+#define AV_PAGE_COUNT ((uint8_t)AvSubCount)
 
 /* ---------------------------------------------------------------------------
  * RF sub-modes (cycled with Up/Down on RF tab)
@@ -104,8 +117,9 @@ static const RfBand rf_bands[RF_BAND_COUNT] = {
 #define MARAUDER_BAUD        115200UL
 #define MARAUDER_RX_BUF_SIZE 1024
 /* Must match ROOM_SWEEP_UART_LINE_MAX in room_sweep_scan.h (headless BLE framer). */
-#define MARAUDER_LINE_MAX    128
-#define MARAUDER_MAX_LINES   24 /* deeper ring — AP/BLE bursts drop less */
+#define MARAUDER_LINE_MAX    272
+#define MARAUDER_MAX_LINES   32 /* 31 usable rows for UART bursts between main-loop drains */
+#define MARAUDER_DUMP_LINE_MAX 128 /* raw UART snapshot is separate from receive framing */
 
 /* JCMK CLI: sniffbeacon prints "-RSSI Ch: n MAC ESSID:" (WIFI_SCAN_AP).
  * sniffbt = BT_SNIFF_CMD. Phase 4/5/10 sources (2026-09-20 expansion):
@@ -120,6 +134,20 @@ static const RfBand rf_bands[RF_BAND_COUNT] = {
 #define MARAUDER_CMD_PROBE   "sniffprobe"
 #define MARAUDER_CMD_ESP     "sniffesp"
 #define MARAUDER_CMD_PWN     "sniffpwn"
+/* Remote ID (ASTM F3411-22a / OpenDroneID) — passive receive only (MISSION.md:
+ * no RID transmission, spoofing, or injection, ever). BFFB v1.18.0 advertises
+ * the scanner; its exact CSV row is pinned to the official release source. */
+#define MARAUDER_CMD_RID_SCAN  "remoteid scan"
+#define MARAUDER_CMD_RID_CLEAR "remoteid clear"
+/* No RID transmission command is enabled. Scan is passive; clear only resets
+ * Marauder's local table and remains disabled. */
+#define ROOM_SWEEP_RID_SEND_ENABLED 0
+#define ROOM_SWEEP_RID_SCAN_ENABLED 1
+#define ROOM_SWEEP_RID_CLEAR_ENABLED 0
+/* Strict parser, event rows, stale transitions, and feedback are enabled for
+ * field validation against the v1.18.0 RID CSV schema. No live aircraft row
+ * was observed by the bounded pre-release scan. */
+#define ROOM_SWEEP_RID_RECEIVE_ENABLED 1
 
 /* GPIO GPS (LPUART). Stock modules default 9600; some boards use 115200. */
 #define GPS_GPIO_BAUD_PRIMARY   9600UL

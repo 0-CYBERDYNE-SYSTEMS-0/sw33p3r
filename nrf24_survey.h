@@ -17,7 +17,8 @@
  * unknown addresses passively requires mousejack-class attack techniques that
  * MISSION.md/PROMPT.md ban. The nR mode therefore reports channel energy only.
  *
- * CE defaults to gpio_ext_pc3 (common Flipper nRF24 wiring / Momentum NRF24 SPI).
+ * CE uses gpio_ext_pb2 (GPIO pin 6), CS uses PA4 (GPIO pin 4).
+ * Verified on the operator's 3-in-1 AIO board with RX/RPD samples.
  * BFFB: bottom switch down = nRF24 on SPI; OTG power may be required.
  */
 

@@ -105,6 +105,8 @@ int main(void) {
     check(!room_sweep_full_sweep_advance(&s, true), "no advance after abort");
 
     check(room_sweep_force_internal_cc1101(RoomSweepSpiPathNrf24), "nRF24 forces internal");
+    check(room_sweep_startup_spi_path(true) == RoomSweepSpiPathNrf24, "confirmed nRF24 avoids external CC1101 startup");
+    check(room_sweep_startup_spi_path(false) == RoomSweepSpiPathCc1101, "unconfirmed nRF24 retains CC1101 startup");
     check(!room_sweep_force_internal_cc1101(RoomSweepSpiPathCc1101), "CC1101 path may use ext");
     check(room_sweep_external_cc1101_allowed(RoomSweepSpiPathCc1101), "ext allowed on CC1101 path");
     check(!room_sweep_external_cc1101_allowed(RoomSweepSpiPathNrf24), "ext blocked on nRF24 path");

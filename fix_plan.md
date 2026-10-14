@@ -1,5 +1,14 @@
 # fix_plan.md — Room Sweep (graph-engineering)
 
+## nRF24 module-not-seen diagnosis (2026-10-09)
+
+[x] Reproduce cold external-CS failure with a host driver test
+[x] Initialize external SPI handle and clean up on end/failed start
+[x] Pass ./init.sh and API export verification
+[x] Deploy and verify the attached 3-in-1 AIO board (session-24: 4 hits on 4 channels)
+[x] Correct AIO CE pin to PB2 and verify receive energy on hardware
+[x] Verify nRF24 registers before external CC1101 startup to prevent misidentification/reset
+
 ## DONE (prior sessions)
 [x] v3.0 / v3.0.1 tabs, TX guards, NMEA fixes, settings crash, Back routing
 [x] Marauder scan timeout, GPS stream, GPS UI, per-tab feedback (2026-08-01)

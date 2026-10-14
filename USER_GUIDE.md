@@ -3,7 +3,7 @@
 Receive-side room survey on Flipper Zero + optional BFFB (Marauder / dual
 CC1101 / nRF24). Firmware target: **Momentum mntm-012**, API **87.1**.
 
-This guide matches the **current** app behavior (7 tabs, Hold-▶ pages,
+This guide matches the **current** app behavior (8 tabs, Hold-▶ pages,
 analyzer age-out, FullSweep auto-save, tactile tap/hold feedback).
 
 One-page map: [`docs/room_sweep_control_map.html`](docs/room_sweep_control_map.html).
@@ -22,6 +22,7 @@ activity and whatever a device advertises about itself.
 | GP | Position, speed, course, mark distance | Anything about RF sources |
 | TX | Bounded 1–10 s carrier test state | Any receive-side finding |
 | i | Radio path, session state, limits | — |
+| AV | Passive BFFB Remote ID scan and 2.4 GHz RC energy; app reception still needs a live RID row | Who is flying; operator identity (FAA-only lookup); anything the drone does not broadcast |
 
 ## Remember these controls
 
@@ -125,6 +126,8 @@ On RAW/PROBE/TOOL, **OK restarts the scan** — locking is a BEACON/AP
 feature. TOOL alternates its two commands window by window; `sniffesp`
 produces no lines on current Marauder builds (pinned from upstream source,
 see `docs/BFFB_MOMENTUM.md`), so an empty ESP half is normal, not a fault.
+If no Marauder response has been confirmed yet, press **OK** to start the
+first Wi/BLE/AV scan; simply browsing tabs leaves the UART closed.
 
 #### Source truth lines
 
@@ -210,6 +213,9 @@ addresses, no device IDs**, and no dBm readings (analyzer numbers here are
 | **Results** | Active channels + top hit channels |
 
 - Settings **SPI Path = nRF24** and BFFB bottom switch **down**  
+- At startup, a verified nRF24 register response selects this SPI path
+  automatically. The supported AIO wiring is **CE pin 6 / PB2**, **CS pin
+  4 / PA4**; other pin layouts are not selected automatically.
 - Sub-GHz then uses **internal** CC1101  
 - **OK:** start/stop an energy pass · **Hold Left** or **Hold OK:** analyzer
 
@@ -274,6 +280,57 @@ name hints (both carrying `?`), hidden-SSID repair from client probes, clients
 via the Wi-raw transmitter radar, and the rogue/watch flags. It is a map of the
 app's own features, not a claim about any device in the room.
 
+### Air vehicles (AV tab)
+
+Once the BFFB Marauder UART is confirmed, the AV tab uses its passive
+`remoteid scan`; if no response is confirmed, press **OK** on RID LIST to
+request the first scan. The documented BFFB runs official ESP32 Marauder
+v1.18.0, and its `RID,` CSV layout is pinned from the release source. A
+bounded live scan returned an empty list and no aircraft row, so a real row
+is still needed to verify app-level reception. **No RID transmission,
+spoofing, or injection, ever.** Drone identities use per-session ordinals
+**DR-nn**; raw identifiers are not shown or written to session CSVs.
+
+For app use, attach the BFFB to the Flipper GPIO UART (pins 13/14 at 115200)
+and open Room Sweep on the Flipper. The BFFB's direct USB-C/CP2102 connection
+is for firmware updates and its serial console; it does not connect the FAP.
+The classic ESP32 BFFB supports 2.4 GHz Wi-Fi and supported legacy BLE
+service-data broadcasts, not 5 GHz or BLE 5 extended advertisements. An empty
+list is normal when no supported Remote ID broadcast is present.
+
+| Page (Hold ▶) | Content |
+|---------------|---------|
+| **RID LIST** | Per-session ordinal, ID class, RSSI, and age (`!` = STALE); empty until a supported RID broadcast is received |
+| **TRACK** | Last-broadcast altitude/speed/heading and age, never "current position" |
+| **2.4G ENERGY** | The nR ACT-unit presentation (RPD energy; never dBm, never a distance claim) |
+
+An nRF24-only attachment can show broad 2.4 GHz energy on this page; it
+cannot decode Remote ID or identify a drone. Decoded RID requires a compatible
+Marauder ESP32 receiver on the Flipper UART.
+
+- **Up/Down** selects a drone and **OK** opens/closes decoded-field detail.
+  **Hold OK** sends nothing; the explicit BFFB clear command and RID
+  transmission are disabled. Marauder v1.18.0 resets its volatile RID table
+  when a new all-target scan starts.
+- Alert edges ride the existing vibro/LED/sound feedback, wherever you are:
+  **NEW DRONE** (first sighting), **RETURNING DRONE** (back after going
+  quiet, or first sighting of a watchlist identity), **OPERATOR MOVED** (the
+  broadcast operator position shifted — an *edge*, never a distance), and
+  **STALE** (no message for 15 s). Watchlist matching is by exact identity
+  string; the watchlist file stores MAC-shaped addresses, so only a MAC-form
+  UAS ID can match one.
+- Session rows are rate-limited: one row per drone
+  per 5 s plus always-on state-change rows, so the recorder queue cannot
+  burst-drop.
+- 2.4 GHz RC/drone links (toy/camera drones) appear only as **energy hits**
+  in the nR survey / this energy page — no packet decoding exists here.
+
+**Honest status:** passive scan and receive parsing are enabled. The BFFB
+command sequence is verified, but no live aircraft row has been observed and
+host parser fixtures are synthetic. A watchlist match is **not proof** of the
+same physical drone session-over-session without a sighting gap model.
+Operator identity lookup is FAA-only — the app never attempts it.
+
 ## Analyzer (Hold Left on RF / Wi / BT / nR)
 
 | Page (Hold Right) | Role |
@@ -318,10 +375,48 @@ Every value toggle confirms with a soft tick/beep (respects Sound/Vibro).
 | GPS Src | BFFB Marauder vs GPIO |
 | GPS Log | Include coordinates in session |
 | Baseline | Snapshot RF survey floor |
-| Raw Dump | Bounded UART snapshot file |
+| Raw Dump | Press to start a 24-line UART capture; press again to save `uart-N.txt` and stop (once per recording session) |
 | TXDur | Carrier length 1–10 s |
 | FullSweep | Auto RF→Wi→BT→raw→probe→nR→GPS, save report, **SWEEP DONE** |
 | Watchlist | Cross-session flags, **off** every launch (opt-in) |
+| FieldSweep | Outdoor GPS-stamped looping sweep (needs GPS Log), **off** every launch |
+
+## FieldSweep (outdoor loop — "room sweep, but outside")
+
+Settings → FieldSweep → OK, with **GPS Log already ON** (the toggle is **off**
+every launch, same as WiSrc/Watchlist — nothing is persisted). With GPS Log
+OFF the enable is **refused** — the row shows `NEED LOG` and the CSV records
+`FieldSweep needs GPS Log ON`. It never runs "quietly without coordinates";
+that would be a silent coordinate drop.
+
+While it runs:
+
+- The FullSweep phases (RF→Wi→BT→Wi-raw→Probe→nR→GPS) **loop continuously**;
+  each completed pass restarts at RF. **Back stops** the loop and saves the
+  session (Settings → FullSweep `OK=` or the FieldSweep toggle stop it too).
+- The top strip shows the field banner (`FIELD n2 Wi-raw 183m` = pass number ·
+  phase · distance walked so far). Pages are unchanged; the GPS tab still owns
+  the radar page — field mode only stamps and loops.
+- Every evidence row's detail gains the latest-fix coordinate token
+  `pos=<lat>/<lon>/<alt>` (e.g. `pos=37.774900/-122.419400/na`) — same values
+  as the row's lat/lon columns, only with GPS Log ON and a usable fix. The
+  token is CSV-safe (slashes, never commas). Altitude reads `na` because this
+  build's NMEA parser does not parse altitude — it is never invented. Drop
+  rows and TX rows are never stamped (drop rows are written at drain time, and
+  field mode never touches TX at all).
+- **Movement-aware sampling:** a device seen for the first time always gets a
+  row; already-seen rows thin out (one per 1.5 s at walking pace, one per 8 s
+  above walking pace) so a long walk cannot flood the 8-slot record queue.
+  Sampling drops are not counted as lost evidence; identity overflow past the
+  64-entry map still comes out `REDACTED` — honest, never leaking identifiers.
+- Turning **GPS Log OFF while the loop runs stops it loudly** (logged as
+  `field_sweep_stop; gps_log_off`) rather than continuing without coordinates.
+
+The Room Report gains a **Field sweep** section: total active time, passes,
+distance walked (GPS haversine over your fix path), fixes used, per-source
+hit counts (RF / Wi-Fi / BLE / GPS / nRF24 / RID), and the **area bounding
+box of YOUR path — not of the emitters** (omitted with a clear label if
+coordinates were not allowed). No TX interaction of any kind.
 
 ## Watchlist (opt-in — the app's only persistent-identity feature)
 
@@ -361,8 +456,8 @@ Path: `/ext/apps_data/room_sweep/`
 
 | File | Contents |
 |------|----------|
-| `session-N.csv` | Events; Wi/BT IDs as session ordinals; identified Wi/BT observation details carry `oui=<label\|unlisted\|randomized>`, `min=<a> max=<b> avg=<c>` signal stats, `rogue=<n>` when the SSID is shared across BSSIDs, `watch=1` on rows whose address is on the opt-in watchlist, and, when the name matched a pattern, `hints=<tag>` (details are bounded; when space is tight the trailing evidence phrase yields first and a value is never cut) |
-| `report-N.txt` | Plain Room Report; adds a `Vendors seen` list (when curated labels matched), a `Hints (name-pattern guesses only)` count, a `Possible cloned SSIDs` line with the mesh caveat (when duplicate-SSID groups existed), a `Watchlist matches: N` section with the persistent-identity honesty line (only when the watchlist was ON), and the strongest device's observed range |
+| `session-N.csv` | Events; Wi/BT IDs as session ordinals; identified Wi/BT observation details carry `oui=<label\|unlisted\|randomized>`, `min=<a> max=<b> avg=<c>` signal stats, `rogue=<n>` when the SSID is shared across BSSIDs, `watch=1` on rows whose address is on the opt-in watchlist, `pos=<lat>/<lon>/<alt>` coordinate tokens from FieldSweep (GPS Log ON only), and, when the name matched a pattern, `hints=<tag>` (details are bounded; when space is tight the trailing evidence phrase yields first and a value is never cut) |
+| `report-N.txt` | Plain Room Report; adds a `Vendors seen` list (when curated labels matched), a `Hints (name-pattern guesses only)` count, a `Possible cloned SSIDs` line with the mesh caveat (when duplicate-SSID groups existed), a `Watchlist matches: N` section with the persistent-identity honesty line (only when the watchlist was ON), a `Field sweep` section (duration, walked distance, fixes used, per-source hits, your-path bounding box — only when FieldSweep ran), and the strongest device's observed range |
 | `uart-N.txt` | Only from Raw Dump (may include raw IDs/GPS) |
 | `watchlist.txt` | Only from the opt-in watchlist: one `mac,label` line per address you flagged by hand — the only file where raw identifiers persist |
 
@@ -406,6 +501,9 @@ Settings → FullSweep → OK:
 - `SAME NAME ON n BSSIDS` / `rogue=` is a cloned-SSID *lead*; mesh/roaming shares names legitimately
 - `TOOL` is a class match on the advertisement (Marauder/ESP32, Pwnagotchi) — never proof of intent; a Pwnagotchi is also a toy, an ESP32 also a dev board. `sniffesp` streams nothing on current Marauder builds (pinned from upstream source)
 - `WATCH` means you flagged that address earlier — a "here before" reminder; addresses can be spoofed or re-randomized, so a match is not an identification
+- `RETURNING DRONE` on a watchlist match is the same class of reminder — a matching serial is not proof of the same physical drone session-over-session without a sighting gap model
+- Remote ID repeats what the drone broadcasts about itself (and its operator position); `OPERATOR MOVED` is an alert edge, not a distance, and operator identity lookup is FAA-only
+- The Field sweep area box is the bounding box of **your path**, not of the emitters — it says where you walked, never where a signal source is
 - Coverage: 16 RF presets, 3 CC1101 bands (348–387 and 464–779 MHz invisible), no 5 GHz
 - Misses: non-transmitting recorders, burst TX between samples, out-of-band, wired
 - No hit ≠ proof of absence  

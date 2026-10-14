@@ -13,6 +13,10 @@ typedef enum {
     RoomSweepSpiPathNrf24 = 1, /* nRF24 on external SPI; force internal Sub-GHz */
 } RoomSweepSpiPath;
 
+static inline RoomSweepSpiPath room_sweep_startup_spi_path(bool nrf24_confirmed) {
+    return nrf24_confirmed ? RoomSweepSpiPathNrf24 : RoomSweepSpiPathCc1101;
+}
+
 static inline const char* room_sweep_spi_path_label(RoomSweepSpiPath path) {
     switch(path) {
     case RoomSweepSpiPathNrf24:

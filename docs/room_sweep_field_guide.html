@@ -1859,9 +1859,10 @@
               <h3>What it does</h3>
               <p>Record opens session N and writes <code>session-N.csv</code> plus a Room Report.
                  Baseline snapshots the RF survey floor so the <code>&gt;-75dBm</code> energy gate
-                 means something. Raw
-                 Dump captures a bounded UART snapshot (<code>uart-N.txt</code>) — the only file that
-                 can contain raw identifiers. FullSweep launches the whole-room sequence.</p>
+                 means something. Raw Dump is opt-in: press once to capture up to 24 UART lines,
+                 then press again to save <code>uart-N.txt</code> and stop. Only one dump is saved
+                 per recorded session; it is the only file that can contain raw identifiers.
+                 FullSweep launches the whole-room sequence.</p>
             </div>
             <div class="block">
               <h3>How to use</h3>

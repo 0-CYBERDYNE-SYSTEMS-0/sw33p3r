@@ -14,6 +14,7 @@ requirement enforced by `MISSION.md`.
   radio code. Maintained log of verified API symbols and breakages.
 - `docs/BFFB_MOMENTUM.md` — source of truth for BFFB/Marauder/Momentum facts;
   check before changing any UART command or baud.
+- `CONTRIBUTING.md` — mission constraint (non-negotiable) + the gate contract.
 - `DESIGN.md`, `USER_GUIDE.md`, `progress.log`, `specs/` (one spec per
   feature), `features.json` (QA feature checklist).
 - `docs/` — GitHub Pages landing: control map (`index.html` /
@@ -39,12 +40,30 @@ cc -std=c11 -Wall -Wextra -Werror -I. tests/test_nmea.c nmea.c -o /tmp/t_nmea &&
 **`./init.sh` must pass before any device deploy.** `*.fap` and `dist/` are
 gitignored.
 
+- CI (`.github/workflows/ci.yml`) runs `./init.sh` on push/PR to `main`.
+  `python3 _verify_api.py` is deliberately NOT in CI: it needs a locally
+  initialized ufbt SDK (`~/.ufbt/.../api_symbols.csv`, override via
+  `UFBT_API_SYMBOLS`) and stays a local pre-deploy step.
+- `scripts/verify.sh` — generic success bar (git fsck + clean-tree warn; no C
+  tests). `./init.sh` is still the gate.
+- On-device helpers (need a connected Flipper; `FLIPPER_PORT` env):
+  `_smoke_test.py` / `_dev_check.py` (serial CLI checks) and
+  `tools/marauder_probe.py` (BFFB UART probe battery, receive-only).
+- Agent USB access: install with `sh tools/install_flipperctl.sh`, then use
+  `flipperctl` for shared ownership, bounded CLI/RPC calls, full button events,
+  and verified file transfers. See `docs/flipper-agent-access.md`. Honor the
+  user-assigned USB owner; run external device helpers through `flipperctl run`.
+
 ## Architecture
 
-Single ViewPort app, one draw function, **7 tabs** (`SweepMode` in
-`room_sweep.h`): RF / Wi / BT / nR / GP / TX / i.
+Single ViewPort app, one draw function, **8 tabs** (`SweepMode` in
+`room_sweep.h`): RF / Wi / BT / nR / GP / TX / i / AV (air vehicles — passive
+RID scan, source-pinned parser, live aircraft row still needed; detect-only).
+The RF tab cycles
+**5 sub-modes** (`RfSubMode`):
+Survey / Sweep / Peak / Waterfall / Watch.
 
-- `room_sweep.c` (~5790 lines) is an intentional monolith: input
+- `room_sweep.c` (~8.2k lines) is an intentional monolith: input
   routing, drawing, RF engine, TX thread, UART parsing, feedback.
 - **All logic that can be host-tested lives in header-only, Flipper-header-free
   state files** so suites compile with plain `cc`. When changing behavior, put
@@ -59,10 +78,23 @@ Single ViewPort app, one draw function, **7 tabs** (`SweepMode` in
   `room_sweep_analyzer.h`, `room_sweep_radar.h`, `room_sweep_waterfall.h`,
   `room_sweep_ui_layout.h`, `room_sweep_rf_presets.h` (20-preset survey table;
   host-tested invariants — all three parallel arrays in sync, every frequency
-  inside a real CC1101 band).
+  inside a real CC1101 band), plus the identity/watch layer, each with its own
+  `tests/test_*.c` suite: `room_sweep_probe.h` (sniffprobe parse + hidden-SSID
+  repair), `room_sweep_sta.h` (sniffraw transmitter table),
+  `room_sweep_tool.h` (hostile-tooling source), `room_sweep_oui.h` (OUI vendor
+  lookup), `room_sweep_classify.h` (name-pattern class hints),
+  `room_sweep_rogue.h` (duplicate-SSID rogue correlation),
+  `room_sweep_stats.h` (per-device RSSI evidence stats),
+  `room_sweep_watch.h` (RF burst watch), `room_sweep_watchlist.h`
+  (cross-session watchlist), `room_sweep_feedback.h` (feedback cadence curves),
+  `room_sweep_rid.h` (ASTM F3411 RID text parse), `room_sweep_rid_state.h`
+  (8-drone track list, staleness, alert edges), `room_sweep_field.h`
+  (FieldSweep loop/rate-limit/coordinate-eligibility policy).
 - Other modules: `nmea.c/h` (host-tested NMEA parser),
   `session_log.c/h` (session writer, main-loop-only), `nrf24_survey.c/h`.
-- `application.fam` — ufbt manifest: stack 6 KiB, `sources=["*.c","!tests"]`.
+  The nRF24 driver test builds against stub headers in `tests/nrf24_stubs/`.
+- `application.fam` — ufbt manifest: app stack 4 KiB (set after the measured
+  OOM run), `sources=["*.c","!tests"]`.
 
 ### Threads & locking
 
@@ -86,6 +118,11 @@ Single ViewPort app, one draw function, **7 tabs** (`SweepMode` in
   never replay/blocking.
 - Bottom SPI switch: **up = CC1101, down = nRF24**; setting **SPI Path** forces
   internal CC1101 when nRF24 is selected.
+- nRF24 wiring (verified on the 3-in-1 AIO board): CE = `gpio_ext_pb2`
+  (pin 6), CS = PA4 (pin 4) — PC3 is NOT CE on this board. nRF24 is
+  register-verified before external CC1101 startup because Momentum's
+  `cc1101_ext_is_connect()` also accepts the nRF24 STATUS 0x0e as a part
+  number.
 
 ### BFFB / Marauder UART & GPS
 
@@ -101,6 +138,17 @@ Single ViewPort app, one draw function, **7 tabs** (`SweepMode` in
   validated against a redacted fixture (2026-09-21 — `RSSI: -NN Ch: N Client:
   <mac> Requesting: <ssid>`), while esp/pwn remain upstream-pinned only,
   annotated "not yet observed live" (see `docs/BFFB_MOMENTUM.md`).
+- RID transmission and the explicit `remoteid clear` command remain disabled.
+  Marauder v1.18.0 clears and rebuilds its volatile RID table when an
+  all-target scan starts; this is an upstream receive-scan side effect. The
+  passive `remoteid scan` command and strict receive parser are enabled against the
+  official v1.18.0 `RID,` CSV schema. On 2026-10-12 the attached BFFB reported
+  v1.18.0, accepted `remoteid scan` / `stopscan` / `remoteid list`, and returned
+  an empty list; no aircraft row was observed. The parser is host-tested with
+  synthetic rows, so app-level RID reception still needs a real row on the
+  Flipper. Classic ESP32 BFFB receives 2.4 GHz Wi-Fi and supported BLE legacy
+  service-data broadcasts; it cannot receive 5 GHz or BLE 5 extended
+  advertising. See `docs/BFFB_MOMENTUM.md`.
 - GPS primary: Flipper GPIO **LPUART 15/16 @ 9600**; Marauder `nmea` stream is
   the fallback. Verify against `docs/BFFB_MOMENTUM.md`.
 
@@ -110,7 +158,8 @@ Settings → Record opens session N; artifacts in
 `/ext/apps_data/room_sweep/`: `session-N.csv` (events), `report-N.txt` (Room
 Report), `uart-N.txt` (only if Raw Dump). Privacy: WiFi/BLE identifiers are
 per-session ordinals; GPS coordinates omitted unless GPS Log ON. Every TX
-attempt recorded as an event.
+attempt recorded as an event. RID rows use per-session `DR-nn` ordinals;
+FieldSweep rows carry `pos=` coordinate tokens only when GPS Log is ON.
 
 ## Hard rules (from FLIPPER_PITFALLS.md)
 
@@ -122,6 +171,10 @@ attempt recorded as an event.
 - `-Werror` enables `-Wdouble-promotion` — use integer math or explicit casts.
 - Every API call must be in the export table — `python3 _verify_api.py`; an
   unlisted symbol hard-faults at `loader open`, not link.
+- Momentum does NOT init the external SPI handle at boot: call
+  `furi_hal_spi_bus_handle_init()` before the first external SPI acquire
+  (`furi_hal_spi_bus_handle_deinit()` on completion/failed start), or
+  cold-start probing reports an attached nRF24 as absent.
 - Display is 128×64; FontKeyboard is the smallest font (~25 chars/line).
 
 ## Repo conventions
@@ -132,6 +185,7 @@ attempt recorded as an event.
   `.debug-journal.md` are gitignored and must never be committed.
 - Branches: `main` trunk; `feat/*` feature work; `restore/*` are pre-overhaul
   snapshots for recovery (`git log --oneline` → checkout sha).
-- Commits: **no Anthropic/Claude co-author trailers, ever.**
+- Commits: short `fix:` / `feat:` / `docs:` / `chore:`-prefixed subjects;
+  **no Anthropic/Claude co-author trailers, ever.**
 - `CLAUDE.md` mirrors these instructions for Claude Code sessions; keep the
   two in sync when changing scope, workflow, or hard rules.

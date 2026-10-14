@@ -2,10 +2,8 @@
 
 #include <stdint.h>
 #include <stdbool.h>
-#include <math.h>
 
-/* Pure helpers for Marauder scan timeout + GPS distance.
- * Host-testable (no Flipper deps). */
+/* Pure host-testable helpers for Marauder scan timeout and UART framing. */
 
 /* True when a scan should enter MarauderError.
  * - scanning: current state is MarauderScanning
@@ -35,7 +33,7 @@ static inline bool marauder_scan_should_error(
  * Wiki form "-60 Device: name" may also appear. No reliable '\n' between
  * records; '#stopscan' can abut the last MAC. Room Sweep frames and splits.
  */
-#define ROOM_SWEEP_UART_LINE_MAX 128
+#define ROOM_SWEEP_UART_LINE_MAX 272
 
 /* Strip Marauder prompt / whitespace. Returns pointer into s (or near). */
 static inline const char* room_sweep_uart_strip_prompt(const char* s) {
@@ -120,7 +118,7 @@ static inline const char* room_sweep_uart_ble_record_end(const char* rec) {
 
 typedef struct {
     char buf[ROOM_SWEEP_UART_LINE_MAX];
-    uint8_t pos;
+    uint16_t pos;
 } RoomSweepUartLineAccum;
 
 static inline void room_sweep_uart_line_reset(RoomSweepUartLineAccum* a) {
@@ -172,7 +170,7 @@ static inline bool room_sweep_uart_try_emit_ble_record(
     while(rest[rlen]) rlen++;
     if(rlen >= ROOM_SWEEP_UART_LINE_MAX) rlen = ROOM_SWEEP_UART_LINE_MAX - 1U;
     for(size_t i = 0; i < rlen; i++) a->buf[i] = rest[i];
-    a->pos = (uint8_t)rlen;
+    a->pos = (uint16_t)rlen;
     a->buf[a->pos] = '\0';
     return true;
 }
@@ -226,21 +224,4 @@ static inline bool room_sweep_uart_flush_ble_idle(
     a->buf[a->pos] = '\0';
     if(!room_sweep_uart_find_ble_record(a->buf)) return false;
     return room_sweep_uart_line_commit(a, out, out_sz);
-}
-
-/* Haversine distance in meters. Lat/lon in decimal degrees. */
-static inline float geo_distance_m(float lat1, float lon1, float lat2, float lon2) {
-    const float R = 6371000.0f;
-    const float DEG2RAD = 0.017453292519943295f;
-    float p1 = lat1 * DEG2RAD;
-    float p2 = lat2 * DEG2RAD;
-    float dp = (lat2 - lat1) * DEG2RAD;
-    float dl = (lon2 - lon1) * DEG2RAD;
-    float sdp = sinf(dp * 0.5f);
-    float sdl = sinf(dl * 0.5f);
-    float a = sdp * sdp + cosf(p1) * cosf(p2) * sdl * sdl;
-    if(a < 0.0f) a = 0.0f;
-    if(a > 1.0f) a = 1.0f;
-    float c = 2.0f * atan2f(sqrtf(a), sqrtf(1.0f - a));
-    return R * c;
 }

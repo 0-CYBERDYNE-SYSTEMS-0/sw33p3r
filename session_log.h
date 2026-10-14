@@ -4,6 +4,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "room_sweep_report.h"
+
 /* Unique artifacts live under /ext/apps_data/room_sweep/. */
 bool session_log_begin(Storage* storage);
 void session_log_end(Storage* storage);
@@ -52,6 +54,7 @@ bool session_log_write_event(const SessionLogEvent* event);
 
 void session_log_note_drop(uint32_t count);
 void session_log_note_storage_failure(void);
+void session_log_note_sensor_confirmed(uint8_t sensor_mask);
 void session_log_note_sensor_unavailable(uint8_t sensor_mask);
 
 /* Phase 6: report the current duplicate-SSID group count found in the AP
@@ -64,6 +67,14 @@ void session_log_note_rogue_groups(uint8_t groups);
  * `distinct_matches` keeps the MAXIMUM distinct watched identities heard.
  * Main-loop-only. */
 void session_log_note_watchlist(bool enabled, uint32_t distinct_matches);
+
+/* Field sweep (specs/field-sweep.md): `active` gates per-source hit counting
+ * for the Room Report's "Field sweep" section while the loop runs; `stats`
+ * snapshots duration/walked-distance/fixes/operator-path bbox at stop time
+ * (call before the session ends). Main-loop-only, like every session_log
+ * call. */
+void session_log_note_field_active(bool active);
+void session_log_note_field(const RoomSweepReportField* stats);
 
 /* Explicit raw UART snapshot; never overwrites an earlier dump. */
 bool session_log_write_dump(

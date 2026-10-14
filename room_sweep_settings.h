@@ -38,6 +38,10 @@ enum {
      * launch (the app keeps no settings file), so "never persisted ON" is
      * guaranteed the same way as the Wi capture source default. */
     RoomSweepSetWatchlist,
+    /* FieldSweep (specs/field-sweep.md): outdoor GPS-stamped survey loop.
+     * OFF by construction on every launch, same pattern as WiSource/Watchlist;
+     * enabling requires GPS Log ON (refused otherwise). */
+    RoomSweepSetFieldSweep,
     RoomSweepSetCount,
 };
 
@@ -54,6 +58,19 @@ typedef enum {
     WiSourceTool,       /* sniffesp + sniffpwn, alternating windows */
     WiSourceCount,
 } WiSource;
+
+typedef enum {
+    RoomSweepDumpStartCapture = 0,
+    RoomSweepDumpSaveAndStop,
+} RoomSweepDumpAction;
+
+static inline RoomSweepDumpAction room_sweep_dump_action(bool capturing) {
+    return capturing ? RoomSweepDumpSaveAndStop : RoomSweepDumpStartCapture;
+}
+
+static inline bool room_sweep_dump_can_start(bool session_active, bool saved_in_session) {
+    return !session_active || !saved_in_session;
+}
 
 static inline WiSource room_sweep_wi_source_step(WiSource source, bool down) {
     if((uint8_t)source >= WiSourceCount) source = WiSourceBeacon;
@@ -114,6 +131,7 @@ static inline RoomSweepSetGroup room_sweep_set_group_of(uint8_t setting) {
     case RoomSweepSetDump:
     case RoomSweepSetFullSweep:
     case RoomSweepSetWatchlist:
+    case RoomSweepSetFieldSweep:
         return RoomSweepSetGroupSession;
     default:
         return RoomSweepSetGroupFeedback;

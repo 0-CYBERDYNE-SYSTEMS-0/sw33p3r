@@ -5,6 +5,28 @@ over blog posts. Operator controls live in
 [`room_sweep_control_map.html`](room_sweep_control_map.html),
 [`USER_GUIDE.md`](../USER_GUIDE.md), and [`README.md`](../README.md).
 
+## Current BFFB status (2026-10-12)
+
+The attached board is an ESP32 Marauder Dev Board Pro running the official
+v1.18.0 release. Its `help` output lists `remoteid scan/list/track/clear`; a
+bounded `remoteid scan` → `stopscan` → `remoteid list` sequence worked, but
+returned no rows. This confirms command availability, not reception from a
+real aircraft. The strict Room Sweep parser follows the 30-value CSV emitted
+by v1.18.0 `WiFiScanRemoteId.h::logRemoteIdRecord`; its fixtures are synthetic
+and app-level reception still needs a live row.
+
+The BFFB is a classic ESP32 target: expect supported 2.4 GHz Wi-Fi and legacy
+BLE service-data reception, not 5 GHz Wi-Fi or BLE 5 extended advertisements.
+For the Room Sweep FAP, connect the BFFB to Flipper GPIO USART pins 13/14 at
+115200 baud. Its direct USB-C CP2102 connection is for the firmware console
+and update, not FAP control.
+
+The v1.18.0 image was written only to app0, preserving the existing partition
+layout. A same-board full 8 MiB pre-update restore image is stored at
+`.omo/evidence/bffb-full-flash-before-marauder-v1.18.0-2026-10-12.bin`
+(SHA-256 `f8387018ba018a521fcfa191e389916f5caaeefa54cc9390a219bab434877579`).
+Update and restore receipts are local-only under `.omo/evidence/`.
+
 ## Hardware: Just Call Me Koko BFFB
 
 Wiki: https://github.com/justcallmekoko/ESP32Marauder/wiki/BFFB
@@ -219,6 +241,43 @@ sniff…` — a hostile-tooling detector (other people's offensive WiFi gear).
 **`settings`:** dumps name/type/value blocks (ForcePMKID, ForceProbe,
 SavePCAP, EnableLED — the tested fixture records these as `true`).
 **`sniffdeauth`, `scanall`:** confirmed ABSENT from this build's CLI.
+**UPDATE 2026-10-11:** `sniffdeauth` IS present on the current build (see the
+2026-10-11 receipt below) — build drift since 2026-09-20; the app still never
+sends it (mission ban). `scanall` remains absent.
+
+## Live probe receipt (2026-10-11, USB-UART bridge, operator's BFFB)
+
+Full probe battery + `help` transcript: `.omo/evidence/marauder-probe-2026-10-11-165200.txt`
+(local-only). Command set on the CURRENT build: `channel`, `settings`,
+`clearlist`, `reboot`, `update`, `ls`, `led`, `gpsdata`, `gps`, `nmea`,
+`evilportal`, `sigmon`, `scanap`, `scansta`, `sniffraw`, `sniffbeacon`,
+`sniffprobe`, `sniffpwn`, `sniffesp`, `sniffdeauth`, `sniffpmkid`, `stopscan`,
+`wardrive`, `attack`, `list -s/-a/-c`, `select`, `ssid`, `save`/`load`,
+`sniffbt`, `blespam`, `btwardrive`, `sniffskim`. (Attack-family commands are
+listed for completeness only — Room Sweep never sends them.)
+
+- **Historical 2026-10-11 state; superseded 2026-10-12.** At that time,
+  `remoteid` was not compiled into the installed v1.0.0 build. `help` listed no `remoteid`,
+  and unknown commands are silently ignored (bare `remoteid` returns only the
+  prompt — no error line), which is why the 2026-10-11 `remoteid scan/list/
+  clear` probe steps produced empty sections rather than errors. The AV tab
+  RID send path (`ROOM_SWEEP_RID_SEND_ENABLED` in `room_sweep.h`) therefore
+  **stays 0**: flip it only on a build whose `help` lists `remoteid`, backed
+  by a fresh probe receipt pinning the output format. Upstream Marauder
+  documents `remoteid` for newer builds/targets.
+- **`scanap` record format pinned live** (redacted): one record =
+  `RSSI: -NN Ch: N BSSID: <mac> ESSID: <ssid> ` + continuation line
+  `Beacon: 11 NN <index> <count>` (the capability-suffix family — the second
+  line must not be parsed as a fresh record).
+- **`scansta` requires `scanap` first:** replies `The AP list is empty. Scan
+  APs first with scanap` when the AP list is empty. Station-line format is
+  STILL unpinned (no station lines captured). Standing decision holds:
+  `scanap`/`scansta` stay unsent in the app.
+- `list -a`: `[<idx>][CH:N] <ssid> <cap-suffix>` rows + `N selected`;
+  `list -s`: `N selected`.
+- `sniffbeacon` / `sniffraw` output shapes re-confirmed live; they match the
+  shipped parsers. `settings` matches the 2026-09-20 fixture
+  (ForcePMKID/ForceProbe/SavePCAP/EnableLED).
 
 ## Format pins from upstream source (2026-09-20, Phase 5/10)
 
@@ -337,6 +396,46 @@ on this build — and unreachable on current upstream builds. The Room Sweep
 parser accepts this documented shape; on this firmware the ESP half of a
 TOOL window will honestly stay empty.
 
+### `remoteid` (ASTM F3411-22a / OpenDroneID)
+
+**Live command check (2026-10-12):** on official Marauder v1.18.0,
+`remoteid scan` produced its start response, `stopscan` produced its stop
+response, and `remoteid list` returned an empty device list. No `RID,` row
+arrived during the 12-second scan. The transcript records only that summary;
+no raw identifiers or coordinates were retained. This does not establish
+whether an aircraft was broadcasting outside that interval or whether the
+Flipper app received a real row.
+
+**Source-pinned UART format:** v1.18.0
+`esp32_marauder/WiFiScanRemoteId.h::logRemoteIdRecord` emits `RID,` followed
+by exactly 30 comma-separated fields: timestamp, UAS ID, operator ID,
+transport, Wi-Fi channel, RSSI, packet count/rate, lost status/counters and
+timestamps, latitude/longitude, geo altitude and validity, height and
+validity, horizontal speed and validity, direction and validity, operator
+latitude/longitude, and five authentication fields. The parser validates all
+30 fields, uses integer fixed-point conversion, and accepts at most 271 bytes
+to match the 272-byte UART line buffer. CSV does not include decoded ID-class
+or aircraft-type values; the app correctly leaves those labels unknown.
+Session rows use DR-nn ordinals and exclude raw IDs and coordinates.
+
+`ROOM_SWEEP_RID_SCAN_ENABLED=1` sends only the passive scan command;
+`ROOM_SWEEP_RID_SEND_ENABLED=0` keeps RID transmission disabled;
+`ROOM_SWEEP_RID_CLEAR_ENABLED=0` keeps the explicit BFFB local-table clear
+command disabled; and `ROOM_SWEEP_RID_RECEIVE_ENABLED=1` enables strict
+parsing, staleness, and rate-limited session rows. Upstream v1.18.0's
+all-target scan clears and rebuilds the volatile local RID table at scan start.
+The location decoder's uint16 half-meter altitude encoding spans -1000.0 m
+through 31,767.5 m; only values above -1000.0 m are marked valid. Horizontal
+speed may serialize as 255.0 m/s when invalid; valid speed is capped at
+254.25 m/s and serialized to one decimal (at most 254.3). Host fixtures are
+synthetic. No live RID row has yet verified app-level parsing, display, or
+logging.
+
+RID runs on the same USART 13/14 at 115200 baud with LF line endings and
+`expansion_disable()`. Marauder runs one scan task at a time, so AV is mutually
+exclusive with Wi-Fi/BLE scans. The nRF24 page remains energy-only and does not
+decode drone RC traffic.
+
 ## Momentum firmware (this project)
 
 - Target: **Momentum mntm-012**, **API 87.1**, **target 7**
@@ -355,3 +454,15 @@ TOOL window will honestly stay empty.
   already bit the parser once (see the superseded invariant in
   `specs/marauder-parser-2026-08-15.md`).
 - Do not set Flipper USART to 9600 for BFFB GPS (wrong link; GPS is behind Marauder CLI).
+
+## Previous firmware identification (2026-10-12, before the v1.18.0 update)
+
+- macOS enumerated a Silicon Labs **CP2102 USB-to-UART bridge**, VID:PID
+  `10c4:ea60`, USB serial `0001`, at `/dev/cu.usbserial-0001`. This identifies
+  the serial bridge, not the PCB revision or ESP32 module variant.
+- The direct 115200-baud console banner identified **ESP32 Marauder v1.0.0**
+  by justcallmekoko on **ESP-IDF v4.4.5**. Boot text said `GPS Attached
+  Successfully`, `SD Card NOT Supported`, and reported no core-dump partition.
+- A full direct `help` capture listed the old Marauder commands but no
+  `remoteid`; this was the reason for updating the board to v1.18.0.
+- Local transcript: `.omo/evidence/bffb-direct-usb-identification-2026-10-12.txt`.

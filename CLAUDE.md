@@ -9,7 +9,7 @@ receive-side RF surveying on the operator's own property: sub-GHz survey/sweep
 via CC1101, WiFi/BLE scans driven over UART on a Just Call Me Koko **BFFB**
 ESP32 running ESP32Marauder, nRF24 RPD survey, passive GPS display, session
 recording, and a safety-gated TX tab. Target firmware: **Momentum mntm-012,
-API 87.1, target 7**. Seven tabs: RF / Wi / BT / nR / GP / TX / i.
+API 87.1, target 7**. Eight tabs: RF / Wi / BT / nR / GP / TX / i / AV.
 
 **Mission scope is a hard constraint, not prose:** receive-side surveying plus a
 bounded carrier-frequency TX test only. No jamming, blocking, deauthentication,
@@ -44,16 +44,20 @@ non-zero on failure — no framework.
 Device helpers (need a Flipper over USB, pyserial): `_smoke_test.py`
 (build/upload/traverse; `FLIPPER_PORT`/`FLIPPER_BAUD` env overrides, default
 `/dev/cu.usbmodemflip_XXXX001`), `_dev_check.py` (device_info/power_info).
-If `ufbt launch` says the app must be closed, send `input send back long` via
-the serial CLI first.
+Agent USB access: install with `sh tools/install_flipperctl.sh`, then use
+`flipperctl` for shared ownership, bounded CLI/RPC calls, full button events,
+and verified file transfers. See `docs/flipper-agent-access.md`. Honor the
+user-assigned USB owner; run external device helpers through `flipperctl run`.
+Use `flipperctl key back --long` to send complete exit events.
 
 **`./init.sh` must pass before any device deploy.** Build output is
 `dist/room_sweep.fap`; `*.fap`/`dist/` are gitignored.
 
 ## Architecture
 
-Single ViewPort app, one draw function, **7 tabs** (`SweepMode` in
-`room_sweep.h`): RF / Wi / BT / nR / GP / TX / i. `room_sweep.c` (~5790 lines)
+Single ViewPort app, one draw function, **8 tabs** (`SweepMode` in
+`room_sweep.h`): RF / Wi / BT / nR / GP / TX / i / AV. `room_sweep.c`
+(~8.2k lines)
 is the intentional monolith: input routing, drawing, RF engine, TX thread,
 UART parsing, feedback. Everything that can be logic-tested off-device lives in
 **header-only, Flipper-header-free state files** so host suites compile with
@@ -74,14 +78,18 @@ plain `cc`:
 - `room_sweep_analyzer.h`, `room_sweep_radar.h`, `room_sweep_waterfall.h`,
   `room_sweep_ui_layout.h`, `room_sweep_rf_presets.h` (20-preset survey table;
   host-tested invariants — all three parallel arrays in sync, every frequency
-  inside a real CC1101 band).
+  inside a real CC1101 band), plus `room_sweep_rid.h` / `room_sweep_rid_state.h`
+  (host-tested strict v1.18.0 CSV parsing + 8-drone track/alert state; passive
+  scan is enabled, but a live aircraft row is still needed to verify runtime
+  receive) and
+  `room_sweep_field.h` (FieldSweep loop/rate-limit/coordinate policy).
 
 When changing behavior, put the decision logic in one of these headers and add
 a host test; keep `room_sweep.c` as the wiring/rendering layer.
 
 Other modules: `nmea.c/h` (host-tested NMEA parser: GGA/RMC/GLL/ZDA/GSV),
 `session_log.c/h` (session writer; main-loop-only), `nrf24_survey.c/h`
-(SPI RPD sample), `application.fam` (ufbt manifest, stack 6 KiB,
+(SPI RPD sample), `application.fam` (ufbt manifest, stack 4 KiB,
 `sources=["*.c","!tests"]`).
 
 ### Threads and locking
@@ -130,6 +138,14 @@ Other modules: `nmea.c/h` (host-tested NMEA parser: GGA/RMC/GLL/ZDA/GSV),
 - GPS primary path is Flipper GPIO **LPUART 15/16 @ 9600** (Momentum setting:
   NMEA GPS UART = Extra 15,16); Marauder `nmea` stream over USART is the
   fallback when GPIO is silent. BFFB's GPS module is wired to the ESP32 only.
+- BFFB is on official Marauder v1.18.0. Its passive `remoteid scan` command
+  and `stopscan` were verified, `remoteid list` was empty, and no live RID row
+  was observed. The app parser is source-pinned and host-tested with synthetic
+  rows; a real broadcast is still required to verify app-level reception.
+  The explicit `remoteid clear` command is disabled, but v1.18.0 clears and
+  rebuilds its volatile RID table at the start of an all-target scan.
+  Classic ESP32 BFFB is limited to 2.4 GHz Wi-Fi and supported BLE legacy
+  service-data broadcasts; it cannot receive 5 GHz or BLE 5 extended adverts.
 - `docs/BFFB_MOMENTUM.md` is the source of truth for BFFB/Marauder/Momentum
   facts; check it before changing any UART command or baud assumption.
 

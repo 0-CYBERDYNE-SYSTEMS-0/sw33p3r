@@ -39,9 +39,17 @@ echo "== host full-sweep + radio path =="
 cc -std=c11 -Wall -Wextra -Werror -I. tests/test_full_sweep_state.c -o /tmp/room_sweep_full_sweep_test
 /tmp/room_sweep_full_sweep_test
 
+echo "== host field sweep policy =="
+cc -std=c11 -Wall -Wextra -Werror -pedantic -I. tests/test_field.c -lm -o /tmp/room_sweep_field_test
+/tmp/room_sweep_field_test
+
 echo "== host nRF24 survey state =="
 cc -std=c11 -Wall -Wextra -Werror -I. tests/test_nrf24_state.c -o /tmp/room_sweep_nrf24_state_test
 /tmp/room_sweep_nrf24_state_test
+
+echo "== host nRF24 SPI lifecycle =="
+cc -std=c11 -Wall -Wextra -Werror -Itests/nrf24_stubs -I. tests/test_nrf24_driver.c nrf24_survey.c -o /tmp/room_sweep_nrf24_driver_test
+/tmp/room_sweep_nrf24_driver_test
 
 echo "== host analyzer / proximity meter =="
 cc -std=c11 -Wall -Wextra -Werror -I. tests/test_analyzer_state.c -o /tmp/room_sweep_analyzer_test
@@ -68,7 +76,7 @@ cc -std=c11 -Wall -Wextra -Werror -pedantic -I. tests/test_waterfall.c -o /tmp/r
 
 if [[ -f tests/test_scan_logic.c ]]; then
   echo "== host scan/GPS helpers =="
-  cc -std=c11 -Wall -Wextra -Werror -I. tests/test_scan_logic.c -lm -o /tmp/test_scan_logic
+  cc -std=c11 -Wall -Wextra -Werror -I. tests/test_scan_logic.c -o /tmp/test_scan_logic
   /tmp/test_scan_logic
 fi
 
@@ -115,6 +123,14 @@ cc -std=c11 -Wall -Wextra -Werror -pedantic -I. tests/test_watchlist.c -o /tmp/t
 echo "== host RF presets =="
 cc -std=c11 -Wall -Wextra -Werror -pedantic -I. tests/test_rf_presets.c -o /tmp/test_rf_presets
 /tmp/test_rf_presets
+
+echo "== host Remote ID parse =="
+cc -std=c11 -Wall -Wextra -Werror -pedantic -I. tests/test_rid.c -o /tmp/test_rid
+/tmp/test_rid
+
+echo "== host RID list/track state =="
+cc -std=c11 -Wall -Wextra -Werror -pedantic -I. tests/test_rid_state.c -o /tmp/test_rid_state
+/tmp/test_rid_state
 
 echo "== ufbt build =="
 ufbt

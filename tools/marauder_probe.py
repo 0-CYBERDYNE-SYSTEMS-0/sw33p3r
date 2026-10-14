@@ -36,6 +36,12 @@ BATTERY = [
     ("sniffbt -t meta", "sniffbt -t meta", 3.0),
     ("sigmon", "sigmon", 3.0),
     ("sniffpwn", "sniffpwn", 2.0),
+    # Remote ID (ASTM F3411 / OpenDroneID) receive-side probe: pins the
+    # `remoteid` output format for the AV tab. Passive receive only —
+    # nothing here transmits RID. Clearing afterwards keeps state honest.
+    ("remoteid scan", "remoteid scan", 8.0),
+    ("remoteid list", "remoteid list", 2.0),
+    ("remoteid clear", "remoteid clear", 2.0),
 ]
 
 

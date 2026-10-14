@@ -1,6 +1,5 @@
-/* Host tests: Marauder timeout decision + haversine + headless BLE UART frame. */
+/* Host tests: Marauder timeout decision + headless BLE UART frame. */
 #include <stdio.h>
-#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 #include "room_sweep_scan.h"
@@ -12,16 +11,6 @@ static void expect_true(const char* name, bool cond) {
         printf("PASS: %s\n", name);
     } else {
         printf("FAIL: %s\n", name);
-        fails++;
-    }
-}
-
-static void expect_near(const char* name, float got, float want, float tol) {
-    if(fabsf(got - want) <= tol) {
-        printf("PASS: %s (%.2f ≈ %.2f)\n", name, (double)got, (double)want);
-    } else {
-        printf("FAIL: %s got=%.2f want=%.2f tol=%.2f\n",
-               name, (double)got, (double)want, (double)tol);
         fails++;
     }
 }
@@ -57,17 +46,6 @@ int main(void) {
     expect_true(
         "one ms under timeout with zero results",
         !marauder_scan_should_error(true, 29999, 0, 30000, 0));
-
-    /* Haversine: ~111.2 km per degree latitude at equator-ish */
-    float d_1deg = geo_distance_m(0.0f, 0.0f, 1.0f, 0.0f);
-    expect_near("1 deg lat ~111.2km", d_1deg, 111195.0f, 500.0f);
-
-    float d_same = geo_distance_m(37.7749f, -122.4194f, 37.7749f, -122.4194f);
-    expect_near("same point is 0m", d_same, 0.0f, 0.5f);
-
-    /* Short hop ~1km south */
-    float d_short = geo_distance_m(0.0f, 0.0f, 0.009f, 0.0f);
-    expect_near("~1km hop", d_short, 1000.0f, 30.0f);
 
     /* Redacted BFFB format fixture */
     expect_true(
@@ -132,6 +110,27 @@ int main(void) {
             }
         }
         expect_true("one wifi line", emitted == 1);
+    }
+
+    {
+        /* Official Marauder RID CSV rows can exceed the old 128-byte frame. */
+        RoomSweepUartLineAccum acc;
+        char out[ROOM_SWEEP_UART_LINE_MAX];
+        char expected[ROOM_SWEEP_UART_LINE_MAX];
+        memcpy(expected, "RID,", 4);
+        memset(expected + 4, 'x', sizeof(expected) - 5U);
+        expected[sizeof(expected) - 1U] = '\0';
+        room_sweep_uart_line_reset(&acc);
+        bool emitted = false;
+        for(const char* p = expected; *p; p++) {
+            if(room_sweep_uart_feed_byte(&acc, *p, out, sizeof(out))) emitted = true;
+        }
+        expect_true(
+            "long RID frame waits for delimiter",
+            !emitted && room_sweep_uart_feed_byte(&acc, '\n', out, sizeof(out)));
+        expect_true(
+            "long RID frame survives intact",
+            strcmp(out, expected) == 0 && strlen(out) > 128U);
     }
 
     {

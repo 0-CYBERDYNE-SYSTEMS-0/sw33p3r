@@ -16,7 +16,7 @@ static void check(int condition, const char* message) {
 }
 
 int main(void) {
-    check(RoomSweepSetCount == 15, "fifteen settings items");
+    check(RoomSweepSetCount == 16, "sixteen settings items");
     check(RoomSweepSetGroupCount == 5, "five settings groups");
 
     check(
@@ -44,8 +44,22 @@ int main(void) {
         room_sweep_set_group_of(RoomSweepSetWatchlist) == RoomSweepSetGroupSession,
         "Watchlist is Session (privacy-relevant, not persisted)");
     check(
+        room_sweep_set_group_of(RoomSweepSetFieldSweep) == RoomSweepSetGroupSession,
+        "FieldSweep is Session (not persisted, GPS-Log-gated)");
+    check(
         room_sweep_set_group_first(RoomSweepSetGroupSession) == RoomSweepSetRecord,
         "Session group starts at Record");
+    /* Session now holds six items; the settings window must scroll to keep
+     * the cursor visible (the draw code windows at five rows). */
+    check(
+        room_sweep_set_cursor_step(RoomSweepSetWatchlist, true) == RoomSweepSetFieldSweep,
+        "Down from Watchlist reaches FieldSweep");
+    check(
+        room_sweep_set_cursor_step(RoomSweepSetFieldSweep, true) == RoomSweepSetRecord,
+        "Down from FieldSweep wraps within Session");
+    check(
+        room_sweep_set_cursor_step(RoomSweepSetFieldSweep, false) == RoomSweepSetWatchlist,
+        "Up from FieldSweep returns to Watchlist");
 
     check(
         room_sweep_set_group_first(RoomSweepSetGroupWireless) == RoomSweepSetRescan,
@@ -89,6 +103,18 @@ int main(void) {
     check(strcmp(room_sweep_wi_source_label(WiSourceRaw), "RAW") == 0, "RAW label");
     check(strcmp(room_sweep_wi_source_label(WiSourceProbe), "PROBE") == 0, "PROBE label");
     check(strcmp(room_sweep_wi_source_label(WiSourceTool), "TOOL") == 0, "TOOL label");
+    check(
+        room_sweep_dump_action(false) == RoomSweepDumpStartCapture,
+        "Raw Dump starts an opt-in capture when off");
+    check(
+        room_sweep_dump_action(true) == RoomSweepDumpSaveAndStop,
+        "Raw Dump saves and stops an active capture");
+    check(
+        room_sweep_dump_can_start(false, true),
+        "Raw Dump can start outside a recording session");
+    check(
+        !room_sweep_dump_can_start(true, true),
+        "Raw Dump permits one file per recording session");
     check(
         strcmp(room_sweep_wi_source_tag(WiSourceBeacon), "SCAN") == 0,
         "BEACON header tag stays SCAN");

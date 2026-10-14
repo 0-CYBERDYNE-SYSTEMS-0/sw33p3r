@@ -492,8 +492,10 @@ Page order and content follow §2 exactly. Thirty-nine pages (P01–P39).
 - what-it-does: Record opens session N and writes `session-N.csv` plus a Room
   Report. Baseline snapshots the RF survey floor so the `>-75dBm` energy gate
   means something.
-  Raw Dump captures a bounded UART snapshot (`uart-N.txt`) — the only file that
-  can contain raw identifiers. FullSweep launches the whole-room sequence.
+  Raw Dump is opt-in: press once to start a capture of up to 24 UART lines,
+  then press again to save `uart-N.txt` and stop. Only one dump is saved per
+  recorded session; it is the only file that can contain raw identifiers.
+  FullSweep launches the whole-room sequence.
 - how-to-use: Recording is size-capped; if logging stops, scanning doesn't.
 - chips: `OK` → start / stop · `Baseline` → snapshot floor
 
