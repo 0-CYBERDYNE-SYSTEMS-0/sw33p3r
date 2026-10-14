@@ -28,6 +28,19 @@ static void check_str(const char* name, const char* got, const char* want) {
 
 int main(void) {
     check(
+        "UART queue: 31 usable rows fit in four-line allocation chunks",
+        ROOM_SWEEP_MARAUDER_QUEUE_CAPACITY - 1U == 31U &&
+            ROOM_SWEEP_MARAUDER_QUEUE_CHUNKS * ROOM_SWEEP_MARAUDER_QUEUE_CHUNK_LINES ==
+                ROOM_SWEEP_MARAUDER_QUEUE_CAPACITY &&
+            ROOM_SWEEP_MARAUDER_QUEUE_CHUNK_LINES * ROOM_SWEEP_UART_LINE_MAX <= 2U * 1024U);
+    for(uint8_t line = 0; line < ROOM_SWEEP_MARAUDER_QUEUE_CAPACITY; line++) {
+        check(
+            "UART queue: line maps to a valid chunk slot",
+            room_sweep_marauder_queue_chunk(line) < ROOM_SWEEP_MARAUDER_QUEUE_CHUNKS &&
+                room_sweep_marauder_queue_offset(line) <
+                    ROOM_SWEEP_MARAUDER_QUEUE_CHUNK_LINES);
+    }
+    check(
         "UART: RF-only launch leaves Marauder closed",
         !room_sweep_marauder_uart_required(false, false, false));
     check(

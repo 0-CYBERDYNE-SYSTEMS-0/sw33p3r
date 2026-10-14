@@ -4,7 +4,7 @@ For the next dev team. Read `AGENTS.md` first for repo rules. This file is the
 bridge: what shipped today, what is broken on device, everything we measured,
 and the exact protocol to finish.
 
-## Current status — 2026-10-12
+## Current status — 2026-10-13
 
 The BFFB is now running official ESP32 Marauder v1.18.0. Before updating it,
 the full 8 MiB flash was read back and digest-verified as an easy same-board
@@ -24,30 +24,26 @@ RID row has been decoded in Room Sweep. See
 `.omo/evidence/room-sweep-rid-validation-2026-10-12.md` and the live receipt
 `.omo/evidence/room-sweep-rid-live-verification-2026-10-12.md`.
 
-Current device candidate: `dist/room_sweep.fap`, 151,092 bytes, SHA-256
-`2a77874679f50e7b1fd55362d0f35765d891d0b0248ebc433fb57877703c64df`.
-`./init.sh`, `_verify_api.py`, and `git diff --check` passed. Loaded sections
-total 95,430 bytes; `sizeof(App)` is 6,704 bytes; main stack is 4 KiB, with
-2 KiB RF and TX stacks. The 2,176-byte UART ring holds seven complete RID
-lines; each line remains 272 bytes. Raw Dump's 3,072-byte ring is allocated
-only during capture, the 2,048-byte record queue is dynamic, and the 844-byte
-RID table is allocated after its first valid row.
+Current device candidate: `dist/room_sweep.fap`, 152,156 bytes, SHA-256
+`1f9dd5b1b69ca01fe25b4506702f84a079e35b1b27c896e8c9ef34bc8d0f6edf`.
+`./init.sh`, `_verify_api.py`, and `git diff --check` passed. The UART ring
+retains 31 complete 272-byte lines across eight 1,088-byte heap allocations;
+the RF worker is stopped while the UART is opened to return its stack.
 
 `flipperctl upload` verified the candidate at
-`/ext/apps/Tools/room_sweep.fap` (151,092 bytes, MD5
-`908a66ff28b82b69beb6d1557727846d`). Download/read-back size, MD5, and SHA-256
-all match the local file. The pre-scan AV page showed `n=0` and no broadcasts.
-Pressing OK started the passive UART scan. A separate no-RPC run kept Room
-Sweep running on AV for two minutes; free heap stayed near 12.7 KiB and its
-low-water remained 12,440 bytes. A later RPC snapshot attempt after closing
-the UART path was followed by a Flipper OOM screen, so avoid RPC captures while
-the app is open. The current device is left running Room Sweep on AV with the
-passive scan active.
+`/ext/apps/Tools/room_sweep.fap` (152,156 bytes, MD5
+`0e66b4e36e301df50a2455e8209749df`). On 2026-10-13, `loader info` confirmed
+Room Sweep running after launch. With no RPC screen capture, the app remained
+open for 60 seconds on Wi, then returned to RF. Free heap was 5,680 bytes on
+Wi (minimum 5,560) and 12,048 bytes on RF. The app is left running on RF with
+TX untouched. The Wi tab transition was verified, but no Marauder response or
+scan was confirmed; no eight-tab walk or live Remote ID reception was tested.
 
-This verifies upload, app launch, UART scan start, and two-minute no-RPC scan
-survival. It does **not** verify live Remote ID decoding: the prior bounded
-BFFB scan/list and the AV page were empty, and no live `RID,` row was seen.
-Keep the RID feature marked unverified until an actual aircraft broadcast
+A prior build with one contiguous UART allocation reset during a Wi-tab
+transition. Keep the chunked allocation and avoid RPC screen captures while
+the app is open: an earlier capture attempt was followed by a Flipper reboot.
+The bounded BFFB scan/list and AV page were empty, and no live `RID,` row was
+seen. Keep Remote ID marked unverified until an actual aircraft broadcast
 produces a Room Sweep AV row. Keep `~/.local/bin/flipperctl` as the only host
 access path and require a real CLI reply or complete frame before each new
 device action.
