@@ -4,6 +4,7 @@
 #include <gui/gui.h>
 #include <input/input.h>
 
+#include "room_sweep_marauder.h"
 #include "room_sweep_state.h"
 
 /* ---------------------------------------------------------------------------
@@ -116,9 +117,9 @@ static const RfBand rf_bands[RF_BAND_COUNT] = {
  * --------------------------------------------------------------------------- */
 #define MARAUDER_BAUD        115200UL
 #define MARAUDER_RX_BUF_SIZE 1024
-/* Must match ROOM_SWEEP_UART_LINE_MAX in room_sweep_scan.h (headless BLE framer). */
-#define MARAUDER_LINE_MAX    272
-#define MARAUDER_MAX_LINES   32 /* 31 usable rows for UART bursts between main-loop drains */
+/* Queue geometry is host-tested in room_sweep_marauder.h. */
+#define MARAUDER_LINE_MAX    ROOM_SWEEP_UART_LINE_MAX
+#define MARAUDER_MAX_LINES   ROOM_SWEEP_MARAUDER_QUEUE_CAPACITY /* 31 usable rows */
 #define MARAUDER_DUMP_LINE_MAX 128 /* raw UART snapshot is separate from receive framing */
 
 /* JCMK CLI: sniffbeacon prints "-RSSI Ch: n MAC ESSID:" (WIFI_SCAN_AP).

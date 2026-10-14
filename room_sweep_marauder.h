@@ -8,6 +8,19 @@
 
 #include "room_sweep_scan.h" /* framing helpers: strip_prompt, find_ble_record, ble_record_end */
 
+#define ROOM_SWEEP_MARAUDER_QUEUE_CAPACITY 32U
+#define ROOM_SWEEP_MARAUDER_QUEUE_CHUNK_LINES 4U
+#define ROOM_SWEEP_MARAUDER_QUEUE_CHUNKS \
+    (ROOM_SWEEP_MARAUDER_QUEUE_CAPACITY / ROOM_SWEEP_MARAUDER_QUEUE_CHUNK_LINES)
+
+static inline uint8_t room_sweep_marauder_queue_chunk(uint8_t line_index) {
+    return (uint8_t)(line_index / ROOM_SWEEP_MARAUDER_QUEUE_CHUNK_LINES);
+}
+
+static inline uint8_t room_sweep_marauder_queue_offset(uint8_t line_index) {
+    return (uint8_t)(line_index % ROOM_SWEEP_MARAUDER_QUEUE_CHUNK_LINES);
+}
+
 static inline bool room_sweep_marauder_uart_required(
     bool wifi_or_ble_tab,
     bool rid_scan_tab,

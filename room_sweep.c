@@ -249,7 +249,7 @@ typedef struct {
     /* Marauder UART */
     volatile MarauderState marauder_state;
     FuriHalSerialHandle* serial;
-    char (*pending_lines)[MARAUDER_LINE_MAX]; /* allocated on first Marauder tab */
+    char (*pending_lines[ROOM_SWEEP_MARAUDER_QUEUE_CHUNKS])[MARAUDER_LINE_MAX];
     volatile uint8_t uart_line_head;
     volatile uint8_t uart_line_tail;
     RoomSweepUartLineAccum uart_accum; /* byte→line framer (handles headless BLE) */
@@ -1331,16 +1331,30 @@ static bool tx_pick_allowed_preset(App* app) {
     return false;
 }
 
+static char* marauder_pending_line(App* app, uint8_t line_index) {
+    return app->pending_lines[room_sweep_marauder_queue_chunk(line_index)]
+                             [room_sweep_marauder_queue_offset(line_index)];
+}
+
+static void marauder_pending_lines_free(App* app) {
+    if(!app) return;
+    for(uint8_t chunk = 0; chunk < ROOM_SWEEP_MARAUDER_QUEUE_CHUNKS; chunk++) {
+        free(app->pending_lines[chunk]);
+        app->pending_lines[chunk] = NULL;
+    }
+}
+
 /* Enqueue one completed UART line into the ring (ISR or main after RX stop). */
 static void uart_enqueue_completed_line(App* app, const char* line) {
-    if(!app || !app->pending_lines || !line || line[0] == '\0') return;
+    if(!app || !app->pending_lines[0] || !line || line[0] == '\0') return;
     uint8_t next_head = (uint8_t)((app->uart_line_head + 1U) % MARAUDER_MAX_LINES);
     if(next_head == app->uart_line_tail) {
         app->uart_line_drops++;
         return;
     }
-    strncpy(app->pending_lines[app->uart_line_head], line, MARAUDER_LINE_MAX - 1);
-    app->pending_lines[app->uart_line_head][MARAUDER_LINE_MAX - 1] = '\0';
+    char* slot = marauder_pending_line(app, app->uart_line_head);
+    strncpy(slot, line, MARAUDER_LINE_MAX - 1);
+    slot[MARAUDER_LINE_MAX - 1] = '\0';
     app->uart_line_head = next_head;
 }
 
@@ -1370,9 +1384,12 @@ static bool marauder_open(App* app) {
     /* The UART receive queue and serial service need heap headroom. The RF
      * worker's 2 KiB stack is idle utility on this path, so yield it first. */
     rf_thread_stop(app);
-    if(!app->pending_lines) {
-        app->pending_lines = malloc(MARAUDER_MAX_LINES * MARAUDER_LINE_MAX);
-        if(!app->pending_lines) {
+    if(!app->pending_lines[0]) {
+        for(uint8_t chunk = 0; chunk < ROOM_SWEEP_MARAUDER_QUEUE_CHUNKS; chunk++) {
+            app->pending_lines[chunk] =
+                malloc(ROOM_SWEEP_MARAUDER_QUEUE_CHUNK_LINES * MARAUDER_LINE_MAX);
+            if(app->pending_lines[chunk]) continue;
+            marauder_pending_lines_free(app);
             app->marauder_state = MarauderError;
             FURI_LOG_E("RoomSweep", "not enough heap for BFFB receive queue");
             rf_thread_start(app);
@@ -1394,8 +1411,7 @@ static bool marauder_open(App* app) {
     app->serial = furi_hal_serial_control_acquire(FuriHalSerialIdUsart);
     if(!app->serial) {
         app->marauder_state = MarauderNoDevice;
-        free(app->pending_lines);
-        app->pending_lines = NULL;
+        marauder_pending_lines_free(app);
         Expansion* expansion = furi_record_open(RECORD_EXPANSION);
         expansion_enable(expansion);
         furi_record_close(RECORD_EXPANSION);
@@ -1433,8 +1449,7 @@ static void marauder_close(App* app) {
         expansion_enable(expansion);
         furi_record_close(RECORD_EXPANSION);
     }
-    free(app->pending_lines);
-    app->pending_lines = NULL;
+    marauder_pending_lines_free(app);
     app->marauder_confirmed = false;
     app->marauder_tab_autostart_pending = false;
     if(app->running) rf_thread_start(app);
@@ -2173,9 +2188,9 @@ static void process_uart_lines(App* app) {
     }
 
     char latest[MARAUDER_LINE_MAX];
-    while(app->pending_lines && app->uart_line_tail != app->uart_line_head) {
+    while(app->pending_lines[0] && app->uart_line_tail != app->uart_line_head) {
         uint8_t tail = app->uart_line_tail;
-        strncpy(latest, app->pending_lines[tail], MARAUDER_LINE_MAX - 1);
+        strncpy(latest, marauder_pending_line(app, tail), MARAUDER_LINE_MAX - 1);
         latest[MARAUDER_LINE_MAX - 1] = '\0';
         app->uart_line_tail = (tail + 1) % MARAUDER_MAX_LINES;
 
@@ -8535,7 +8550,7 @@ int32_t room_sweep_app(void* p) {
     furi_mutex_free(app->record_mutex);
     free(app->record_queue);
     free(app->dump_lines);
-    free(app->pending_lines);
+    marauder_pending_lines_free(app);
 #if ROOM_SWEEP_RID_RECEIVE_ENABLED
     free(app->rid);
 #endif
