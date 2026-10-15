@@ -72,7 +72,10 @@ different CSV.
   `chore:`), as in `git log --oneline`. No co-author trailers.
 - QA evidence and unredacted captures live in gitignored local directories
   and must never be committed. Keep real MACs, SSIDs, device serials, and
-  local paths out of every committed file.
+  local paths out of every committed file; `python3 scripts/pii_guard.py`
+  (runs in CI over tracked files) and `--history` (every blob in every ref,
+  run it before a release) enforce that. Register a synthetic fixture the
+  guard still flags in `scripts/pii_guard_allow.txt` — never a real value.
 - `features.json` is the QA checklist; flip a `passes` flag only after the
   scoped verify actually runs.
 

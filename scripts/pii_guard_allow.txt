@@ -1,0 +1,8 @@
+# Extra allow patterns for scripts/pii_guard.py — one ERE per line.
+#
+# Add a pattern here ONLY for a synthetic fixture that the guard still flags.
+# Never paste a real MAC, SSID, serial, hostname, or filesystem path into this
+# file: that would publish the very value the guard exists to catch.
+#
+# Example (a fixture family, not a real address):
+#   ^de:ad:be:ef:00:0[0-9]$

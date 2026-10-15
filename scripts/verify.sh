@@ -8,6 +8,9 @@ rc(){ if [ "$1" -ne 0 ]; then printf "\033[1;31mFAIL %s\033[0m\n" "$2"; return 1
 
 step "git sanity"
 git fsck --no-progress >/dev/null 2>&1; rc $? "git fsck"
+
+step "PII guard (every blob in every ref)"
+python3 scripts/pii_guard.py --history >/dev/null 2>&1; rc $? "pii guard --history"
 [ -z "$(git status --porcelain 2>/dev/null | tr -d ' \n')" ] && echo "ok: clean tree" || echo "warn: dirty tree (not a failure)"
 
 if ls package.json >/dev/null 2>&1; then
