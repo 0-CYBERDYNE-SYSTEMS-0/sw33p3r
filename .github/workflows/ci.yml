@@ -27,6 +27,12 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      # Fail the build if any committed file carries a personal path, a real
+      # MAC/BSSID, a real device name, or a non-fixture capture SSID. Run
+      # `python3 scripts/pii_guard.py --history` before cutting a release.
+      - name: PII guard — no real-world identifiers in tracked files
+        run: python3 scripts/pii_guard.py
+
       - name: Install ufbt
         run: pip3 install ufbt
 
